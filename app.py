@@ -15,7 +15,7 @@ st.markdown("""
     <style>
     /* Color de fondo principal */
     .stApp {
-        background-color: #f0f2f6;
+        background-color: #ffffff;
     }
     
     /* Botón principal */
