@@ -82,8 +82,8 @@ with col_logo:
     except:
         st.image("https://via.placeholder.com/80?text=GBO", width=80)
 with col_titulo:
-    st.title("Clasificador de Excel - Bancos y Conceptos")
-    st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
+    st.title("Clasificador de Excel - Conceptos")
+    st.markdown("### Clasifica automáticamente pagos móviles, transferencias y comisiones")
 st.markdown("---")
 
 # Inicializar estado de sesión
@@ -130,21 +130,14 @@ with st.sidebar:
         help="Ejemplo: pago movil, comision, transferencia. Cada concepto será una columna independiente."
     )
     
-    bancos_default = "venezuela, mercantil, provincial, banesco, bicentenario, banco de venezuela, banco caribbean, banco exterior"
-    bancos = st.text_area(
-        "🏦 Bancos a buscar (separados por coma)",
-        bancos_default,
-        help="Ejemplo: venezuela, mercantil, provincial"
-    )
-    
     st.markdown("---")
     
     procesar = st.button("🚀 Procesar y Clasificar", type="primary", use_container_width=True)
 
-# FUNCIÓN CORREGIDA - Sin errores de startswith
-def buscar_coincidencias_columnas(df, conceptos_list, bancos_list):
+# Función para buscar coincidencias
+def buscar_coincidencias_columnas(df, conceptos_list):
     """
-    Busca conceptos y bancos en todas las columnas del dataframe.
+    Busca conceptos en todas las columnas del dataframe.
     Crea una columna independiente para CADA concepto buscado.
     """
     resultados = []
@@ -168,62 +161,34 @@ def buscar_coincidencias_columnas(df, conceptos_list, bancos_list):
             else:
                 conceptos_detectados[f'📌 {concepto.upper()}'] = 'No'
         
-        # --- DETECTAR BANCOS ---
-        banco_encontrado = None
-        for banco in bancos_list:
-            if banco in texto_completo:
-                banco_encontrado = banco.title()
-                break
-        
-        # Búsqueda más precisa en columnas específicas (evitando errores de tipo)
-        if not banco_encontrado:
-            for col in df.columns:
-                try:
-                    valor = row[col]
-                    if pd.notna(valor):
-                        valor_str = str(valor).lower()
-                        for banco in bancos_list:
-                            if banco in valor_str:
-                                banco_encontrado = banco.title()
-                                break
-                        if banco_encontrado:
-                            break
-                except:
-                    continue
-        
         # --- DETECTAR MONTOS ---
         monto = None
         for col in df.columns:
             try:
                 valor = row[col]
                 if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
-                    # Convertir el nombre de la columna a string SIEMPRE
-                    nombre_col = str(col).lower()
-                    if 'monto' in nombre_col:
+                    if monto is None:
+                        monto = valor
+                    # Si la columna se llama "monto", priorizarla
+                    if 'monto' in str(col).lower():
                         monto = valor
                         break
-                    elif monto is None:
-                        monto = valor
             except:
                 continue
         
         # --- CONSTRUIR REGISTRO ---
         registro = {**row.to_dict()}
         registro.update(conceptos_detectados)
-        registro['🏦 Banco Detectado'] = banco_encontrado if banco_encontrado else 'No detectado'
         registro['💰 Monto Detectado'] = monto if monto else 'No aplica'
         
-        # Solo guardar si tiene al menos un concepto detectado como 'Sí' o un banco detectado
-        tiene_concepto = any(conceptos_detectados.values())
-        if tiene_concepto or banco_encontrado:
-            resultados.append(registro)
+        resultados.append(registro)
     
     if len(resultados) == 0:
         return pd.DataFrame()
     else:
         return pd.DataFrame(resultados)
 
-# Área principal - Mostrar resultados
+# Área principal
 if archivo:
     st.info(f"📄 Archivo cargado: **{archivo.name}** - Tamaño: {archivo.size/1024:.1f} KB")
     
@@ -235,22 +200,17 @@ if archivo:
             st.caption(f"Total de filas: {len(df_original)} | Columnas: {len(df_original.columns)}")
         
         if procesar:
-            if not conceptos.strip() and not bancos.strip():
-                st.error("❌ Debes ingresar al menos un concepto o banco para buscar")
+            if not conceptos.strip():
+                st.error("❌ Debes ingresar al menos un concepto para buscar")
             else:
                 conceptos_list = [c.strip().lower() for c in conceptos.split(',') if c.strip()]
-                bancos_list = [b.strip().lower() for b in bancos.split(',') if b.strip()]
                 
                 st.write("**Buscando:**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"📝 Conceptos ({len(conceptos_list)}): {', '.join(conceptos_list)}")
-                    st.info(f"📌 Se crearán {len(conceptos_list)} columnas independientes, una por cada concepto")
-                with col2:
-                    st.write(f"🏦 Bancos: {', '.join(bancos_list)}")
+                st.write(f"📝 Conceptos ({len(conceptos_list)}): {', '.join(conceptos_list)}")
+                st.info(f"📌 Se crearán {len(conceptos_list)} columnas independientes, una por cada concepto")
                 
-                with st.spinner('🔄 Clasificando datos... Espere un momento'):
-                    df_resultados = buscar_coincidencias_columnas(df_original, conceptos_list, bancos_list)
+                with st.spinner('🔄 Clasificando datos...'):
+                    df_resultados = buscar_coincidencias_columnas(df_original, conceptos_list)
                     st.session_state.df_procesado = df_resultados
                 
                 if len(df_resultados) > 0:
@@ -258,9 +218,10 @@ if archivo:
                     
                     # Contar coincidencias de conceptos
                     columnas_conceptos = []
-                    for col in df_resultados.columns:
-                        if col.startswith('📌'):
-                            columnas_conceptos.append(col)
+                    for col_name in df_resultados.columns:
+                        col_str = str(col_name)
+                        if col_str.startswith('📌'):
+                            columnas_conceptos.append(col_str)
                     
                     if columnas_conceptos:
                         total_coincidencias = 0
@@ -268,25 +229,22 @@ if archivo:
                             total_coincidencias += (df_resultados[col] == 'Sí').sum()
                         st.metric("📊 Total de coincidencias entre conceptos", total_coincidencias)
                     
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
+                    # Métricas
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    with col_a:
                         st.metric("📊 Total Registros", len(df_original))
-                    with col2:
-                        st.metric("✅ Registros con coincidencias", len(df_resultados))
-                    with col3:
+                    with col_b:
+                        st.metric("✅ Registros procesados", len(df_resultados))
+                    with col_c:
                         porcentaje = (len(df_resultados)/len(df_original)*100) if len(df_original) > 0 else 0
                         st.metric("📈 Porcentaje", f"{porcentaje:.1f}%")
-                    with col4:
-                        st.metric("📌 Conceptos buscados", len(conceptos_list))
-                    
-                    if '🏦 Banco Detectado' in df_resultados.columns:
-                        st.subheader("📊 Distribución por Banco")
-                        resumen_banco = df_resultados['🏦 Banco Detectado'].value_counts()
-                        st.bar_chart(resumen_banco)
+                    with col_d:
+                        st.metric("📌 Conceptos", len(conceptos_list))
                     
                     st.subheader("📋 Detalle de registros clasificados")
                     st.dataframe(df_resultados, use_container_width=True, height=400)
                     
+                    # Botones de descarga
                     col1, col2 = st.columns(2)
                     csv = df_resultados.to_csv(index=False).encode('utf-8')
                     with col1:
@@ -311,29 +269,30 @@ if archivo:
                             use_container_width=True
                         )
                 else:
-                    st.warning("⚠️ No se encontraron coincidencias con los criterios de búsqueda")
-                    st.info("💡 Sugerencia: Revisa que los conceptos y bancos escritos coincidan con la ortografía de tu archivo")
+                    st.warning("⚠️ No se encontraron datos para procesar")
     
     except Exception as e:
         st.error(f"❌ Error al procesar el archivo: {str(e)}")
-        st.info("Asegúrate de que el archivo sea un Excel válido (.xlsx o .xls)")
+        st.info("Verifica que el archivo sea un Excel válido")
 
 else:
     st.markdown("""
     ### 👋 ¡Bienvenido a Grupo Bodeguita Oriente!
     
-    **¿Cómo funciona este clasificador?**
+    **¿Cómo funciona?**
     
-    1. 📂 **Carga** un archivo Excel desde la barra lateral izquierda
-    2. 🔍 **Configura** qué conceptos y bancos quieres buscar
-    3. 🚀 **Presiona** "Procesar y Clasificar"
+    1. 📂 Carga un archivo Excel
+    2. 🔍 Configura qué conceptos quieres buscar
+    3. 🚀 Presiona "Procesar y Clasificar"
     
-    ### 🆕 Novedad - Columnas por concepto!
-    Ahora cada concepto que buscas se convierte en una columna independiente.
+    ### 🆕 Columnas por concepto!
+    Cada concepto que buscas se convierte en una columna independiente.
     
     ### Ejemplos de búsqueda:
-    - **Conceptos:** pago movil, comision, transferencia
-    - **Bancos:** venezuela, mercantil, provincial, banesco
+    - **Conceptos:** pago movil, comision, transferencia, pago celular
+    
+    ---
+    **💡 Tip:** El programa buscará estas palabras en TODAS las columnas de tu archivo Excel
     """)
 
 # Footer
@@ -341,8 +300,8 @@ st.markdown("---")
 st.markdown(
     """
     <div class="footer">
-        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v3.2<br>
-        Sistema de clasificación de pagos y transferencias bancarias
+        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v4.0<br>
+        Sistema de clasificación de pagos, transferencias y comisiones
     </div>
     """,
     unsafe_allow_html=True
