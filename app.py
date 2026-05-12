@@ -80,7 +80,7 @@ with col_logo:
     try:
         st.image("LOGO.jpeg", width=80)
     except:
-        st.image("https://via.placeholder.com/80?text=BODEGUITA", width=80)
+        st.image("https://via.placeholder.com/80?text=NEXO", width=80)
 with col_titulo:
     st.title("Clasificador de Excel - Bancos y Conceptos")
     st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
