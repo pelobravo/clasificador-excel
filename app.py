@@ -48,7 +48,7 @@ with col_logo:
         st.image("https://via.placeholder.com/80?text=GBO", width=80)
 with col_titulo:
     st.title("Clasificador de Excel - Conceptos")
-    st.markdown("### Filtra y clasifica pagos según los conceptos que elijas")
+    st.markdown("### Extrae la descripción completa donde aparece cada concepto")
 st.markdown("---")
 
 # Sidebar
@@ -72,57 +72,71 @@ with st.sidebar:
     conceptos = st.text_area(
         "📝 Conceptos a buscar (separados por coma)",
         value="pago movil, comision",
-        help="Ejemplo: pago movil, comision. Solo se mostrarán las filas que contengan estos conceptos."
+        help="Ejemplo: pago movil, comision"
     )
     st.markdown("---")
     
     procesar = st.button("🚀 Procesar y Clasificar", type="primary", use_container_width=True)
 
-# Función principal - SOLO guarda filas con coincidencias
+def obtener_valor_concepto(row, concepto_buscar):
+    """
+    Busca el concepto en cada celda de la fila.
+    Si lo encuentra, devuelve el valor COMPLETO de esa celda (ej: "PAGO MOVIL COMERCIAL INTERBANCARIO")
+    """
+    for columna in row.index:
+        valor = row[columna]
+        if pd.notna(valor):
+            try:
+                texto_valor = str(valor).lower()
+                if concepto_buscar in texto_valor:
+                    # Devolvemos el valor ORIGINAL, no el minúsculas
+                    return str(valor)
+            except:
+                continue
+    return None
+
 def procesar_archivo(df, lista_conceptos):
     """
-    Procesa el archivo y SOLO guarda las filas que tienen al menos un concepto detectado
+    Procesa el archivo y SOLO guarda las filas que tienen al menos un concepto.
+    Para cada concepto, guarda el texto COMPLETO de la celda donde apareció.
     """
     resultados = []
     
-    for _, row in df.iterrows():
-        # Unir todo el texto de la fila
-        texto_fila = " ".join([str(v).lower() for v in row.values if pd.notna(v)])
+    for _, fila in df.iterrows():
+        # Verificar qué conceptos aparecen en esta fila
+        fila_conceptos = {}
+        tiene_concepto = False
         
-        # Detectar conceptos
-        conceptos_detectados = {}
         for concepto in lista_conceptos:
-            if concepto in texto_fila:
-                conceptos_detectados[f'{concepto.upper()}'] = concepto
+            valor_encontrado = obtener_valor_concepto(fila, concepto)
+            if valor_encontrado:
+                fila_conceptos[concepto.upper()] = valor_encontrado
+                tiene_concepto = True
             else:
-                conceptos_detectados[f'{concepto.upper()}'] = 'No detectado'
+                fila_conceptos[concepto.upper()] = 'No detectado'
         
-        # Verificar si tiene al menos un concepto detectado (no todos "No detectado")
-        tiene_algun_concepto = any(valor != 'No detectado' for valor in conceptos_detectados.values())
+        # Si no tiene ningún concepto, saltamos esta fila
+        if not tiene_concepto:
+            continue
         
-        # SOLO guardar si tiene al menos un concepto detectado
-        if tiene_algun_concepto:
-            # Detectar monto
-            monto = None
-            for col in df.columns:
-                valor = row[col]
-                if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
-                    if monto is None:
-                        monto = valor
-                    if 'monto' in str(col).lower():
-                        monto = valor
-                        break
-            
-            # Armar registro
-            registro = {**row.to_dict()}
-            registro.update(conceptos_detectados)
-            registro['💰 Monto'] = monto if monto else 'No aplica'
-            resultados.append(registro)
+        # Detectar monto
+        monto = None
+        for col in df.columns:
+            valor = fila[col]
+            if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
+                if monto is None:
+                    monto = valor
+                if 'monto' in str(col).lower():
+                    monto = valor
+                    break
+        
+        # Construir fila resultado
+        nueva_fila = {**fila.to_dict()}
+        nueva_fila.update(fila_conceptos)
+        nueva_fila['💰 Monto'] = monto if monto else 'No aplica'
+        resultados.append(nueva_fila)
     
-    if len(resultados) == 0:
-        return pd.DataFrame()
-    else:
-        return pd.DataFrame(resultados)
+    return pd.DataFrame(resultados)
 
 # Área principal
 if archivo:
@@ -137,93 +151,55 @@ if archivo:
         
         if procesar:
             if not conceptos.strip():
-                st.error("❌ Escribe al menos un concepto para buscar")
+                st.error("❌ Escribe al menos un concepto")
             else:
-                # Limpiar lista de conceptos
                 lista_conceptos = [c.strip().lower() for c in conceptos.split(',') if c.strip()]
                 
-                st.write("**Buscando:**")
-                st.write(f"📝 Conceptos: {', '.join(lista_conceptos)}")
-                st.info(f"🔍 Se buscarán filas que contengan: {', '.join(lista_conceptos)}")
+                st.write("**Conceptos a buscar:**")
+                st.write(f"📝 {', '.join([c.upper() for c in lista_conceptos])}")
                 
                 with st.spinner('Procesando...'):
                     df_resultado = procesar_archivo(df_original, lista_conceptos)
                 
                 if len(df_resultado) > 0:
-                    st.success(f"✅ **Éxito!** Se encontraron {len(df_resultado)} filas que contienen los conceptos buscados (de {len(df_original)} totales)")
+                    st.success(f"✅ Encontradas {len(df_resultado)} filas con los conceptos solicitados")
                     
-                    # Resumen por concepto
-                    st.subheader("📊 Resumen de coincidencias")
+                    # Resumen
+                    st.subheader("📊 Resumen por concepto")
                     cols = st.columns(len(lista_conceptos))
                     for i, concepto in enumerate(lista_conceptos):
-                        cantidad = (df_resultado[concepto.upper()] != 'No detectado').sum()
-                        cols[i].metric(f"{concepto.upper()}", f"{cantidad} / {len(df_resultado)}")
+                        cant = (df_resultado[concepto.upper()] != 'No detectado').sum()
+                        cols[i].metric(concepto.upper(), f"{cant} / {len(df_resultado)}")
                     
-                    # Mostrar resultados
-                    st.subheader("📋 Resultados filtrados (solo filas con coincidencias)")
+                    # Resultados
+                    st.subheader("📋 Filas filtradas")
                     st.dataframe(df_resultado, use_container_width=True, height=400)
                     
-                    # Botones descarga
+                    # Descargas
                     col1, col2 = st.columns(2)
                     csv = df_resultado.to_csv(index=False).encode('utf-8')
-                    col1.download_button(
-                        label="📥 Descargar CSV",
-                        data=csv,
-                        file_name=f"filtrado_{archivo.name.replace('.xlsx', '').replace('.xls', '')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                    col1.download_button("📥 CSV", csv, f"resultados_{archivo.name.replace('.xlsx', '.csv')}", "text/csv", use_container_width=True)
                     
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_resultado.to_excel(writer, sheet_name='Filtrado', index=False)
-                    output.seek(0)
-                    col2.download_button(
-                        label="📊 Descargar Excel",
-                        data=output,
-                        file_name=f"filtrado_{archivo.name}",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                        df_resultado.to_excel(writer, index=False)
+                    col2.download_button("📊 Excel", output.getvalue(), f"resultados_{archivo.name}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                 else:
-                    st.warning(f"⚠️ No se encontraron filas que contengan: {', '.join(lista_conceptos)}")
-                    st.info("💡 Sugerencia: Revisa que los conceptos escritos coincidan exactamente con la ortografía de tu archivo")
+                    st.warning("No se encontraron filas con esos conceptos")
     
     except Exception as e:
-        st.error(f"❌ Error: {str(e)}")
+        st.error(f"Error: {str(e)}")
 
 else:
     st.markdown("""
-    ### 👋 ¡Bienvenido a Grupo Bodeguita Oriente!
+    ### 👋 ¡Bienvenido!
     
-    **¿Cómo funciona?**
+    1. Carga un archivo Excel
+    2. Escribe los conceptos (ej: pago movil, comision)
+    3. Procesar
     
-    1. 📂 Carga un archivo Excel
-    2. ✏️ Escribe los conceptos que quieres buscar (separados por coma)
-    3. 🚀 Presiona "Procesar y Clasificar"
-    
-    ### 🎯 ¿Qué hace?
-    - Busca SOLO las filas que contengan los conceptos que escribiste
-    - Crea columnas independientes para cada concepto
-    - Filtra el resultado mostrando ÚNICAMENTE las filas con coincidencias
-    
-    ### Ejemplo:
-    Si buscas `pago movil, comision`:
-    - Solo verás las filas que tengan "pago movil" o "comision"
-    - Las filas con "transferencia" o "crédito" NO aparecerán
-    
-    ---
-    **💡 Tip:** El programa filtrará tu archivo y solo mostrará lo que te interesa
+    **El programa extraerá la DESCRIPCIÓN COMPLETA de cada concepto encontrado.**
     """)
 
-# Footer
 st.markdown("---")
-st.markdown(
-    """
-    <div class="footer">
-        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v6.0<br>
-        Filtrado inteligente por conceptos personalizados
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown('<div class="footer"><strong>Grupo Bodeguita Oriente</strong> - Clasificador v6.2</div>', unsafe_allow_html=True)
