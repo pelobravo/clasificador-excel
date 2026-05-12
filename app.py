@@ -92,7 +92,7 @@ if 'df_procesado' not in st.session_state:
 
 # Sidebar para configuración
 with st.sidebar:
-    st.image("LOGO.jpeg", width=10, caption="Grupo Bodeguita Oriente")
+    st.image("LOGO.jpeg", width=100, caption="Grupo Bodeguita Oriente")
     st.markdown("---")
     
     st.header("📂 Cargar Archivo")
