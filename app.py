@@ -78,11 +78,11 @@ st.markdown("""
 col_logo, col_titulo = st.columns([1, 5])
 with col_logo:
     try:
-        st.image("LOGO.jpeg", width=80)
+        st.image("LOGO.jpeg", width=70)
     except:
         st.image("https://via.placeholder.com/80?text=NEXO", width=80)
 with col_titulo:
-    st.title("🏦 Clasificador de Excel - Bancos y Conceptos")
+    st.title("Clasificador de Excel - Bancos y Conceptos")
     st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
 st.markdown("---")
 
@@ -92,7 +92,7 @@ if 'df_procesado' not in st.session_state:
 
 # Sidebar para configuración
 with st.sidebar:
-    st.image("LOGO.jpeg", width=150, caption="Nexo Comercial Oriente")
+    st.image("LOGO.jpeg", width=150, caption="Grupo Bodeguita Oriente")
     st.markdown("---")
     
     st.header("📂 Cargar Archivo")
