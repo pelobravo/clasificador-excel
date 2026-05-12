@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import re
 from io import BytesIO
 
 # Configuración de la página
@@ -10,15 +9,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Personalización de colores y estilos (CSS)
+# Estilos CSS
 st.markdown("""
     <style>
-    /* Color de fondo principal */
-    .stApp {
-        background-color: #ffffff;
-    }
-    
-    /* Botón principal */
+    .stApp { background-color: #ffffff; }
     .stButton > button {
         background-color: #1e3a5f;
         color: white;
@@ -33,48 +27,19 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
-    
-    /* Títulos */
-    h1, h2, h3 {
-        color: #1e3a5f;
-    }
-    
-    /* Sidebar */
-    .css-1d391kg {
-        background-color: #ffffff;
-    }
-    
-    /* Tarjetas de métricas */
+    h1, h2, h3 { color: #1e3a5f; }
     .stMetric {
         background-color: white;
         border-radius: 12px;
         padding: 15px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: #ffffff;
-        border-radius: 8px;
-    }
-    
-    /* Dataframe */
-    .stDataFrame {
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    
-    /* Footer */
-    .footer {
-        text-align: center;
-        color: #666;
-        padding: 20px;
-        font-size: 14px;
-    }
+    .stDataFrame { border-radius: 12px; overflow: hidden; }
+    .footer { text-align: center; color: #666; padding: 20px; font-size: 14px; }
     </style>
 """, unsafe_allow_html=True)
 
-# Título principal con logo
+# Título
 col_logo, col_titulo = st.columns([1, 5])
 with col_logo:
     try:
@@ -83,198 +48,134 @@ with col_logo:
         st.image("https://via.placeholder.com/80?text=GBO", width=80)
 with col_titulo:
     st.title("Clasificador de Excel - Conceptos")
-    st.markdown("### Clasifica automáticamente pagos móviles, transferencias y comisiones")
+    st.markdown("### Clasifica automáticamente según los conceptos que elijas")
 st.markdown("---")
 
-# Inicializar estado de sesión
-if 'df_procesado' not in st.session_state:
-    st.session_state.df_procesado = None
-
-# Sidebar para configuración
+# Sidebar
 with st.sidebar:
     st.markdown(
         """
-        <div style="display: flex; justify-content: center; margin: 10px 0 10px 0;">
+        <div style="display: flex; justify-content: center; margin: 10px 0;">
             <img src="https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg" width="100">
         </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    st.markdown(
-        """
         <div style="text-align: center; margin-bottom: 20px;">
             <strong style="font-size: 16px; color: #1e3a5f;">Grupo Bodeguita Oriente</strong>
         </div>
         """,
         unsafe_allow_html=True
     )
-    
     st.markdown("---")
     
-    st.header("📂 Cargar Archivo")
-    archivo = st.file_uploader(
-        "Selecciona un archivo Excel",
-        type=['xlsx', 'xls'],
-        help="Formatos soportados: .xlsx, .xls"
-    )
-    
+    archivo = st.file_uploader("📂 Cargar Archivo Excel", type=['xlsx', 'xls'])
     st.markdown("---")
     
-    st.header("🔍 Configuración de Búsqueda")
-    
-    conceptos_default = "pago movil, comision"
     conceptos = st.text_area(
         "📝 Conceptos a buscar (separados por coma)",
-        conceptos_default,
-        help="Ejemplo: pago movil, comision. Cada concepto será una columna independiente con el valor encontrado."
+        value="pago movil, comision",
+        help="Escribe SOLO los conceptos que quieres buscar. Ejemplo: pago movil, comision"
     )
-    
     st.markdown("---")
     
     procesar = st.button("🚀 Procesar y Clasificar", type="primary", use_container_width=True)
 
-# Función para buscar coincidencias - AHORA MUESTRA EL CONCEPTO ENCONTRADO
-def buscar_coincidencias_columnas(df, conceptos_list):
-    """
-    Busca conceptos en todas las columnas del dataframe.
-    Crea una columna independiente para CADA concepto buscado.
-    En cada celda escribe el concepto encontrado (ej: "pago movil") o "No detectado"
-    """
+# Función principal
+def procesar_archivo(df, lista_conceptos):
     resultados = []
     
-    for idx, row in df.iterrows():
-        # Crear una lista segura con todas las celdas convertidas a string
-        partes = []
-        for valor in row.values:
-            if pd.notna(valor):
-                try:
-                    partes.append(str(valor).lower())
-                except:
-                    partes.append("")
-        texto_completo = " ".join(partes)
+    for _, row in df.iterrows():
+        # Unir todo el texto de la fila
+        texto_fila = " ".join([str(v).lower() for v in row.values if pd.notna(v)])
         
-        # --- DETECTAR CONCEPTOS (una columna por cada concepto) ---
-        conceptos_detectados = {}
-        for concepto in conceptos_list:
-            if concepto in texto_completo:
-                # Guardar el texto del concepto encontrado
-                conceptos_detectados[f'📌 {concepto.upper()}'] = concepto
+        # Crear columnas SOLO para los conceptos que pidió el usuario
+        columnas_conceptos = {}
+        for concepto in lista_conceptos:
+            if concepto in texto_fila:
+                columnas_conceptos[f'{concepto.upper()}'] = concepto
             else:
-                conceptos_detectados[f'📌 {concepto.upper()}'] = 'No detectado'
+                columnas_conceptos[f'{concepto.upper()}'] = 'No detectado'
         
-        # --- DETECTAR MONTOS ---
+        # Detectar monto
         monto = None
         for col in df.columns:
-            try:
-                valor = row[col]
-                if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
-                    if monto is None:
-                        monto = valor
-                    if 'monto' in str(col).lower():
-                        monto = valor
-                        break
-            except:
-                continue
+            valor = row[col]
+            if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
+                if monto is None:
+                    monto = valor
+                if 'monto' in str(col).lower():
+                    monto = valor
+                    break
         
-        # --- CONSTRUIR REGISTRO ---
+        # Armar registro
         registro = {**row.to_dict()}
-        registro.update(conceptos_detectados)
-        registro['💰 Monto Detectado'] = monto if monto else 'No aplica'
-        
+        registro.update(columnas_conceptos)
+        registro['💰 Monto'] = monto if monto else 'No aplica'
         resultados.append(registro)
     
-    if len(resultados) == 0:
-        return pd.DataFrame()
-    else:
-        return pd.DataFrame(resultados)
+    return pd.DataFrame(resultados)
 
 # Área principal
 if archivo:
-    st.info(f"📄 Archivo cargado: **{archivo.name}** - Tamaño: {archivo.size/1024:.1f} KB")
+    st.info(f"📄 Archivo: **{archivo.name}** - {archivo.size/1024:.1f} KB")
     
     try:
         df_original = pd.read_excel(archivo)
         
-        with st.expander("👁️ Vista previa del archivo original (primeras 10 filas)"):
+        with st.expander("👁️ Vista previa (primeras 10 filas)"):
             st.dataframe(df_original.head(10), use_container_width=True)
-            st.caption(f"Total de filas: {len(df_original)} | Columnas: {len(df_original.columns)}")
+            st.caption(f"Total filas: {len(df_original)} | Columnas: {len(df_original.columns)}")
         
         if procesar:
             if not conceptos.strip():
-                st.error("❌ Debes ingresar al menos un concepto para buscar")
+                st.error("❌ Escribe al menos un concepto")
             else:
-                conceptos_list = [c.strip().lower() for c in conceptos.split(',') if c.strip()]
+                # Limpiar lista de conceptos
+                lista_conceptos = [c.strip().lower() for c in conceptos.split(',') if c.strip()]
                 
                 st.write("**Buscando:**")
-                st.write(f"📝 Conceptos ({len(conceptos_list)}): {', '.join(conceptos_list)}")
-                st.info(f"📌 Se crearán {len(conceptos_list)} columnas independientes. En cada fila se escribirá el concepto encontrado o 'No detectado'.")
+                st.write(f"📝 Conceptos: {', '.join(lista_conceptos)}")
+                st.info(f"📌 Se crearán {len(lista_conceptos)} columnas: {', '.join([c.upper() for c in lista_conceptos])}")
                 
-                with st.spinner('🔄 Clasificando datos...'):
-                    df_resultados = buscar_coincidencias_columnas(df_original, conceptos_list)
-                    st.session_state.df_procesado = df_resultados
+                with st.spinner('Procesando...'):
+                    df_resultado = procesar_archivo(df_original, lista_conceptos)
                 
-                if len(df_resultados) > 0:
-                    st.success(f"✅ **¡Éxito!** Se procesaron {len(df_resultados)} registros")
-                    
-                    # Contar coincidencias de conceptos (donde no dice "No detectado")
-                    columnas_conceptos = []
-                    for col_name in df_resultados.columns:
-                        col_str = str(col_name)
-                        if col_str.startswith('📌'):
-                            columnas_conceptos.append(col_str)
-                    
-                    if columnas_conceptos:
-                        st.subheader("📊 Resumen de coincidencias por concepto")
-                        for col in columnas_conceptos:
-                            cantidad = (df_resultados[col] != 'No detectado').sum()
-                            st.metric(col, f"{cantidad} / {len(df_resultados)} registros")
-                    
-                    # Métricas
-                    col_a, col_b, col_c, col_d = st.columns(4)
-                    with col_a:
-                        st.metric("📊 Total Registros", len(df_original))
-                    with col_b:
-                        st.metric("✅ Registros procesados", len(df_resultados))
-                    with col_c:
-                        porcentaje = (len(df_resultados)/len(df_original)*100) if len(df_original) > 0 else 0
-                        st.metric("📈 Porcentaje", f"{porcentaje:.1f}%")
-                    with col_d:
-                        st.metric("📌 Conceptos", len(conceptos_list))
-                    
-                    st.subheader("📋 Detalle de registros clasificados")
-                    st.dataframe(df_resultados, use_container_width=True, height=400)
-                    
-                    # Botones de descarga
-                    col1, col2 = st.columns(2)
-                    csv = df_resultados.to_csv(index=False).encode('utf-8')
-                    with col1:
-                        st.download_button(
-                            label="📥 Descargar como CSV",
-                            data=csv,
-                            file_name=f"resultados_{archivo.name.replace('.xlsx', '').replace('.xls', '')}.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                    
-                    with col2:
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df_resultados.to_excel(writer, sheet_name='Resultados', index=False)
-                        output.seek(0)
-                        st.download_button(
-                            label="📊 Descargar como Excel",
-                            data=output,
-                            file_name=f"resultados_{archivo.name}",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                else:
-                    st.warning("⚠️ No se encontraron datos para procesar")
+                st.success(f"✅ Procesadas {len(df_resultado)} filas")
+                
+                # Resumen por concepto
+                st.subheader("📊 Resumen de coincidencias")
+                cols = st.columns(len(lista_conceptos))
+                for i, concepto in enumerate(lista_conceptos):
+                    cantidad = (df_resultado[concepto.upper()] != 'No detectado').sum()
+                    cols[i].metric(f"{concepto.upper()}", f"{cantidad} / {len(df_resultado)}")
+                
+                # Mostrar resultados
+                st.subheader("📋 Resultados completos")
+                st.dataframe(df_resultado, use_container_width=True, height=400)
+                
+                # Botones descarga
+                col1, col2 = st.columns(2)
+                csv = df_resultado.to_csv(index=False).encode('utf-8')
+                col1.download_button(
+                    label="📥 Descargar CSV",
+                    data=csv,
+                    file_name=f"resultados_{archivo.name.replace('.xlsx', '').replace('.xls', '')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_resultado.to_excel(writer, sheet_name='Resultados', index=False)
+                output.seek(0)
+                col2.download_button(
+                    label="📊 Descargar Excel",
+                    data=output,
+                    file_name=f"resultados_{archivo.name}",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
     
     except Exception as e:
-        st.error(f"❌ Error al procesar el archivo: {str(e)}")
-        st.info("Verifica que el archivo sea un Excel válido")
+        st.error(f"❌ Error: {str(e)}")
 
 else:
     st.markdown("""
@@ -283,17 +184,11 @@ else:
     **¿Cómo funciona?**
     
     1. 📂 Carga un archivo Excel
-    2. 🔍 Configura qué conceptos quieres buscar
+    2. ✏️ Escribe los conceptos que quieres buscar (separados por coma)
     3. 🚀 Presiona "Procesar y Clasificar"
     
-    ### 🆕 Columnas por concepto!
-    Cada concepto que buscas se convierte en una columna independiente.
-    - Si encuentra **"pago movil"**, escribe `pago movil` en la columna
-    - Si encuentra **"comision"**, escribe `comision` en la columna
-    - Si no encuentra nada, escribe `No detectado`
-    
-    ### Ejemplos de búsqueda:
-    - **Conceptos:** pago movil, comision
+    ### Ejemplo:
+    - Si escribes `pago movil, comision`, se crearán SOLO esas dos columnas
     
     ---
     **💡 Tip:** El programa buscará estas palabras en TODAS las columnas de tu archivo Excel
@@ -304,8 +199,8 @@ st.markdown("---")
 st.markdown(
     """
     <div class="footer">
-        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v4.2<br>
-        Sistema de clasificación de pagos, transferencias y comisiones
+        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v5.0<br>
+        Sistema de clasificación por conceptos personalizados
     </div>
     """,
     unsafe_allow_html=True
