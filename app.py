@@ -54,7 +54,7 @@ st.markdown("""
     
     /* Expander */
     .streamlit-expanderHeader {
-        background-color: #f8f9fa;
+        background-color: #ffffff;
         border-radius: 8px;
     }
     
@@ -78,7 +78,7 @@ st.markdown("""
 col_logo, col_titulo = st.columns([1, 5])
 with col_logo:
     try:
-        st.image("LOGO.jpeg", width=70)
+        st.image("LOGO.jpeg", width=80)
     except:
         st.image("https://via.placeholder.com/80?text=NEXO", width=80)
 with col_titulo:
