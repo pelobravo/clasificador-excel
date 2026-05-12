@@ -123,22 +123,23 @@ with st.sidebar:
     
     st.header("🔍 Configuración de Búsqueda")
     
-    conceptos_default = "pago movil, comision, transferencia, pago celular"
+    conceptos_default = "pago movil, comision"
     conceptos = st.text_area(
         "📝 Conceptos a buscar (separados por coma)",
         conceptos_default,
-        help="Ejemplo: pago movil, comision, transferencia. Cada concepto será una columna independiente."
+        help="Ejemplo: pago movil, comision. Cada concepto será una columna independiente con el valor encontrado."
     )
     
     st.markdown("---")
     
     procesar = st.button("🚀 Procesar y Clasificar", type="primary", use_container_width=True)
 
-# Función para buscar coincidencias
+# Función para buscar coincidencias - AHORA MUESTRA EL CONCEPTO ENCONTRADO
 def buscar_coincidencias_columnas(df, conceptos_list):
     """
     Busca conceptos en todas las columnas del dataframe.
     Crea una columna independiente para CADA concepto buscado.
+    En cada celda escribe el concepto encontrado (ej: "pago movil") o "No detectado"
     """
     resultados = []
     
@@ -157,9 +158,10 @@ def buscar_coincidencias_columnas(df, conceptos_list):
         conceptos_detectados = {}
         for concepto in conceptos_list:
             if concepto in texto_completo:
-                conceptos_detectados[f'📌 {concepto.upper()}'] = 'Sí'
+                # Guardar el texto del concepto encontrado
+                conceptos_detectados[f'📌 {concepto.upper()}'] = concepto
             else:
-                conceptos_detectados[f'📌 {concepto.upper()}'] = 'No'
+                conceptos_detectados[f'📌 {concepto.upper()}'] = 'No detectado'
         
         # --- DETECTAR MONTOS ---
         monto = None
@@ -169,7 +171,6 @@ def buscar_coincidencias_columnas(df, conceptos_list):
                 if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
                     if monto is None:
                         monto = valor
-                    # Si la columna se llama "monto", priorizarla
                     if 'monto' in str(col).lower():
                         monto = valor
                         break
@@ -207,7 +208,7 @@ if archivo:
                 
                 st.write("**Buscando:**")
                 st.write(f"📝 Conceptos ({len(conceptos_list)}): {', '.join(conceptos_list)}")
-                st.info(f"📌 Se crearán {len(conceptos_list)} columnas independientes, una por cada concepto")
+                st.info(f"📌 Se crearán {len(conceptos_list)} columnas independientes. En cada fila se escribirá el concepto encontrado o 'No detectado'.")
                 
                 with st.spinner('🔄 Clasificando datos...'):
                     df_resultados = buscar_coincidencias_columnas(df_original, conceptos_list)
@@ -216,7 +217,7 @@ if archivo:
                 if len(df_resultados) > 0:
                     st.success(f"✅ **¡Éxito!** Se procesaron {len(df_resultados)} registros")
                     
-                    # Contar coincidencias de conceptos
+                    # Contar coincidencias de conceptos (donde no dice "No detectado")
                     columnas_conceptos = []
                     for col_name in df_resultados.columns:
                         col_str = str(col_name)
@@ -224,10 +225,10 @@ if archivo:
                             columnas_conceptos.append(col_str)
                     
                     if columnas_conceptos:
-                        total_coincidencias = 0
+                        st.subheader("📊 Resumen de coincidencias por concepto")
                         for col in columnas_conceptos:
-                            total_coincidencias += (df_resultados[col] == 'Sí').sum()
-                        st.metric("📊 Total de coincidencias entre conceptos", total_coincidencias)
+                            cantidad = (df_resultados[col] != 'No detectado').sum()
+                            st.metric(col, f"{cantidad} / {len(df_resultados)} registros")
                     
                     # Métricas
                     col_a, col_b, col_c, col_d = st.columns(4)
@@ -287,9 +288,12 @@ else:
     
     ### 🆕 Columnas por concepto!
     Cada concepto que buscas se convierte en una columna independiente.
+    - Si encuentra **"pago movil"**, escribe `pago movil` en la columna
+    - Si encuentra **"comision"**, escribe `comision` en la columna
+    - Si no encuentra nada, escribe `No detectado`
     
     ### Ejemplos de búsqueda:
-    - **Conceptos:** pago movil, comision, transferencia, pago celular
+    - **Conceptos:** pago movil, comision
     
     ---
     **💡 Tip:** El programa buscará estas palabras en TODAS las columnas de tu archivo Excel
@@ -300,7 +304,7 @@ st.markdown("---")
 st.markdown(
     """
     <div class="footer">
-        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v4.0<br>
+        <strong>Grupo Bodeguita Oriente</strong> - Clasificador de Excel v4.2<br>
         Sistema de clasificación de pagos, transferencias y comisiones
     </div>
     """,
