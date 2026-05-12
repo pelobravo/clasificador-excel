@@ -5,7 +5,7 @@ from io import BytesIO
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Clasificador de Excel - Nexo Comercial Oriente",
+    page_title="Clasificador de Excel - Grupo Bodeguita Oriente",
     page_icon="🏦",
     layout="wide"
 )
