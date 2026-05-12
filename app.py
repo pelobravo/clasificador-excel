@@ -24,7 +24,7 @@ with col_logo:
         st.image("https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg", width=80)
 with col_titulo:
     st.title("Clasificador Bancario")
-    st.markdown("### Grupo Bodeguita Oriente - Detección Automática")
+    st.markdown("### Grupo Bodeguita Oriente")
 st.markdown("---")
 
 with st.sidebar:
@@ -32,160 +32,150 @@ with st.sidebar:
     st.markdown("---")
     archivo = st.file_uploader("📂 Cargar archivo Excel", type=['xlsx', 'xls'])
     st.markdown("---")
-    st.caption("El programa detecta automáticamente: Banco, Fechas, Montos y tipo de movimiento")
-    procesar = st.button("🚀 Procesar Automáticamente", type="primary", use_container_width=True)
+    procesar = st.button("🚀 Procesar", type="primary", use_container_width=True)
 
-def detectar_banco(df):
-    """Detecta el banco basado en el contenido del archivo"""
-    texto_completo = " ".join([str(v).lower() for v in df.values.flatten() if pd.notna(v)])
-    
-    if 'mercantil' in texto_completo:
-        return 'MERCANTIL'
-    elif 'banesco' in texto_completo:
-        return 'BANESCO'
-    elif 'provincial' in texto_completo:
-        return 'PROVINCIAL'
-    elif 'venezuela' in texto_completo or 'bdv' in texto_completo:
-        return 'VENEZUELA'
-    else:
-        return 'GENERICO'
-
-def encontrar_columna_datos(df):
+def procesar_completo(df):
     """
-    Encuentra la fila donde comienzan los datos reales
-    Busca patrones como: NC, ND, fechas numéricas, montos
+    Procesa el archivo y extrae: INGRESOS, EGRESOS y COMISIONES
+    con descripción real y montos correctos
     """
-    for idx, fila in df.iterrows():
-        texto_fila = " ".join([str(v) for v in fila.values if pd.notna(v)]).upper()
-        if 'NC' in texto_fila or 'ND' in texto_fila:
-            return idx
-        # También buscar si hay números que parecen fechas (DDMMYYYY o D/M/YYYY)
-        match = re.search(r'\d{2}\d{2}\d{4}|\d{1,2}/\d{1,2}/\d{2,4}', texto_fila)
-        if match and len(texto_fila) > 20:
-            return idx
-    return 0
-
-def clasificar_automaticamente(df, fila_inicio):
-    """
-    Clasifica automáticamente ingresos, egresos y comisiones
-    """
-    # Crear nuevo DataFrame desde la fila de inicio
-    df_datos = df.iloc[fila_inicio:].reset_index(drop=True)
+    # Convertir todo a string para análisis
+    df_str = df.astype(str)
     
     ingresos = []
     egresos = []
     comisiones = []
     
-    # Buscar columnas que parecen contener fechas, descripciones y montos
-    col_fecha = None
-    col_desc = None
-    col_monto = None
+    # Buscar la columna que contiene descripciones largas (texto real)
+    columna_descripcion = None
+    for col in df.columns:
+        # Buscar columna con textos largos (descripciones reales)
+        textos_largos = 0
+        for valor in df[col].head(20):
+            if pd.notna(valor) and isinstance(valor, str) and len(str(valor)) > 15:
+                textos_largos += 1
+        if textos_largos > 5:  # Si tiene muchos textos largos, es la columna de descripción
+            columna_descripcion = col
+            break
     
-    # Analizar primera fila de datos para identificar columnas
-    primera_fila = df_datos.iloc[0] if len(df_datos) > 0 else None
-    
-    if primera_fila is not None:
-        for i, valor in enumerate(primera_fila):
-            valor_str = str(valor).upper()
-            
-            # Detectar columna de NC/ND (tipo de movimiento)
-            if 'NC' in valor_str or 'ND' in valor_str:
-                col_tipo = i
-            
-            # Detectar columna de fecha (patrón de números: DDMMYYYY o DD/MM/YYYY)
-            if re.search(r'\d{2}\d{2}\d{4}|\d{1,2}/\d{1,2}/\d{2,4}', valor_str):
-                if col_fecha is None:
-                    col_fecha = i
-            
-            # Detectar columna de descripción (texto largo, mayor a 10 caracteres)
-            if len(valor_str) > 15 and not re.search(r'\d', valor_str.replace('/', '').replace('-', '')):
-                if col_desc is None:
-                    col_desc = i
-    
-    # Si no se encontró columna de fecha, buscar en todas las filas
-    if col_fecha is None:
-        for fila in df_datos.iterrows():
-            for i, valor in enumerate(fila[1]):
-                valor_str = str(valor)
-                if re.search(r'\d{2}\d{2}\d{4}', valor_str) and len(valor_str) == 8:
-                    col_fecha = i
-                    break
-            if col_fecha is not None:
+    # Si no se encontró, buscar cualquier columna con texto
+    if columna_descripcion is None:
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                columna_descripcion = col
                 break
     
-    # Detectar columna de monto (la que tenga números grandes o decimales)
-    for i in range(len(df_datos.columns)):
+    st.info(f"📝 Columna de descripción detectada: {columna_descripcion}")
+    
+    # Buscar la columna de montos (números grandes)
+    columna_monto = None
+    for col in df.columns:
         valores_numericos = 0
-        for fila in df_datos.iterrows():
-            valor = fila[1][i]
+        for valor in df[col].head(50):
             if pd.notna(valor):
                 try:
-                    num = float(str(valor).replace(',', '.'))
-                    if num > 0 and num < 999999999:
+                    num = float(str(valor).replace(',', '').replace('.', ''))
+                    if 100 < num < 999999999:  # Rango típico de montos
                         valores_numericos += 1
                 except:
                     pass
-        if valores_numericos > len(df_datos) * 0.5:  # Más del 50% son números
-            col_monto = i
+        if valores_numericos > 10:
+            columna_monto = col
             break
     
-    st.info(f"🔍 Detección automática: Fecha columna {col_fecha}, Monto columna {col_monto}, Descripción columna {col_desc}")
+    st.info(f"💰 Columna de montos detectada: {columna_monto}")
+    
+    # Buscar columna de fecha
+    columna_fecha = None
+    for col in df.columns:
+        for valor in df[col].head(20):
+            if pd.notna(valor):
+                valor_str = str(valor)
+                if re.search(r'\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4}|\d{6}', valor_str):
+                    columna_fecha = col
+                    break
+        if columna_fecha:
+            break
     
     # Procesar cada fila
-    for _, fila in df_datos.iterrows():
-        # Obtener valores
-        fecha = fila[col_fecha] if col_fecha is not None and col_fecha < len(fila) else ''
-        descripcion = fila[col_desc] if col_desc is not None and col_desc < len(fila) else ''
-        monto_valor = fila[col_monto] if col_monto is not None and col_monto < len(fila) else 0
+    for idx, fila in df.iterrows():
+        # Obtener descripción REAL (texto largo)
+        descripcion = ""
+        if columna_descripcion and pd.notna(fila[columna_descripcion]):
+            descripcion = str(fila[columna_descripcion])
         
-        # Convertir monto a número
-        try:
-            monto_num = float(str(monto_valor).replace(',', '.').replace(' ', ''))
-        except:
-            monto_num = 0
+        # Si la descripción es muy corta o es un número, buscar en otras columnas
+        if len(descripcion) < 10 or descripcion.isdigit():
+            for col in df.columns:
+                valor = fila[col]
+                if pd.notna(valor) and isinstance(valor, str) and len(str(valor)) > 10:
+                    descripcion = str(valor)
+                    break
         
-        # Detectar tipo por NC/ND
-        tipo_fila = " ".join([str(v).upper() for v in fila.values if pd.notna(v)])
+        # Obtener monto
+        monto = 0
+        if columna_monto and pd.notna(fila[columna_monto]):
+            try:
+                monto_str = str(fila[columna_monto]).replace(',', '').replace(' ', '')
+                monto = float(monto_str)
+            except:
+                monto = 0
         
+        # Obtener fecha
+        fecha = ""
+        if columna_fecha and pd.notna(fila[columna_fecha]):
+            fecha = str(fila[columna_fecha])
+        
+        # Determinar tipo de movimiento
+        texto_completo = " ".join([str(v) for v in fila.values if pd.notna(v)]).upper()
+        
+        # Buscar NC (Nota de Crédito = Ingreso), ND (Nota de Débito = Egreso)
+        es_ingreso = False
+        es_egreso = False
+        es_comision = False
+        
+        if 'COMISION' in texto_completo or 'COMISIÓN' in texto_completo:
+            es_comision = True
+        elif 'NC' in texto_completo or 'INGRESO' in texto_completo or monto > 0:
+            es_ingreso = True
+        elif 'ND' in texto_completo or 'EGRESO' in texto_completo or monto < 0:
+            es_egreso = True
+        elif monto > 0:
+            es_ingreso = True
+        elif monto < 0:
+            es_egreso = True
+        
+        # Crear registro
         registro = {
             'FECHA': fecha,
             'DESCRIPCIÓN': descripcion,
-            'MONTO': abs(monto_num)
+            'MONTO': abs(monto)
         }
         
         # Clasificar
-        if 'COMISION' in tipo_fila:
+        if es_comision:
             comisiones.append(registro)
-        elif 'NC' in tipo_fila or monto_num > 0:
+        elif es_ingreso:
             ingresos.append(registro)
-        elif 'ND' in tipo_fila or monto_num < 0:
-            registro['CLASIFICACIÓN'] = 'EGRESO'
+        elif es_egreso:
+            registro['TIPO'] = 'EGRESO'
             egresos.append(registro)
     
     return ingresos, egresos, comisiones
 
-# Área principal
 if archivo:
     st.info(f"📄 Archivo: **{archivo.name}** - {archivo.size/1024:.1f} KB")
     
     try:
-        df_original = pd.read_excel(archivo, header=None)  # Leer sin encabezados
+        # Cargar el Excel
+        df_original = pd.read_excel(archivo)
         
-        with st.expander("👁️ Vista previa del archivo (primeras 20 filas)"):
-            st.dataframe(df_original.head(20), use_container_width=True)
+        with st.expander("👁️ Vista previa del archivo (primeras 15 filas)"):
+            st.dataframe(df_original.head(15), use_container_width=True)
         
         if procesar:
-            with st.spinner('Analizando archivo automáticamente...'):
-                # Detectar banco
-                banco = detectar_banco(df_original)
-                st.info(f"🏦 Banco detectado: **{banco}**")
-                
-                # Encontrar fila donde comienzan los datos
-                fila_inicio = encontrar_columna_datos(df_original)
-                st.info(f"📌 Datos comienzan en fila: {fila_inicio + 1}")
-                
-                # Clasificar
-                ingresos, egresos, comisiones = clasificar_automaticamente(df_original, fila_inicio)
+            with st.spinner('Procesando archivo...'):
+                ingresos, egresos, comisiones = procesar_completo(df_original)
             
             st.success(f"✅ Procesado: {len(ingresos)} INGRESOS | {len(egresos)} EGRESOS | {len(comisiones)} COMISIONES")
             
@@ -195,48 +185,58 @@ if archivo:
             col2.metric("💸 EGRESOS", len(egresos))
             col3.metric("💳 COMISIONES", len(comisiones))
             
-            # Crear Excel de salida
+            # Crear Excel con 3 hojas
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 if ingresos:
-                    pd.DataFrame(ingresos).to_excel(writer, sheet_name='INGRESOS', index=False)
-                if egresos:
-                    pd.DataFrame(egresos).to_excel(writer, sheet_name='EGRESOS', index=False)
-                if comisiones:
-                    pd.DataFrame(comisiones).to_excel(writer, sheet_name='COMISIONES', index=False)
+                    df_ingresos = pd.DataFrame(ingresos)
+                    df_ingresos.to_excel(writer, sheet_name='INGRESOS', index=False)
                 
-                # Resumen
+                if egresos:
+                    df_egresos = pd.DataFrame(egresos)
+                    df_egresos.to_excel(writer, sheet_name='EGRESOS', index=False)
+                
+                if comisiones:
+                    df_comisiones = pd.DataFrame(comisiones)
+                    df_comisiones.to_excel(writer, sheet_name='COMISIONES', index=False)
+                
+                # Hoja de resumen
                 resumen = pd.DataFrame([
-                    {'TIPO': 'INGRESOS', 'CANTIDAD': len(ingresos), 'MONTO TOTAL': sum(i.get('MONTO', 0) for i in ingresos)},
-                    {'TIPO': 'EGRESOS', 'CANTIDAD': len(egresos), 'MONTO TOTAL': sum(e.get('MONTO', 0) for e in egresos)},
-                    {'TIPO': 'COMISIONES', 'CANTIDAD': len(comisiones), 'MONTO TOTAL': sum(c.get('MONTO', 0) for c in comisiones)}
+                    {'TIPO': 'INGRESOS', 'CANTIDAD': len(ingresos), 'MONTO_TOTAL': sum(i.get('MONTO', 0) for i in ingresos)},
+                    {'TIPO': 'EGRESOS', 'CANTIDAD': len(egresos), 'MONTO_TOTAL': sum(e.get('MONTO', 0) for e in egresos)},
+                    {'TIPO': 'COMISIONES', 'CANTIDAD': len(comisiones), 'MONTO_TOTAL': sum(c.get('MONTO', 0) for c in comisiones)}
                 ])
                 resumen.to_excel(writer, sheet_name='RESUMEN', index=False)
             
             output.seek(0)
             
-            # Mostrar previsualización
-            tabs = st.tabs(["INGRESOS", "EGRESOS", "COMISIONES"])
-            with tabs[0]:
+            # Mostrar previsualización en pestañas
+            st.subheader("📊 Resultados")
+            tab1, tab2, tab3 = st.tabs(["📈 INGRESOS", "📉 EGRESOS", "💳 COMISIONES"])
+            
+            with tab1:
                 if ingresos:
                     st.dataframe(pd.DataFrame(ingresos), use_container_width=True)
                 else:
                     st.info("No se encontraron INGRESOS")
-            with tabs[1]:
+            
+            with tab2:
                 if egresos:
                     st.dataframe(pd.DataFrame(egresos), use_container_width=True)
                 else:
                     st.info("No se encontraron EGRESOS")
-            with tabs[2]:
+            
+            with tab3:
                 if comisiones:
                     st.dataframe(pd.DataFrame(comisiones), use_container_width=True)
                 else:
                     st.info("No se encontraron COMISIONES")
             
+            # Botón de descarga
             st.download_button(
-                label="📥 Descargar Excel organizado",
+                label="📥 Descargar Excel (INGRESOS, EGRESOS, COMISIONES, RESUMEN)",
                 data=output.getvalue(),
-                file_name=f"balance_{banco}_{archivo.name}",
+                file_name=f"balance_{archivo.name}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -246,21 +246,17 @@ if archivo:
 
 else:
     st.markdown("""
-    ### 👋 Clasificador Bancario Automático
+    ### 👋 Clasificador Bancario
     
-    **Simplemente:**
-    1. 📂 Carga tu extracto bancario
-    2. 🚀 Presiona "Procesar Automáticamente"
-    3. 📊 Obtén INGRESOS, EGRESOS y COMISIONES
+    **Carga el archivo y presiona Procesar**
     
-    **El programa detecta todo automáticamente:**
-    - 🔍 El banco (Banesco, Mercantil, Provincial, etc.)
-    - 📅 Las fechas y montos
-    - 💳 Las comisiones
-    - ⬆️⬇️ Los ingresos y egresos por NC/ND
+    El programa extrae automáticamente:
+    - ✅ **INGRESOS** (Notas de Crédito, montos positivos)
+    - ✅ **EGRESOS** (Notas de Débito, montos negativos)
+    - ✅ **COMISIONES** (transacciones que contengan "comision")
     
-    **Sin configurar nada. Sin seleccionar columnas.**
+    **Luego puedes descargar un EXCEL con 3 hojas separadas**
     """)
 
 st.markdown("---")
-st.markdown('<div class="footer"><strong>Grupo Bodeguita Oriente</strong> - Clasificador Automático v10.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer"><strong>Grupo Bodeguita Oriente</strong> - Clasificador v11.0</div>', unsafe_allow_html=True)
