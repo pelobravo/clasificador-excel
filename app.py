@@ -155,20 +155,22 @@ with st.sidebar:
     # Botón de procesamiento
     procesar = st.button("🚀 Procesar y Clasificar", type="primary", use_container_width=True)
 
-# Función para buscar coincidencias en todo el dataframe
+# Función para buscar coincidencias en todo el dataframe (CORREGIDA)
 def buscar_coincidencias(df, conceptos_list, bancos_list):
     """
     Busca conceptos y bancos en todas las columnas del dataframe
+    Maneja correctamente números, fechas y texto
     """
     resultados = []
     
     for idx, row in df.iterrows():
-        # Unir todas las celdas de la fila en un solo texto
-        texto_completo = " ".join([
-            str(valor).lower() 
-            for valor in row.values 
-            if pd.notna(valor) and isinstance(valor, (str, int, float))
-        ])
+        # Crear una lista segura con todas las celdas convertidas a string
+        partes = []
+        for valor in row.values:
+            if pd.notna(valor):
+                # Convertir absolutamente todo a string (números, fechas, texto, etc.)
+                partes.append(str(valor).lower())
+        texto_completo = " ".join(partes)
         
         # Buscar conceptos
         concepto_encontrado = None
@@ -187,12 +189,14 @@ def buscar_coincidencias(df, conceptos_list, bancos_list):
         # Buscar montos (valores numéricos)
         monto = None
         for col in df.columns:
-            if pd.notna(row[col]) and isinstance(row[col], (int, float)) and row[col] > 0:
-                if 'monto' in col.lower() or 'monto' in str(col).lower():
-                    monto = row[col]
+            valor = row[col]
+            if pd.notna(valor) and isinstance(valor, (int, float)) and valor > 0:
+                # Buscar columnas que contengan "monto"
+                if 'monto' in str(col).lower():
+                    monto = valor
                     break
                 elif monto is None:
-                    monto = row[col]
+                    monto = valor
         
         # Si encontró al menos un concepto o banco, guardar
         if concepto_encontrado or banco_encontrado:
