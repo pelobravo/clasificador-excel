@@ -1,17 +1,89 @@
 import streamlit as st
 import pandas as pd
 import re
+from io import BytesIO
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Clasificador de Excel - Bancos y Conceptos",
-    page_icon="📊",
+    page_title="Clasificador de Excel - Nexo Comercial Oriente",
+    page_icon="🏦",
     layout="wide"
 )
 
-# Título principal
-st.title("🏦 Clasificador de Excel - Bancos y Conceptos")
-st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
+# Personalización de colores y estilos (CSS)
+st.markdown("""
+    <style>
+    /* Color de fondo principal */
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    
+    /* Botón principal */
+    .stButton > button {
+        background-color: #1e3a5f;
+        color: white;
+        border-radius: 8px;
+        padding: 10px 24px;
+        font-weight: bold;
+        border: none;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        background-color: #2c5282;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* Títulos */
+    h1, h2, h3 {
+        color: #1e3a5f;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: #ffffff;
+    }
+    
+    /* Tarjetas de métricas */
+    .stMetric {
+        background-color: white;
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+    }
+    
+    /* Dataframe */
+    .stDataFrame {
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    /* Footer */
+    .footer {
+        text-align: center;
+        color: #666;
+        padding: 20px;
+        font-size: 14px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Título principal con logo
+col_logo, col_titulo = st.columns([1, 5])
+with col_logo:
+    try:
+        st.image("LOGO.jpeg", width=80)
+    except:
+        st.image("https://via.placeholder.com/80?text=NEXO", width=80)
+with col_titulo:
+    st.title("🏦 Clasificador de Excel - Bancos y Conceptos")
+    st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
 st.markdown("---")
 
 # Inicializar estado de sesión
@@ -20,6 +92,9 @@ if 'df_procesado' not in st.session_state:
 
 # Sidebar para configuración
 with st.sidebar:
+    st.image("LOGO.jpeg", width=150, caption="Nexo Comercial Oriente")
+    st.markdown("---")
+    
     st.header("📂 Cargar Archivo")
     archivo = st.file_uploader(
         "Selecciona un archivo Excel",
@@ -85,8 +160,7 @@ def buscar_coincidencias(df, conceptos_list, bancos_list):
         monto = None
         for col in df.columns:
             if pd.notna(row[col]) and isinstance(row[col], (int, float)) and row[col] > 0:
-                # Asumimos que la primera columna numérica positiva es el monto
-                if 'monto' in col.lower() or 'monto' in str(col).lower() or 'monto' in str(col).lower():
+                if 'monto' in col.lower() or 'monto' in str(col).lower():
                     monto = row[col]
                     break
                 elif monto is None:
@@ -149,13 +223,13 @@ if archivo:
                     # Métricas
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Total Registros", len(df_original))
+                        st.metric("📊 Total Registros", len(df_original))
                     with col2:
-                        st.metric("Coincidencias", len(df_resultados))
+                        st.metric("✅ Coincidencias", len(df_resultados))
                     with col3:
-                        st.metric("Porcentaje", f"{(len(df_resultados)/len(df_original)*100):.1f}%")
+                        st.metric("📈 Porcentaje", f"{(len(df_resultados)/len(df_original)*100):.1f}%")
                     with col4:
-                        st.metric("No encontrados", len(df_original) - len(df_resultados))
+                        st.metric("❌ No encontrados", len(df_original) - len(df_resultados))
                     
                     # Gráfico de bancos encontrados
                     if '🏦 Banco Detectado' in df_resultados.columns:
@@ -183,7 +257,6 @@ if archivo:
                     
                     # Descargar Excel
                     with col2:
-                        from io import BytesIO
                         output = BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             df_resultados.to_excel(writer, sheet_name='Resultados', index=False)
@@ -207,9 +280,9 @@ if archivo:
 else:
     # Mensaje inicial
     st.markdown("""
-    ### 👋 ¡Bienvenido!
+    ### 👋 ¡Bienvenido a Nexo Comercial Oriente!
     
-    **¿Cómo funciona?**
+    **¿Cómo funciona este clasificador?**
     
     1. 📂 **Carga** un archivo Excel desde la barra lateral izquierda
     2. 🔍 **Configura** qué conceptos y bancos quieres buscar
@@ -225,6 +298,15 @@ else:
     **💡 Tip:** El programa buscará estas palabras en TODAS las columnas de tu archivo Excel
     """)
 
-# Footer
+# Footer personalizado
 st.markdown("---")
-st.caption("🔧 Clasificador de Excel v1.0 - Desarrollado con Streamlit")
+st.markdown(
+    """
+    <div class="footer">
+        <strong>Nexo Comercial Oriente</strong> - Clasificador de Excel v2.0<br>
+        Sistema de clasificación de pagos y transferencias bancarias<br>
+        Desarrollado con Streamlit
+    </div>
+    """,
+    unsafe_allow_html=True
+)
