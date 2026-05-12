@@ -71,6 +71,15 @@ st.markdown("""
         padding: 20px;
         font-size: 14px;
     }
+    
+    /* Centrar contenido en sidebar */
+    .sidebar-center {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -80,7 +89,7 @@ with col_logo:
     try:
         st.image("LOGO.jpeg", width=80)
     except:
-        st.image("https://via.placeholder.com/80?text=NEXO", width=80)
+        st.image("https://via.placeholder.com/80?text=GBO", width=80)
 with col_titulo:
     st.title("Clasificador de Excel - Bancos y Conceptos")
     st.markdown("### Clasifica automáticamente pagos móviles, transferencias y bancos")
@@ -90,9 +99,28 @@ st.markdown("---")
 if 'df_procesado' not in st.session_state:
     st.session_state.df_procesado = None
 
-# Sidebar para configuración
+# Sidebar para configuración con logo centrado
 with st.sidebar:
-    st.image("LOGO.jpeg", width=100, caption="Grupo Bodeguita Oriente")
+    # Logo centrado usando HTML/CSS
+    st.markdown(
+        """
+        <div style="display: flex; justify-content: center; margin: 10px 0 10px 0;">
+            <img src="https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg" width="100">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    # Texto del grupo centrado
+    st.markdown(
+        """
+        <div style="text-align: center; margin-bottom: 20px;">
+            <strong style="font-size: 16px; color: #1e3a5f;">Grupo Bodeguita Oriente</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
     st.markdown("---")
     
     st.header("📂 Cargar Archivo")
