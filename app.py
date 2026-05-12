@@ -192,7 +192,7 @@ if archivo:
 
 else:
     st.markdown("""
-    ### 👋 ¡Bienvenido!
+    ### 👋 ¡Bienvenido a Grupo Bodeguita Oriente!
     
     1. Carga un archivo Excel
     2. Escribe los conceptos (ej: pago movil, comision)
