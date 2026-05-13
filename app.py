@@ -20,6 +20,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+
 .stApp {
     background-color: #ffffff;
 }
@@ -47,6 +48,14 @@ h1, h2, h3 {
     padding: 20px;
     font-size: 14px;
 }
+
+.kpi-card {
+    background-color: #f8fafc;
+    padding: 15px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -57,8 +66,10 @@ h1, h2, h3 {
 col_logo, col_titulo = st.columns([1, 5])
 
 with col_logo:
+
     try:
         st.image("LOGO.jpeg", width=80)
+
     except Exception:
         st.image(
             "https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg",
@@ -66,6 +77,7 @@ with col_logo:
         )
 
 with col_titulo:
+
     st.title("Clasificador Bancario")
     st.markdown("### Grupo Bodeguita Oriente")
 
@@ -98,57 +110,10 @@ with st.sidebar:
     )
 
 # =========================================================
-# FUNCIONES AUXILIARES
+# FUNCIONES
 # =========================================================
 
-def es_fecha_valida(valor):
-    """
-    Determina si un valor parece una fecha
-    """
-
-    if pd.isna(valor):
-        return False
-
-    # Si pandas ya detectó fecha
-    if isinstance(valor, (datetime, pd.Timestamp)):
-        return True
-
-    valor_str = str(valor).strip()
-
-    patrones = [
-        r'\d{2}/\d{2}/\d{4}',
-        r'\d{2}-\d{2}-\d{4}',
-        r'\d{4}/\d{2}/\d{2}',
-        r'\d{2}\.\d{2}\.\d{4}',
-    ]
-
-    for patron in patrones:
-        if re.search(patron, valor_str):
-            return True
-
-    return False
-
-
-def convertir_fecha(valor):
-
-    try:
-
-        if isinstance(valor, (datetime, pd.Timestamp)):
-            return valor.strftime("%d/%m/%Y")
-
-        return str(valor).strip()
-
-    except Exception:
-        return ""
-
-
 def convertir_monto(valor):
-    """
-    Convierte montos correctamente:
-    1.234,56
-    1,234.56
-    1234,56
-    """
 
     try:
 
@@ -160,91 +125,28 @@ def convertir_monto(valor):
 
         valor = str(valor).strip()
 
-        # eliminar espacios
         valor = valor.replace(" ", "")
-
-        # eliminar símbolos
         valor = valor.replace("$", "")
         valor = valor.replace("Bs", "")
         valor = valor.replace("€", "")
 
         # FORMATO EUROPEO
         # 1.234,56
+
         if "." in valor and "," in valor:
+
             valor = valor.replace(".", "")
             valor = valor.replace(",", ".")
 
-        # FORMATO 1234,56
         elif "," in valor:
+
             valor = valor.replace(",", ".")
 
         return float(valor)
 
     except Exception:
+
         return None
-
-
-def es_monto_valido(valor):
-
-    monto = convertir_monto(valor)
-
-    if monto is None:
-        return False
-
-    return 0.01 <= abs(monto) <= 999999999
-
-
-def es_descripcion_valida(valor):
-
-    if pd.isna(valor):
-        return False
-
-    valor_str = str(valor).strip()
-
-    if len(valor_str) < 5:
-        return False
-
-    return bool(re.search(r'[A-Za-zÁÉÍÓÚáéíóúÑñ]', valor_str))
-
-
-def detectar_tipo_movimiento(texto):
-
-    texto = str(texto).upper()
-
-    # INGRESOS
-    patrones_ingreso = [
-        r'\bNC\b',
-        r'\bCR\b',
-        r'\bCREDITO\b',
-        r'\bCRÉDITO\b',
-        r'\bABONO\b',
-        r'\bINGRESO\b',
-        r'\bDEPOSITO\b',
-        r'\bDEPÓSITO\b',
-    ]
-
-    # EGRESOS
-    patrones_egreso = [
-        r'\bND\b',
-        r'\bDB\b',
-        r'\bDR\b',
-        r'\bDEBITO\b',
-        r'\bDÉBITO\b',
-        r'\bCARGO\b',
-        r'\bEGRESO\b',
-        r'\bPAGO\b',
-        r'\bRETIRO\b',
-    ]
-
-    for patron in patrones_ingreso:
-        if re.search(patron, texto):
-            return "INGRESO"
-
-    for patron in patrones_egreso:
-        if re.search(patron, texto):
-            return "EGRESO"
-
-    return ""
 
 
 def es_comision(texto):
@@ -254,15 +156,78 @@ def es_comision(texto):
     palabras = [
         "comision",
         "comisión",
-        "comis",
+        "cargo bancario",
         "fee",
-        "cargo bancario"
+        "iva comisión"
     ]
 
     return any(p in texto for p in palabras)
 
+
 # =========================================================
-# PROCESAMIENTO PRINCIPAL
+# DETECTAR COLUMNAS
+# =========================================================
+
+def detectar_columnas(df):
+
+    columnas = {
+        "fecha": None,
+        "descripcion": None,
+        "debito": None,
+        "credito": None
+    }
+
+    for col in df.columns:
+
+        muestra = " ".join(
+            df[col].astype(str).head(30).tolist()
+        ).lower()
+
+        # FECHA
+        if columnas["fecha"] is None:
+
+            if "fecha" in muestra:
+                columnas["fecha"] = col
+
+        # DESCRIPCIÓN
+        if columnas["descripcion"] is None:
+
+            if (
+                "descripcion" in muestra or
+                "descripción" in muestra or
+                "detalle" in muestra or
+                "concepto" in muestra or
+                "movimiento" in muestra
+            ):
+                columnas["descripcion"] = col
+
+        # DÉBITO
+        if columnas["debito"] is None:
+
+            if (
+                "debito" in muestra or
+                "débito" in muestra or
+                "cargo" in muestra or
+                "retiro" in muestra
+            ):
+                columnas["debito"] = col
+
+        # CRÉDITO
+        if columnas["credito"] is None:
+
+            if (
+                "credito" in muestra or
+                "crédito" in muestra or
+                "abono" in muestra or
+                "deposito" in muestra or
+                "depósito" in muestra
+            ):
+                columnas["credito"] = col
+
+    return columnas
+
+# =========================================================
+# PROCESAMIENTO
 # =========================================================
 
 def procesar_archivo(df):
@@ -271,145 +236,130 @@ def procesar_archivo(df):
     egresos = []
     comisiones = []
 
+    columnas = detectar_columnas(df)
+
+    col_fecha = columnas["fecha"]
+    col_desc = columnas["descripcion"]
+    col_debito = columnas["debito"]
+    col_credito = columnas["credito"]
+
+    if col_desc is None:
+
+        st.error("❌ No se detectó columna de descripción")
+        return ingresos, egresos, comisiones
+
     registros_procesados = set()
 
-    for fila in df.itertuples(index=False):
+    for _, fila in df.iterrows():
 
-        fecha = ""
-        descripcion = ""
-        monto = None
-        tipo_movimiento = ""
+        try:
 
-        fila_texto = " ".join([
-            str(x) for x in fila if pd.notna(x)
-        ])
+            # =================================================
+            # FECHA
+            # =================================================
 
-        # =====================================================
-        # RECORRER COLUMNAS
-        # =====================================================
+            fecha = ""
 
-        for valor in fila:
+            if col_fecha is not None:
 
-            if pd.isna(valor):
+                fecha = str(fila[col_fecha]).strip()
+
+            # =================================================
+            # DESCRIPCIÓN
+            # =================================================
+
+            descripcion = str(
+                fila[col_desc]
+            ).strip()
+
+            if (
+                descripcion == "" or
+                descripcion.lower() == "nan"
+            ):
                 continue
 
-            valor_str = str(valor).strip()
+            # =================================================
+            # INGRESOS
+            # =================================================
 
-            # -------------------------------------------------
-            # FECHA
-            # -------------------------------------------------
+            if col_credito is not None:
 
-            if not fecha and es_fecha_valida(valor):
-                fecha = convertir_fecha(valor)
+                monto_credito = convertir_monto(
+                    fila[col_credito]
+                )
 
-            # -------------------------------------------------
-            # DESCRIPCIÓN
-            # -------------------------------------------------
+                if (
+                    monto_credito is not None and
+                    monto_credito > 0
+                ):
 
-            if not descripcion and es_descripcion_valida(valor):
-                descripcion = valor_str
+                    registro = {
+                        "FECHA": fecha,
+                        "DESCRIPCIÓN": descripcion,
+                        "MONTO": round(monto_credito, 2)
+                    }
 
-            # -------------------------------------------------
-            # MONTO
-            # -------------------------------------------------
+                    clave = (
+                        fecha,
+                        descripcion,
+                        monto_credito,
+                        "INGRESO"
+                    )
 
-            if es_monto_valido(valor):
+                    if clave not in registros_procesados:
 
-                monto_temp = convertir_monto(valor)
+                        registros_procesados.add(clave)
 
-                if monto_temp is not None:
+                        if es_comision(descripcion):
 
-                    # Tomar el monto de mayor magnitud
-                    if monto is None:
-                        monto = monto_temp
+                            comisiones.append(registro)
 
-                    elif abs(monto_temp) > abs(monto):
-                        monto = monto_temp
+                        else:
 
-            # -------------------------------------------------
-            # TIPO
-            # -------------------------------------------------
+                            ingresos.append(registro)
 
-            tipo_detectado = detectar_tipo_movimiento(valor_str)
+            # =================================================
+            # EGRESOS
+            # =================================================
 
-            if tipo_detectado:
-                tipo_movimiento = tipo_detectado
+            if col_debito is not None:
 
-        # =====================================================
-        # VALIDACIONES
-        # =====================================================
+                monto_debito = convertir_monto(
+                    fila[col_debito]
+                )
 
-        if not fecha:
-            continue
+                if (
+                    monto_debito is not None and
+                    monto_debito > 0
+                ):
 
-        if not descripcion:
-            continue
+                    registro = {
+                        "FECHA": fecha,
+                        "DESCRIPCIÓN": descripcion,
+                        "MONTO": round(monto_debito, 2)
+                    }
 
-        if monto is None:
-            continue
+                    clave = (
+                        fecha,
+                        descripcion,
+                        monto_debito,
+                        "EGRESO"
+                    )
 
-        # evitar encabezados
-        palabras_invalidas = [
-            "saldo",
-            "balance",
-            "fecha",
-            "descripcion",
-            "descripción",
-            "detalle",
-            "movimiento"
-        ]
+                    if clave not in registros_procesados:
 
-        if descripcion.lower() in palabras_invalidas:
-            continue
+                        registros_procesados.add(clave)
 
-        # =====================================================
-        # CLASIFICACIÓN AUTOMÁTICA
-        # =====================================================
+                        if es_comision(descripcion):
 
-        if not tipo_movimiento:
+                            comisiones.append(registro)
 
-            if monto < 0:
-                tipo_movimiento = "EGRESO"
-            else:
-                tipo_movimiento = "INGRESO"
+                        else:
 
-        # =====================================================
-        # REGISTRO
-        # =====================================================
+                            egresos.append(registro)
 
-        registro = {
-            "FECHA": fecha,
-            "DESCRIPCIÓN": descripcion,
-            "MONTO": round(monto, 2)
-        }
-
-        # evitar duplicados
-        clave = (
-            fecha,
-            descripcion,
-            round(monto, 2)
-        )
-
-        if clave in registros_procesados:
-            continue
-
-        registros_procesados.add(clave)
-
-        # =====================================================
-        # COMISIONES
-        # =====================================================
-
-        if es_comision(descripcion):
-
-            comisiones.append(registro)
-
-        elif tipo_movimiento == "INGRESO":
-
-            ingresos.append(registro)
-
-        elif tipo_movimiento == "EGRESO":
-
-            egresos.append(registro)
+        except Exception:
+            pass
 
     return ingresos, egresos, comisiones
 
@@ -427,19 +377,18 @@ if archivo:
     try:
 
         # =====================================================
-        # LEER ARCHIVO
+        # LEER EXCEL
         # =====================================================
 
         df_original = pd.read_excel(
-            archivo,
-            header=None
+            archivo
         )
 
         # =====================================================
         # PREVIEW
         # =====================================================
 
-        with st.expander("👁️ Vista previa del archivo"):
+        with st.expander("👁️ Vista previa"):
 
             st.dataframe(
                 df_original.head(20),
@@ -456,113 +405,74 @@ if archivo:
 
                 ingresos, egresos, comisiones = procesar_archivo(df_original)
 
+            # =================================================
+            # DATAFRAMES
+            # =================================================
+
+            df_ingresos = pd.DataFrame(ingresos)
+            df_egresos = pd.DataFrame(egresos)
+            df_comisiones = pd.DataFrame(comisiones)
+
+            # =================================================
+            # TOTALES
+            # =================================================
+
+            total_ingresos = (
+                df_ingresos["MONTO"].sum()
+                if not df_ingresos.empty else 0
+            )
+
+            total_egresos = (
+                df_egresos["MONTO"].sum()
+                if not df_egresos.empty else 0
+            )
+
+            total_comisiones = (
+                df_comisiones["MONTO"].sum()
+                if not df_comisiones.empty else 0
+            )
+
+            # =================================================
+            # KPIS
+            # =================================================
+
             st.success(
-                f"✅ Procesado correctamente | "
-                f"INGRESOS: {len(ingresos)} | "
-                f"EGRESOS: {len(egresos)} | "
-                f"COMISIONES: {len(comisiones)}"
-            )
-
-            # =================================================
-            # MÉTRICAS
-            # =================================================
-
-            total_ingresos = sum(
-                x["MONTO"] for x in ingresos
-            )
-
-            total_egresos = sum(
-                x["MONTO"] for x in egresos
-            )
-
-            total_comisiones = sum(
-                x["MONTO"] for x in comisiones
+                f"""
+                ✅ Procesado correctamente |
+                INGRESOS: {len(df_ingresos)} |
+                EGRESOS: {len(df_egresos)} |
+                COMISIONES: {len(df_comisiones)}
+                """
             )
 
             col1, col2, col3 = st.columns(3)
 
-            col1.metric(
-                "💰 INGRESOS",
-                len(ingresos),
-                f"${total_ingresos:,.2f}"
-            )
+            with col1:
 
-            col2.metric(
-                "💸 EGRESOS",
-                len(egresos),
-                f"${total_egresos:,.2f}"
-            )
-
-            col3.metric(
-                "💳 COMISIONES",
-                len(comisiones),
-                f"${total_comisiones:,.2f}"
-            )
-
-            # =================================================
-            # EXPORTAR EXCEL
-            # =================================================
-
-            output = BytesIO()
-
-            with pd.ExcelWriter(
-                output,
-                engine='openpyxl'
-            ) as writer:
-
-                # INGRESOS
-                if ingresos:
-                    pd.DataFrame(ingresos).to_excel(
-                        writer,
-                        sheet_name='INGRESOS',
-                        index=False
-                    )
-
-                # EGRESOS
-                if egresos:
-                    pd.DataFrame(egresos).to_excel(
-                        writer,
-                        sheet_name='EGRESOS',
-                        index=False
-                    )
-
-                # COMISIONES
-                if comisiones:
-                    pd.DataFrame(comisiones).to_excel(
-                        writer,
-                        sheet_name='COMISIONES',
-                        index=False
-                    )
-
-                # RESUMEN
-                resumen = pd.DataFrame([
-                    {
-                        "TIPO": "INGRESOS",
-                        "CANTIDAD": len(ingresos),
-                        "MONTO_TOTAL": total_ingresos
-                    },
-                    {
-                        "TIPO": "EGRESOS",
-                        "CANTIDAD": len(egresos),
-                        "MONTO_TOTAL": total_egresos
-                    },
-                    {
-                        "TIPO": "COMISIONES",
-                        "CANTIDAD": len(comisiones),
-                        "MONTO_TOTAL": total_comisiones
-                    }
-                ])
-
-                resumen.to_excel(
-                    writer,
-                    sheet_name='RESUMEN',
-                    index=False
+                st.metric(
+                    "💰 INGRESOS",
+                    len(df_ingresos),
+                    f"${total_ingresos:,.2f}"
                 )
 
-            output.seek(0)
+            with col2:
+
+                st.metric(
+                    "💸 EGRESOS",
+                    len(df_egresos),
+                    f"${total_egresos:,.2f}"
+                )
+
+            with col3:
+
+                st.metric(
+                    "💳 COMISIONES",
+                    len(df_comisiones),
+                    f"${total_comisiones:,.2f}"
+                )
 
             # =================================================
-            # TABS
+            # RESULTADOS
             # =================================================
 
             st.subheader("📊 Resultados")
@@ -573,41 +483,145 @@ if archivo:
                 "💳 COMISIONES"
             ])
 
+            # =================================================
+            # INGRESOS
+            # =================================================
+
             with tab1:
 
-                if ingresos:
+                if not df_ingresos.empty:
 
                     st.dataframe(
-                        pd.DataFrame(ingresos),
-                        use_container_width=True
+                        df_ingresos,
+                        use_container_width=True,
+                        height=400
+                    )
+
+                    st.success(
+                        f"""
+                        TOTAL INGRESOS:
+                        ${total_ingresos:,.2f}
+                        """
                     )
 
                 else:
+
                     st.info("No se encontraron ingresos")
+
+            # =================================================
+            # EGRESOS
+            # =================================================
 
             with tab2:
 
-                if egresos:
+                if not df_egresos.empty:
 
                     st.dataframe(
-                        pd.DataFrame(egresos),
-                        use_container_width=True
+                        df_egresos,
+                        use_container_width=True,
+                        height=400
+                    )
+
+                    st.error(
+                        f"""
+                        TOTAL EGRESOS:
+                        ${total_egresos:,.2f}
+                        """
                     )
 
                 else:
+
                     st.info("No se encontraron egresos")
+
+            # =================================================
+            # COMISIONES
+            # =================================================
 
             with tab3:
 
-                if comisiones:
+                if not df_comisiones.empty:
 
                     st.dataframe(
-                        pd.DataFrame(comisiones),
-                        use_container_width=True
+                        df_comisiones,
+                        use_container_width=True,
+                        height=400
+                    )
+
+                    st.warning(
+                        f"""
+                        TOTAL COMISIONES:
+                        ${total_comisiones:,.2f}
+                        """
                     )
 
                 else:
+
                     st.info("No se encontraron comisiones")
+
+            # =================================================
+            # EXPORTAR EXCEL
+            # =================================================
+
+            output = BytesIO()
+
+            with pd.ExcelWriter(
+                output,
+                engine="openpyxl"
+            ) as writer:
+
+                # INGRESOS
+                if not df_ingresos.empty:
+
+                    df_ingresos.to_excel(
+                        writer,
+                        sheet_name="INGRESOS",
+                        index=False
+                    )
+
+                # EGRESOS
+                if not df_egresos.empty:
+
+                    df_egresos.to_excel(
+                        writer,
+                        sheet_name="EGRESOS",
+                        index=False
+                    )
+
+                # COMISIONES
+                if not df_comisiones.empty:
+
+                    df_comisiones.to_excel(
+                        writer,
+                        sheet_name="COMISIONES",
+                        index=False
+                    )
+
+                # RESUMEN
+                resumen = pd.DataFrame([
+                    {
+                        "TIPO": "INGRESOS",
+                        "CANTIDAD": len(df_ingresos),
+                        "TOTAL": total_ingresos
+                    },
+                    {
+                        "TIPO": "EGRESOS",
+                        "CANTIDAD": len(df_egresos),
+                        "TOTAL": total_egresos
+                    },
+                    {
+                        "TIPO": "COMISIONES",
+                        "CANTIDAD": len(df_comisiones),
+                        "TOTAL": total_comisiones
+                    }
+                ])
+
+                resumen.to_excel(
+                    writer,
+                    sheet_name="RESUMEN",
+                    index=False
+                )
+
+            output.seek(0)
 
             # =================================================
             # DESCARGA
@@ -623,7 +637,7 @@ if archivo:
 
     except Exception as e:
 
-        st.error(f"❌ Error procesando archivo: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
 
 # =========================================================
 # PANTALLA INICIAL
@@ -632,6 +646,7 @@ if archivo:
 else:
 
     st.markdown("""
+
     ### 👋 Clasificador Bancario Inteligente
 
     ## FUNCIONES
@@ -639,28 +654,24 @@ else:
     ✅ Detecta automáticamente:
     - Fechas
     - Descripciones
-    - Ingresos
-    - Egresos
+    - Débitos
+    - Créditos
     - Comisiones
 
-    ✅ Compatible con:
-    - Estados de cuenta
-    - Bancos distintos
-    - Formatos variados
-
-    ✅ Exporta:
-    - INGRESOS
-    - EGRESOS
-    - COMISIONES
-    - RESUMEN
+    ✅ Genera:
+    - KPIs
+    - Tablas separadas
+    - Totales automáticos
+    - Exportación Excel
 
     ---
 
     ## INSTRUCCIONES
 
-    1. Carga el archivo Excel
-    2. Presiona "Procesar"
+    1. Carga el Excel
+    2. Presiona PROCESAR
     3. Descarga el resultado
+
     """)
 
 # =========================================================
@@ -674,7 +685,7 @@ st.markdown(
     <div class="footer">
         <strong>Grupo Bodeguita Oriente</strong>
         <br>
-        Clasificador Bancario v13.0
+        Clasificador Bancario v14.0
     </div>
     """,
     unsafe_allow_html=True
