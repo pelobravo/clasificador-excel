@@ -2,6 +2,13 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
+from openpyxl.styles import Font
+from openpyxl.styles import PatternFill
+from openpyxl.styles import Border
+from openpyxl.styles import Side
+from openpyxl.styles import Alignment
+from openpyxl.drawing.image import Image
+
 # =========================================================
 # CONFIGURACIÓN GENERAL
 # =========================================================
@@ -122,7 +129,7 @@ def convertir_monto(valor):
         valor = valor.replace("Bs", "")
         valor = valor.replace("€", "")
 
-        # 1.234,56
+        # FORMATO 1.234,56
         if "." in valor and "," in valor:
 
             valor = valor.replace(".", "")
@@ -169,16 +176,8 @@ def procesar_archivo(df):
 
         try:
 
-            # =================================================
-            # VALIDAR LONGITUD
-            # =================================================
-
             if len(fila) < 8:
                 continue
-
-            # =================================================
-            # COLUMNAS MERCANTIL
-            # =================================================
 
             fecha = str(fila[3]).strip()
 
@@ -188,9 +187,7 @@ def procesar_archivo(df):
 
             monto = convertir_monto(fila[7])
 
-            # =================================================
             # VALIDACIONES
-            # =================================================
 
             if descripcion == "" or descripcion.lower() == "nan":
                 continue
@@ -201,9 +198,7 @@ def procesar_archivo(df):
             if fecha == "" or fecha.lower() == "nan":
                 continue
 
-            # =================================================
             # EVITAR ENCABEZADOS
-            # =================================================
 
             texto = descripcion.upper()
 
@@ -219,9 +214,7 @@ def procesar_archivo(df):
             if texto in palabras_invalidas:
                 continue
 
-            # =================================================
             # REGISTRO
-            # =================================================
 
             registro = {
                 "FECHA": fecha,
@@ -241,25 +234,15 @@ def procesar_archivo(df):
 
             registros_procesados.add(clave)
 
-            # =================================================
-            # COMISIONES
-            # =================================================
+            # CLASIFICACIÓN
 
             if es_comision(descripcion):
 
                 comisiones.append(registro)
 
-            # =================================================
-            # INGRESOS
-            # =================================================
-
             elif tipo == "NC":
 
                 ingresos.append(registro)
-
-            # =================================================
-            # EGRESOS
-            # =================================================
 
             elif tipo == "ND":
 
@@ -341,7 +324,7 @@ if archivo:
             )
 
             # =================================================
-            # KPI
+            # KPIs
             # =================================================
 
             st.success(
@@ -391,9 +374,7 @@ if archivo:
                 "💳 COMISIONES"
             ])
 
-            # =================================================
             # INGRESOS
-            # =================================================
 
             with tab1:
 
@@ -413,9 +394,7 @@ if archivo:
 
                     st.info("No se encontraron ingresos")
 
-            # =================================================
             # EGRESOS
-            # =================================================
 
             with tab2:
 
@@ -435,9 +414,7 @@ if archivo:
 
                     st.info("No se encontraron egresos")
 
-            # =================================================
             # COMISIONES
-            # =================================================
 
             with tab3:
 
@@ -458,7 +435,7 @@ if archivo:
                     st.info("No se encontraron comisiones")
 
             # =================================================
-            # EXPORTAR EXCEL
+            # EXPORTAR EXCEL PROFESIONAL
             # =================================================
 
             output = BytesIO()
@@ -468,57 +445,256 @@ if archivo:
                 engine="openpyxl"
             ) as writer:
 
-                # INGRESOS
-                if not df_ingresos.empty:
+                workbook = writer.book
 
-                    df_ingresos.to_excel(
-                        writer,
-                        sheet_name="INGRESOS",
-                        index=False
-                    )
+                hoja = workbook.active
+                hoja.title = "REPORTE"
 
-                # EGRESOS
-                if not df_egresos.empty:
+                # =================================================
+                # ESTILOS
+                # =================================================
 
-                    df_egresos.to_excel(
-                        writer,
-                        sheet_name="EGRESOS",
-                        index=False
-                    )
-
-                # COMISIONES
-                if not df_comisiones.empty:
-
-                    df_comisiones.to_excel(
-                        writer,
-                        sheet_name="COMISIONES",
-                        index=False
-                    )
-
-                # RESUMEN
-                resumen = pd.DataFrame([
-                    {
-                        "TIPO": "INGRESOS",
-                        "CANTIDAD": len(df_ingresos),
-                        "TOTAL": total_ingresos
-                    },
-                    {
-                        "TIPO": "EGRESOS",
-                        "CANTIDAD": len(df_egresos),
-                        "TOTAL": total_egresos
-                    },
-                    {
-                        "TIPO": "COMISIONES",
-                        "CANTIDAD": len(df_comisiones),
-                        "TOTAL": total_comisiones
-                    }
-                ])
-
-                resumen.to_excel(
-                    writer,
-                    sheet_name="RESUMEN",
-                    index=False
+                rojo = PatternFill(
+                    start_color="FF0000",
+                    end_color="FF0000",
+                    fill_type="solid"
                 )
+
+                amarillo = PatternFill(
+                    start_color="FFF2CC",
+                    end_color="FFF2CC",
+                    fill_type="solid"
+                )
+
+                verde = PatternFill(
+                    start_color="C6E0B4",
+                    end_color="C6E0B4",
+                    fill_type="solid"
+                )
+
+                blanco = Font(
+                    color="FFFFFF",
+                    bold=True
+                )
+
+                negro_bold = Font(
+                    bold=True
+                )
+
+                borde = Border(
+                    left=Side(style="thin"),
+                    right=Side(style="thin"),
+                    top=Side(style="thin"),
+                    bottom=Side(style="thin")
+                )
+
+                centro = Alignment(
+                    horizontal="center",
+                    vertical="center"
+                )
+
+                # =================================================
+                # LOGO
+                # =================================================
+
+                try:
+
+                    logo = Image("LOGO.jpeg")
+                    logo.width = 130
+                    logo.height = 130
+
+                    hoja.add_image(logo, "A1")
+
+                except:
+                    pass
+
+                # =================================================
+                # TITULO
+                # =================================================
+
+                hoja.merge_cells("C7:G7")
+
+                hoja["C7"] = "BANCO MERCANTIL II BOD ANZOATEGUI"
+
+                hoja["C7"].font = Font(
+                    bold=True,
+                    size=16
+                )
+
+                hoja["C7"].alignment = centro
+
+                # =================================================
+                # ENCABEZADO SUPERIOR
+                # =================================================
+
+                hoja["D1"] = "FECHA"
+                hoja["E1"] = pd.Timestamp.now().strftime("%d/%m/%Y")
+
+                hoja["D2"] = "SALDO INICIAL"
+                hoja["D3"] = "SALDO FINAL"
+                hoja["D4"] = "TASA DEL DIA"
+
+                hoja["E2"] = total_ingresos
+                hoja["E3"] = total_egresos
+                hoja["E4"] = 36.50
+
+                hoja["E4"].font = Font(
+                    bold=True,
+                    color="FF0000",
+                    size=14
+                )
+
+                # =================================================
+                # FUNCION TABLAS
+                # =================================================
+
+                def crear_tabla(
+                    titulo,
+                    dataframe,
+                    fila_inicio,
+                    color_total
+                ):
+
+                    hoja.merge_cells(
+                        start_row=fila_inicio,
+                        start_column=1,
+                        end_row=fila_inicio,
+                        end_column=5
+                    )
+
+                    titulo_cell = hoja.cell(
+                        row=fila_inicio,
+                        column=1
+                    )
+
+                    titulo_cell.value = titulo
+                    titulo_cell.fill = rojo
+                    titulo_cell.font = blanco
+                    titulo_cell.alignment = centro
+
+                    headers = [
+                        "FECHA",
+                        "DESCRIPCIÓN",
+                        "MONTO",
+                        "STATUS",
+                        "OBSERVACIÓN"
+                    ]
+
+                    fila_header = fila_inicio + 1
+
+                    for col_num, header in enumerate(headers, 1):
+
+                        cell = hoja.cell(
+                            row=fila_header,
+                            column=col_num
+                        )
+
+                        cell.value = header
+                        cell.fill = rojo
+                        cell.font = blanco
+                        cell.border = borde
+                        cell.alignment = centro
+
+                    fila_data = fila_header + 1
+
+                    for _, row in dataframe.iterrows():
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=1
+                        ).value = row["FECHA"]
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=2
+                        ).value = row["DESCRIPCIÓN"]
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=3
+                        ).value = row["MONTO"]
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=3
+                        ).number_format = '$#,##0.00'
+
+                        for col in range(1, 6):
+
+                            hoja.cell(
+                                row=fila_data,
+                                column=col
+                            ).border = borde
+
+                        fila_data += 1
+
+                    # TOTAL
+
+                    hoja.merge_cells(
+                        start_row=fila_data,
+                        start_column=1,
+                        end_row=fila_data,
+                        end_column=2
+                    )
+
+                    total_label = hoja.cell(
+                        row=fila_data,
+                        column=1
+                    )
+
+                    total_label.value = f"TOTAL {titulo}"
+                    total_label.font = negro_bold
+                    total_label.alignment = centro
+
+                    total_monto = hoja.cell(
+                        row=fila_data,
+                        column=3
+                    )
+
+                    total_monto.value = dataframe["MONTO"].sum()
+
+                    total_monto.number_format = '$#,##0.00'
+                    total_monto.fill = color_total
+                    total_monto.font = negro_bold
+
+                    return fila_data + 4
+
+                # =================================================
+                # CREAR TABLAS
+                # =================================================
+
+                fila_actual = 10
+
+                fila_actual = crear_tabla(
+                    "INGRESOS",
+                    df_ingresos,
+                    fila_actual,
+                    verde
+                )
+
+                fila_actual = crear_tabla(
+                    "EGRESOS",
+                    df_egresos,
+                    fila_actual,
+                    amarillo
+                )
+
+                fila_actual = crear_tabla(
+                    "COMISIONES",
+                    df_comisiones,
+                    fila_actual,
+                    amarillo
+                )
+
+                # =================================================
+                # ANCHOS COLUMNAS
+                # =================================================
+
+                hoja.column_dimensions["A"].width = 18
+                hoja.column_dimensions["B"].width = 60
+                hoja.column_dimensions["C"].width = 18
+                hoja.column_dimensions["D"].width = 20
+                hoja.column_dimensions["E"].width = 35
 
             output.seek(0)
 
@@ -557,9 +733,9 @@ else:
 
     ✅ Genera:
     - KPIs
-    - Tablas separadas
+        - Tablas separadas
     - Totales automáticos
-    - Exportación Excel
+    - Exportación profesional
 
     ---
 
@@ -582,7 +758,7 @@ st.markdown(
     <div class="footer">
         <strong>Grupo Bodeguita Oriente</strong>
         <br>
-        Clasificador Bancario v15.0
+        Clasificador Bancario v16.0
     </div>
     """,
     unsafe_allow_html=True
