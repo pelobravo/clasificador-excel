@@ -716,12 +716,6 @@ if archivo:
                 hoja.column_dimensions["D"].width = 20
                 hoja.column_dimensions["E"].width = 35
 
-                # =================================================
-                # GUARDAR ARCHIVO
-                # =================================================
-
-                workbook.save(output)
-
             output.seek(0)
 
             # =================================================
