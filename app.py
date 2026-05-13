@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
-import re
 from io import BytesIO
-from datetime import datetime
 
 # =========================================================
 # CONFIGURACIÓN GENERAL
@@ -49,13 +47,6 @@ h1, h2, h3 {
     font-size: 14px;
 }
 
-.kpi-card {
-    background-color: #f8fafc;
-    padding: 15px;
-    border-radius: 10px;
-    border: 1px solid #e2e8f0;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,6 +62,7 @@ with col_logo:
         st.image("LOGO.jpeg", width=80)
 
     except Exception:
+
         st.image(
             "https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg",
             width=80
@@ -98,7 +90,7 @@ with st.sidebar:
 
     archivo = st.file_uploader(
         "📂 Cargar archivo Excel",
-        type=['xlsx', 'xls']
+        type=["xlsx", "xls"]
     )
 
     st.markdown("---")
@@ -130,9 +122,7 @@ def convertir_monto(valor):
         valor = valor.replace("Bs", "")
         valor = valor.replace("€", "")
 
-        # FORMATO EUROPEO
         # 1.234,56
-
         if "." in valor and "," in valor:
 
             valor = valor.replace(".", "")
@@ -163,71 +153,8 @@ def es_comision(texto):
 
     return any(p in texto for p in palabras)
 
-
 # =========================================================
-# DETECTAR COLUMNAS
-# =========================================================
-
-def detectar_columnas(df):
-
-    columnas = {
-        "fecha": None,
-        "descripcion": None,
-        "debito": None,
-        "credito": None
-    }
-
-    for col in df.columns:
-
-        muestra = " ".join(
-            df[col].astype(str).head(30).tolist()
-        ).lower()
-
-        # FECHA
-        if columnas["fecha"] is None:
-
-            if "fecha" in muestra:
-                columnas["fecha"] = col
-
-        # DESCRIPCIÓN
-        if columnas["descripcion"] is None:
-
-            if (
-                "descripcion" in muestra or
-                "descripción" in muestra or
-                "detalle" in muestra or
-                "concepto" in muestra or
-                "movimiento" in muestra
-            ):
-                columnas["descripcion"] = col
-
-        # DÉBITO
-        if columnas["debito"] is None:
-
-            if (
-                "debito" in muestra or
-                "débito" in muestra or
-                "cargo" in muestra or
-                "retiro" in muestra
-            ):
-                columnas["debito"] = col
-
-        # CRÉDITO
-        if columnas["credito"] is None:
-
-            if (
-                "credito" in muestra or
-                "crédito" in muestra or
-                "abono" in muestra or
-                "deposito" in muestra or
-                "depósito" in muestra
-            ):
-                columnas["credito"] = col
-
-    return columnas
-
-# =========================================================
-# PROCESAMIENTO
+# PROCESAMIENTO MERCANTIL
 # =========================================================
 
 def procesar_archivo(df):
@@ -236,18 +163,6 @@ def procesar_archivo(df):
     egresos = []
     comisiones = []
 
-    columnas = detectar_columnas(df)
-
-    col_fecha = columnas["fecha"]
-    col_desc = columnas["descripcion"]
-    col_debito = columnas["debito"]
-    col_credito = columnas["credito"]
-
-    if col_desc is None:
-
-        st.error("❌ No se detectó columna de descripción")
-        return ingresos, egresos, comisiones
-
     registros_procesados = set()
 
     for _, fila in df.iterrows():
@@ -255,108 +170,100 @@ def procesar_archivo(df):
         try:
 
             # =================================================
-            # FECHA
+            # VALIDAR LONGITUD
             # =================================================
 
-            fecha = ""
-
-            if col_fecha is not None:
-
-                fecha = str(fila[col_fecha]).strip()
-
-            # =================================================
-            # DESCRIPCIÓN
-            # =================================================
-
-            descripcion = str(
-                fila[col_desc]
-            ).strip()
-
-            if (
-                descripcion == "" or
-                descripcion.lower() == "nan"
-            ):
+            if len(fila) < 8:
                 continue
+
+            # =================================================
+            # COLUMNAS MERCANTIL
+            # =================================================
+
+            fecha = str(fila[3]).strip()
+
+            tipo = str(fila[5]).strip().upper()
+
+            descripcion = str(fila[6]).strip()
+
+            monto = convertir_monto(fila[7])
+
+            # =================================================
+            # VALIDACIONES
+            # =================================================
+
+            if descripcion == "" or descripcion.lower() == "nan":
+                continue
+
+            if monto is None:
+                continue
+
+            if fecha == "" or fecha.lower() == "nan":
+                continue
+
+            # =================================================
+            # EVITAR ENCABEZADOS
+            # =================================================
+
+            texto = descripcion.upper()
+
+            palabras_invalidas = [
+                "SALDO",
+                "DESCRIPCION",
+                "DESCRIPCIÓN",
+                "REFERENCIA",
+                "MOVIMIENTO",
+                "FECHA"
+            ]
+
+            if texto in palabras_invalidas:
+                continue
+
+            # =================================================
+            # REGISTRO
+            # =================================================
+
+            registro = {
+                "FECHA": fecha,
+                "DESCRIPCIÓN": descripcion,
+                "MONTO": round(abs(monto), 2)
+            }
+
+            clave = (
+                fecha,
+                descripcion,
+                monto,
+                tipo
+            )
+
+            if clave in registros_procesados:
+                continue
+
+            registros_procesados.add(clave)
+
+            # =================================================
+            # COMISIONES
+            # =================================================
+
+            if es_comision(descripcion):
+
+                comisiones.append(registro)
 
             # =================================================
             # INGRESOS
             # =================================================
 
-            if col_credito is not None:
+            elif tipo == "NC":
 
-                monto_credito = convertir_monto(
-                    fila[col_credito]
-                )
-
-                if (
-                    monto_credito is not None and
-                    monto_credito > 0
-                ):
-
-                    registro = {
-                        "FECHA": fecha,
-                        "DESCRIPCIÓN": descripcion,
-                        "MONTO": round(monto_credito, 2)
-                    }
-
-                    clave = (
-                        fecha,
-                        descripcion,
-                        monto_credito,
-                        "INGRESO"
-                    )
-
-                    if clave not in registros_procesados:
-
-                        registros_procesados.add(clave)
-
-                        if es_comision(descripcion):
-
-                            comisiones.append(registro)
-
-                        else:
-
-                            ingresos.append(registro)
+                ingresos.append(registro)
 
             # =================================================
             # EGRESOS
             # =================================================
 
-            if col_debito is not None:
+            elif tipo == "ND":
 
-                monto_debito = convertir_monto(
-                    fila[col_debito]
-                )
-
-                if (
-                    monto_debito is not None and
-                    monto_debito > 0
-                ):
-
-                    registro = {
-                        "FECHA": fecha,
-                        "DESCRIPCIÓN": descripcion,
-                        "MONTO": round(monto_debito, 2)
-                    }
-
-                    clave = (
-                        fecha,
-                        descripcion,
-                        monto_debito,
-                        "EGRESO"
-                    )
-
-                    if clave not in registros_procesados:
-
-                        registros_procesados.add(clave)
-
-                        if es_comision(descripcion):
-
-                            comisiones.append(registro)
-
-                        else:
-
-                            egresos.append(registro)
+                egresos.append(registro)
 
         except Exception:
             pass
@@ -381,7 +288,8 @@ if archivo:
         # =====================================================
 
         df_original = pd.read_excel(
-            archivo
+            archivo,
+            header=None
         )
 
         # =====================================================
@@ -433,7 +341,7 @@ if archivo:
             )
 
             # =================================================
-            # KPIS
+            # KPI
             # =================================================
 
             st.success(
@@ -498,10 +406,7 @@ if archivo:
                     )
 
                     st.success(
-                        f"""
-                        TOTAL INGRESOS:
-                        ${total_ingresos:,.2f}
-                        """
+                        f"TOTAL INGRESOS: ${total_ingresos:,.2f}"
                     )
 
                 else:
@@ -523,10 +428,7 @@ if archivo:
                     )
 
                     st.error(
-                        f"""
-                        TOTAL EGRESOS:
-                        ${total_egresos:,.2f}
-                        """
+                        f"TOTAL EGRESOS: ${total_egresos:,.2f}"
                     )
 
                 else:
@@ -548,10 +450,7 @@ if archivo:
                     )
 
                     st.warning(
-                        f"""
-                        TOTAL COMISIONES:
-                        ${total_comisiones:,.2f}
-                        """
+                        f"TOTAL COMISIONES: ${total_comisiones:,.2f}"
                     )
 
                 else:
@@ -651,11 +550,9 @@ else:
 
     ## FUNCIONES
 
-    ✅ Detecta automáticamente:
-    - Fechas
-    - Descripciones
-    - Débitos
-    - Créditos
+    ✅ Clasifica automáticamente:
+    - Ingresos
+    - Egresos
     - Comisiones
 
     ✅ Genera:
@@ -668,7 +565,7 @@ else:
 
     ## INSTRUCCIONES
 
-    1. Carga el Excel
+    1. Carga el Excel Mercantil
     2. Presiona PROCESAR
     3. Descarga el resultado
 
@@ -685,7 +582,7 @@ st.markdown(
     <div class="footer">
         <strong>Grupo Bodeguita Oriente</strong>
         <br>
-        Clasificador Bancario v14.0
+        Clasificador Bancario v15.0
     </div>
     """,
     unsafe_allow_html=True
