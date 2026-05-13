@@ -374,7 +374,9 @@ if archivo:
                 "💳 COMISIONES"
             ])
 
+            # =================================================
             # INGRESOS
+            # =================================================
 
             with tab1:
 
@@ -394,7 +396,9 @@ if archivo:
 
                     st.info("No se encontraron ingresos")
 
+            # =================================================
             # EGRESOS
+            # =================================================
 
             with tab2:
 
@@ -414,7 +418,9 @@ if archivo:
 
                     st.info("No se encontraron egresos")
 
+            # =================================================
             # COMISIONES
+            # =================================================
 
             with tab3:
 
@@ -447,8 +453,19 @@ if archivo:
 
                 workbook = writer.book
 
-                hoja = workbook.active
-                hoja.title = "REPORTE"
+                # =================================================
+                # CREAR HOJA PRINCIPAL
+                # =================================================
+
+                hoja = workbook.create_sheet(
+                    title="REPORTE"
+                )
+
+                # ELIMINAR HOJA VACÍA
+                if "Sheet" in workbook.sheetnames:
+
+                    hoja_vacia = workbook["Sheet"]
+                    workbook.remove(hoja_vacia)
 
                 # =================================================
                 # ESTILOS
@@ -505,7 +522,7 @@ if archivo:
 
                     hoja.add_image(logo, "A1")
 
-                except:
+                except Exception:
                     pass
 
                 # =================================================
@@ -628,7 +645,9 @@ if archivo:
 
                         fila_data += 1
 
+                    # =================================================
                     # TOTAL
+                    # =================================================
 
                     hoja.merge_cells(
                         start_row=fila_data,
@@ -643,6 +662,7 @@ if archivo:
                     )
 
                     total_label.value = f"TOTAL {titulo}"
+
                     total_label.font = negro_bold
                     total_label.alignment = centro
 
@@ -696,6 +716,12 @@ if archivo:
                 hoja.column_dimensions["D"].width = 20
                 hoja.column_dimensions["E"].width = 35
 
+                # =================================================
+                # GUARDAR ARCHIVO
+                # =================================================
+
+                workbook.save(output)
+
             output.seek(0)
 
             # =================================================
@@ -733,7 +759,7 @@ else:
 
     ✅ Genera:
     - KPIs
-        - Tablas separadas
+    - Tablas separadas
     - Totales automáticos
     - Exportación profesional
 
@@ -758,8 +784,9 @@ st.markdown(
     <div class="footer">
         <strong>Grupo Bodeguita Oriente</strong>
         <br>
-        Clasificador Bancario v16.0
+        Clasificador Bancario v17.0
     </div>
     """,
     unsafe_allow_html=True
+)
 )
