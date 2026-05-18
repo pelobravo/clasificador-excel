@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from datetime import date
 
 from openpyxl.styles import Font
 from openpyxl.styles import PatternFill
@@ -98,6 +99,22 @@ with st.sidebar:
     archivo = st.file_uploader(
         "📂 Cargar archivo Excel",
         type=["xlsx", "xls"]
+    )
+
+    st.markdown("---")
+
+    # =====================================================
+    # FILTRO DE FECHAS
+    # =====================================================
+
+    fecha_inicio = st.date_input(
+        "📅 Fecha Inicio",
+        value=date.today().replace(day=1)
+    )
+
+    fecha_fin = st.date_input(
+        "📅 Fecha Fin",
+        value=date.today()
     )
 
     st.markdown("---")
@@ -376,6 +393,26 @@ if archivo:
             sheet_name=0,
             header=None
         )
+
+        # =====================================================
+        # FILTRAR POR FECHAS
+        # =====================================================
+
+        try:
+
+            fechas_temp = pd.to_datetime(
+                df_original[3],
+                errors="coerce",
+                dayfirst=True
+            )
+
+            df_original = df_original[
+                (fechas_temp.dt.date >= fecha_inicio) &
+                (fechas_temp.dt.date <= fecha_fin)
+            ]
+
+        except:
+            pass
 
         # =====================================================
         # PREVIEW
@@ -743,7 +780,7 @@ if archivo:
             st.download_button(
                 label="📥 Descargar Excel Clasificado",
                 data=output.getvalue(),
-                file_name=f"balance_{archivo.name}",
+                file_name=f"balance_{fecha_inicio}_{fecha_fin}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
