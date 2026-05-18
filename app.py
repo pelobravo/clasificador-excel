@@ -214,22 +214,39 @@ def procesar_archivo(df):
 
         try:
 
-            if len(fila) < 8:
+            if len(fila) < 9:
                 continue
 
             # =================================================
             # COLUMNAS
             # =================================================
 
-            fecha = pd.to_datetime(
-                fila[3],
-                errors="coerce"
-            )
+            fecha_raw = str(fila[3]).strip()
 
-            if pd.isna(fecha):
+            if fecha_raw.lower() == "nan":
                 continue
 
-            fecha = fecha.strftime("%d/%m/%Y")
+            fecha_raw = fecha_raw.replace(".0", "")
+
+            if len(fecha_raw) == 7:
+
+                dia = fecha_raw[0]
+                mes = fecha_raw[1:3]
+                anio = fecha_raw[3:]
+
+                fecha = f"0{dia}/{mes}/{anio}"
+
+            elif len(fecha_raw) == 8:
+
+                dia = fecha_raw[0:2]
+                mes = fecha_raw[2:4]
+                anio = fecha_raw[4:]
+
+                fecha = f"{dia}/{mes}/{anio}"
+
+            else:
+
+                fecha = fecha_raw
 
             tipo = str(
                 fila[5]
@@ -243,8 +260,12 @@ def procesar_archivo(df):
                 fila[4]
             ).strip()
 
-            monto = convertir_monto(
+            monto_bs = convertir_monto(
                 fila[7]
+            )
+
+            monto_usd = convertir_monto(
+                fila[8]
             )
 
             # =================================================
@@ -254,7 +275,7 @@ def procesar_archivo(df):
             if descripcion == "" or descripcion.lower() == "nan":
                 continue
 
-            if monto is None:
+            if monto_usd is None:
                 continue
 
             texto = descripcion.upper()
@@ -285,17 +306,22 @@ def procesar_archivo(df):
 
                 "DESCRIPCIÓN": descripcion,
 
-                "MONTO": round(
-                    abs(monto),
+                "MONTO BS": round(
+                    abs(monto_bs),
                     2
-                )
+                ) if monto_bs else 0,
+
+                "MONTO USD": round(
+                    abs(monto_usd),
+                    2
+                ) if monto_usd else 0
             }
 
             clave = (
                 fecha,
                 referencia,
                 descripcion,
-                monto,
+                monto_usd,
                 tipo
             )
 
@@ -377,17 +403,17 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             total_ingresos = (
-                df_ingresos["MONTO"].sum()
+                df_ingresos["MONTO USD"].sum()
                 if not df_ingresos.empty else 0
             )
 
             total_egresos = (
-                df_egresos["MONTO"].sum()
+                df_egresos["MONTO USD"].sum()
                 if not df_egresos.empty else 0
             )
 
             total_comisiones = (
-                df_comisiones["MONTO"].sum()
+                df_comisiones["MONTO USD"].sum()
                 if not df_comisiones.empty else 0
             )
 
@@ -540,7 +566,7 @@ if archivo:
                         start_row=fila_inicio,
                         start_column=1,
                         end_row=fila_inicio,
-                        end_column=6
+                        end_column=7
                     )
 
                     titulo_cell = hoja.cell(
@@ -557,7 +583,8 @@ if archivo:
                         "FECHA",
                         "REFERENCIA",
                         "DESCRIPCIÓN",
-                        "MONTO",
+                        "MONTO BS",
+                        "MONTO USD",
                         "STATUS",
                         "OBSERVACIÓN"
                     ]
@@ -599,14 +626,24 @@ if archivo:
                         hoja.cell(
                             row=fila_data,
                             column=4
-                        ).value = row["MONTO"]
+                        ).value = row["MONTO BS"]
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=5
+                        ).value = row["MONTO USD"]
 
                         hoja.cell(
                             row=fila_data,
                             column=4
-                        ).number_format = '_-$* #,##0.00_-'
+                        ).number_format = '#,##0.00'
 
-                        for col in range(1, 7):
+                        hoja.cell(
+                            row=fila_data,
+                            column=5
+                        ).number_format = '$#,##0.00'
+
+                        for col in range(1, 8):
 
                             hoja.cell(
                                 row=fila_data,
@@ -628,14 +665,14 @@ if archivo:
 
                     monto_total = hoja.cell(
                         row=fila_data,
-                        column=4
+                        column=5
                     )
 
                     monto_total.value = dataframe[
-                        "MONTO"
+                        "MONTO USD"
                     ].sum()
 
-                    monto_total.number_format = '_-$* #,##0.00_-'
+                    monto_total.number_format = '$#,##0.00'
                     monto_total.fill = color_total
 
                     return fila_data + 4
