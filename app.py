@@ -129,7 +129,6 @@ def convertir_monto(valor):
         valor = valor.replace("Bs", "")
         valor = valor.replace("€", "")
 
-        # FORMATO 1.234,56
         if "." in valor and "," in valor:
 
             valor = valor.replace(".", "")
@@ -145,20 +144,45 @@ def convertir_monto(valor):
 
         return None
 
+# =========================================================
+# DETECTAR COMISIONES
+# =========================================================
 
 def es_comision(texto):
 
     texto = str(texto).lower()
 
     palabras = [
+
         "comision",
         "comisión",
+        "cargo",
         "cargo bancario",
         "fee",
-        "iva comisión"
+        "iva",
+        "itf",
+        "impuesto",
+
+        "op.cred",
+        "op cred",
+        "credito directo",
+        "transferencia de fondos",
+
+        "comision por transferencia",
+        "comision pago movil",
+        "comisión pago movil",
+
+        "servicio bancario",
+        "gasto bancario",
+
+        "mantenimiento de cuenta",
+        "debito automatico bancario"
     ]
 
-    return any(p in texto for p in palabras)
+    return any(
+        p in texto
+        for p in palabras
+    )
 
 # =========================================================
 # PROCESAMIENTO MERCANTIL
@@ -172,6 +196,20 @@ def procesar_archivo(df):
 
     registros_procesados = set()
 
+    tipos_ingresos = [
+        "NC",
+        "C",
+        "CREDITO",
+        "ABONO"
+    ]
+
+    tipos_egresos = [
+        "ND",
+        "D",
+        "DEBITO",
+        "DEBIT"
+    ]
+
     for _, fila in df.iterrows():
 
         try:
@@ -179,26 +217,45 @@ def procesar_archivo(df):
             if len(fila) < 8:
                 continue
 
-            fecha = str(fila[3]).strip()
+            # =================================================
+            # COLUMNAS
+            # =================================================
 
-            tipo = str(fila[5]).strip().upper()
+            fecha = pd.to_datetime(
+                fila[3],
+                errors="coerce"
+            )
 
-            descripcion = str(fila[6]).strip()
+            if pd.isna(fecha):
+                continue
 
-            monto = convertir_monto(fila[7])
+            fecha = fecha.strftime("%d/%m/%Y")
 
+            tipo = str(
+                fila[5]
+            ).strip().upper()
+
+            descripcion = str(
+                fila[6]
+            ).strip()
+
+            referencia = str(
+                fila[4]
+            ).strip()
+
+            monto = convertir_monto(
+                fila[7]
+            )
+
+            # =================================================
             # VALIDACIONES
+            # =================================================
 
             if descripcion == "" or descripcion.lower() == "nan":
                 continue
 
             if monto is None:
                 continue
-
-            if fecha == "" or fecha.lower() == "nan":
-                continue
-
-            # EVITAR ENCABEZADOS
 
             texto = descripcion.upper()
 
@@ -208,22 +265,35 @@ def procesar_archivo(df):
                 "DESCRIPCIÓN",
                 "REFERENCIA",
                 "MOVIMIENTO",
-                "FECHA"
+                "FECHA",
+                "SALDO INICIAL",
+                "SALDO FINAL"
             ]
 
             if texto in palabras_invalidas:
                 continue
 
+            # =================================================
             # REGISTRO
+            # =================================================
 
             registro = {
+
                 "FECHA": fecha,
+
+                "REFERENCIA": referencia,
+
                 "DESCRIPCIÓN": descripcion,
-                "MONTO": round(abs(monto), 2)
+
+                "MONTO": round(
+                    abs(monto),
+                    2
+                )
             }
 
             clave = (
                 fecha,
+                referencia,
                 descripcion,
                 monto,
                 tipo
@@ -234,22 +304,27 @@ def procesar_archivo(df):
 
             registros_procesados.add(clave)
 
+            # =================================================
             # CLASIFICACIÓN
+            # =================================================
 
             if es_comision(descripcion):
 
                 comisiones.append(registro)
 
-            elif tipo == "NC":
+            elif tipo in tipos_ingresos:
 
                 ingresos.append(registro)
 
-            elif tipo == "ND":
+            elif tipo in tipos_egresos:
 
                 egresos.append(registro)
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            st.warning(
+                f"Error procesando fila: {e}"
+            )
 
     return ingresos, egresos, comisiones
 
@@ -267,11 +342,12 @@ if archivo:
     try:
 
         # =====================================================
-        # LEER EXCEL
+        # LEER SOLO LA PRIMERA HOJA
         # =====================================================
 
         df_original = pd.read_excel(
             archivo,
+            sheet_name=0,
             header=None
         )
 
@@ -296,17 +372,9 @@ if archivo:
 
                 ingresos, egresos, comisiones = procesar_archivo(df_original)
 
-            # =================================================
-            # DATAFRAMES
-            # =================================================
-
             df_ingresos = pd.DataFrame(ingresos)
             df_egresos = pd.DataFrame(egresos)
             df_comisiones = pd.DataFrame(comisiones)
-
-            # =================================================
-            # TOTALES
-            # =================================================
 
             total_ingresos = (
                 df_ingresos["MONTO"].sum()
@@ -326,15 +394,6 @@ if archivo:
             # =================================================
             # KPIs
             # =================================================
-
-            st.success(
-                f"""
-                ✅ Procesado correctamente |
-                INGRESOS: {len(df_ingresos)} |
-                EGRESOS: {len(df_egresos)} |
-                COMISIONES: {len(df_comisiones)}
-                """
-            )
 
             col1, col2, col3 = st.columns(3)
 
@@ -374,74 +433,17 @@ if archivo:
                 "💳 COMISIONES"
             ])
 
-            # =================================================
-            # INGRESOS
-            # =================================================
-
             with tab1:
-
-                if not df_ingresos.empty:
-
-                    st.dataframe(
-                        df_ingresos,
-                        use_container_width=True,
-                        height=400
-                    )
-
-                    st.success(
-                        f"TOTAL INGRESOS: ${total_ingresos:,.2f}"
-                    )
-
-                else:
-
-                    st.info("No se encontraron ingresos")
-
-            # =================================================
-            # EGRESOS
-            # =================================================
+                st.dataframe(df_ingresos, use_container_width=True)
 
             with tab2:
-
-                if not df_egresos.empty:
-
-                    st.dataframe(
-                        df_egresos,
-                        use_container_width=True,
-                        height=400
-                    )
-
-                    st.error(
-                        f"TOTAL EGRESOS: ${total_egresos:,.2f}"
-                    )
-
-                else:
-
-                    st.info("No se encontraron egresos")
-
-            # =================================================
-            # COMISIONES
-            # =================================================
+                st.dataframe(df_egresos, use_container_width=True)
 
             with tab3:
-
-                if not df_comisiones.empty:
-
-                    st.dataframe(
-                        df_comisiones,
-                        use_container_width=True,
-                        height=400
-                    )
-
-                    st.warning(
-                        f"TOTAL COMISIONES: ${total_comisiones:,.2f}"
-                    )
-
-                else:
-
-                    st.info("No se encontraron comisiones")
+                st.dataframe(df_comisiones, use_container_width=True)
 
             # =================================================
-            # EXPORTAR EXCEL PROFESIONAL
+            # EXPORTAR EXCEL
             # =================================================
 
             output = BytesIO()
@@ -453,33 +455,18 @@ if archivo:
 
                 workbook = writer.book
 
-                # =================================================
-                # CREAR HOJA PRINCIPAL
-                # =================================================
-
                 hoja = workbook.create_sheet(
                     title="REPORTE"
                 )
 
-                # ELIMINAR HOJA VACÍA
                 if "Sheet" in workbook.sheetnames:
 
                     hoja_vacia = workbook["Sheet"]
                     workbook.remove(hoja_vacia)
 
-                # =================================================
-                # ESTILOS
-                # =================================================
-
                 rojo = PatternFill(
                     start_color="FF0000",
                     end_color="FF0000",
-                    fill_type="solid"
-                )
-
-                amarillo = PatternFill(
-                    start_color="FFF2CC",
-                    end_color="FFF2CC",
                     fill_type="solid"
                 )
 
@@ -489,12 +476,14 @@ if archivo:
                     fill_type="solid"
                 )
 
-                blanco = Font(
-                    color="FFFFFF",
-                    bold=True
+                amarillo = PatternFill(
+                    start_color="FFF2CC",
+                    end_color="FFF2CC",
+                    fill_type="solid"
                 )
 
-                negro_bold = Font(
+                blanco = Font(
+                    color="FFFFFF",
                     bold=True
                 )
 
@@ -522,16 +511,12 @@ if archivo:
 
                     hoja.add_image(logo, "A1")
 
-                except Exception:
+                except:
                     pass
 
-                # =================================================
-                # TITULO
-                # =================================================
+                hoja.merge_cells("C7:H7")
 
-                hoja.merge_cells("C7:G7")
-
-                hoja["C7"] = "BANCO MERCANTIL II BOD ANZOATEGUI"
+                hoja["C7"] = "BANCO MERCANTIL II"
 
                 hoja["C7"].font = Font(
                     bold=True,
@@ -541,28 +526,7 @@ if archivo:
                 hoja["C7"].alignment = centro
 
                 # =================================================
-                # ENCABEZADO SUPERIOR
-                # =================================================
-
-                hoja["D1"] = "FECHA"
-                hoja["E1"] = pd.Timestamp.now().strftime("%d/%m/%Y")
-
-                hoja["D2"] = "SALDO INICIAL"
-                hoja["D3"] = "SALDO FINAL"
-                hoja["D4"] = "TASA DEL DIA"
-
-                hoja["E2"] = total_ingresos
-                hoja["E3"] = total_egresos
-                hoja["E4"] = 36.50
-
-                hoja["E4"].font = Font(
-                    bold=True,
-                    color="FF0000",
-                    size=14
-                )
-
-                # =================================================
-                # FUNCION TABLAS
+                # FUNCIÓN TABLAS
                 # =================================================
 
                 def crear_tabla(
@@ -576,7 +540,7 @@ if archivo:
                         start_row=fila_inicio,
                         start_column=1,
                         end_row=fila_inicio,
-                        end_column=5
+                        end_column=6
                     )
 
                     titulo_cell = hoja.cell(
@@ -591,6 +555,7 @@ if archivo:
 
                     headers = [
                         "FECHA",
+                        "REFERENCIA",
                         "DESCRIPCIÓN",
                         "MONTO",
                         "STATUS",
@@ -624,19 +589,24 @@ if archivo:
                         hoja.cell(
                             row=fila_data,
                             column=2
+                        ).value = row["REFERENCIA"]
+
+                        hoja.cell(
+                            row=fila_data,
+                            column=3
                         ).value = row["DESCRIPCIÓN"]
 
                         hoja.cell(
                             row=fila_data,
-                            column=3
+                            column=4
                         ).value = row["MONTO"]
 
                         hoja.cell(
                             row=fila_data,
-                            column=3
-                        ).number_format = '$#,##0.00'
+                            column=4
+                        ).number_format = '_-$* #,##0.00_-'
 
-                        for col in range(1, 6):
+                        for col in range(1, 7):
 
                             hoja.cell(
                                 row=fila_data,
@@ -645,43 +615,30 @@ if archivo:
 
                         fila_data += 1
 
-                    # =================================================
-                    # TOTAL
-                    # =================================================
-
-                    hoja.merge_cells(
-                        start_row=fila_data,
-                        start_column=1,
-                        end_row=fila_data,
-                        end_column=2
-                    )
-
-                    total_label = hoja.cell(
-                        row=fila_data,
-                        column=1
-                    )
-
-                    total_label.value = f"TOTAL {titulo}"
-
-                    total_label.font = negro_bold
-                    total_label.alignment = centro
-
-                    total_monto = hoja.cell(
+                    total_cell = hoja.cell(
                         row=fila_data,
                         column=3
                     )
 
-                    total_monto.value = dataframe["MONTO"].sum()
+                    total_cell.value = f"TOTAL {titulo}"
 
-                    total_monto.number_format = '$#,##0.00'
-                    total_monto.fill = color_total
-                    total_monto.font = negro_bold
+                    total_cell.font = Font(
+                        bold=True
+                    )
+
+                    monto_total = hoja.cell(
+                        row=fila_data,
+                        column=4
+                    )
+
+                    monto_total.value = dataframe[
+                        "MONTO"
+                    ].sum()
+
+                    monto_total.number_format = '_-$* #,##0.00_-'
+                    monto_total.fill = color_total
 
                     return fila_data + 4
-
-                # =================================================
-                # CREAR TABLAS
-                # =================================================
 
                 fila_actual = 10
 
@@ -707,20 +664,44 @@ if archivo:
                 )
 
                 # =================================================
-                # ANCHOS COLUMNAS
+                # AUTOAJUSTE COLUMNAS
                 # =================================================
 
-                hoja.column_dimensions["A"].width = 18
-                hoja.column_dimensions["B"].width = 60
-                hoja.column_dimensions["C"].width = 18
-                hoja.column_dimensions["D"].width = 20
-                hoja.column_dimensions["E"].width = 35
+                for columna in hoja.columns:
+
+                    max_length = 0
+
+                    try:
+
+                        columna_letra = (
+                            columna[0].column_letter
+                        )
+
+                    except:
+                        continue
+
+                    for cell in columna:
+
+                        try:
+
+                            if len(str(cell.value)) > max_length:
+
+                                max_length = len(
+                                    str(cell.value)
+                                )
+
+                        except:
+                            pass
+
+                    adjusted_width = (
+                        max_length + 5
+                    )
+
+                    hoja.column_dimensions[
+                        columna_letra
+                    ].width = adjusted_width
 
             output.seek(0)
-
-            # =================================================
-            # DESCARGA
-            # =================================================
 
             st.download_button(
                 label="📥 Descargar Excel Clasificado",
@@ -732,11 +713,7 @@ if archivo:
 
     except Exception as e:
 
-        st.error(f"❌ Error: {str(e)}")
-
-# =========================================================
-# PANTALLA INICIAL
-# =========================================================
+        st.error(f"❌ Error general: {str(e)}")
 
 else:
 
@@ -753,33 +730,6 @@ else:
 
     ✅ Genera:
     - KPIs
-    - Tablas separadas
-    - Totales automáticos
     - Exportación profesional
 
-    ---
-
-    ## INSTRUCCIONES
-
-    1. Carga el Excel Mercantil
-    2. Presiona PROCESAR
-    3. Descarga el resultado
-
     """)
-
-# =========================================================
-# FOOTER
-# =========================================================
-
-st.markdown("---")
-
-st.markdown(
-    """
-    <div class="footer">
-        <strong>Grupo Bodeguita Oriente</strong>
-        <br>
-        Clasificador Bancario v17.0
-    </div>
-    """,
-    unsafe_allow_html=True
-)
