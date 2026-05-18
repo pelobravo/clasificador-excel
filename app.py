@@ -395,26 +395,6 @@ if archivo:
         )
 
         # =====================================================
-        # FILTRAR POR FECHAS
-        # =====================================================
-
-        try:
-
-            fechas_temp = pd.to_datetime(
-                df_original[3],
-                errors="coerce",
-                dayfirst=True
-            )
-
-            df_original = df_original[
-                (fechas_temp.dt.date >= fecha_inicio) &
-                (fechas_temp.dt.date <= fecha_fin)
-            ]
-
-        except:
-            pass
-
-        # =====================================================
         # PREVIEW
         # =====================================================
 
@@ -430,6 +410,63 @@ if archivo:
         # =====================================================
 
         if procesar:
+
+            # =====================================================
+            # FILTRAR POR FECHAS
+            # =====================================================
+
+            try:
+
+                fechas_convertidas = []
+
+                for valor in df_original[3]:
+
+                    fecha_raw = str(valor).strip()
+
+                    fecha_raw = fecha_raw.replace(".0", "")
+
+                    fecha_convertida = pd.NaT
+
+                    if len(fecha_raw) == 7:
+
+                        dia = fecha_raw[0]
+                        mes = fecha_raw[1:3]
+                        anio = fecha_raw[3:]
+
+                        fecha_texto = f"0{dia}/{mes}/{anio}"
+
+                        fecha_convertida = pd.to_datetime(
+                            fecha_texto,
+                            format="%d/%m/%Y",
+                            errors="coerce"
+                        )
+
+                    elif len(fecha_raw) == 8:
+
+                        dia = fecha_raw[0:2]
+                        mes = fecha_raw[2:4]
+                        anio = fecha_raw[4:]
+
+                        fecha_texto = f"{dia}/{mes}/{anio}"
+
+                        fecha_convertida = pd.to_datetime(
+                            fecha_texto,
+                            format="%d/%m/%Y",
+                            errors="coerce"
+                        )
+
+                    fechas_convertidas.append(fecha_convertida)
+
+                df_original["FECHA_FILTRO"] = fechas_convertidas
+
+                df_original = df_original[
+                    (df_original["FECHA_FILTRO"].dt.date >= fecha_inicio) &
+                    (df_original["FECHA_FILTRO"].dt.date <= fecha_fin)
+                ]
+
+            except Exception as e:
+
+                st.warning(f"Error filtrando fechas: {e}")
 
             with st.spinner("Procesando archivo..."):
 
