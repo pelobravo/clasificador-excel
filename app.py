@@ -789,16 +789,3 @@ else:
     - Exportación profesional
 
     """)
-```
-
-# CAMBIOS REALIZADOS
-
-✅ Ahora detecta automáticamente la columna correcta del USD.
-
-✅ Evita que tome la tasa por error.
-
-✅ Busca primero en columnas 9, 10, 11 y 8.
-
-✅ Ignora valores vacíos o en 0.
-
-✅ Mantiene toda tu estructura original.
