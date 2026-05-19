@@ -260,98 +260,159 @@ def detectar_banco(nombre_archivo):
         return "tesoro"
     return "mercantil"  # Por defecto mercantil
 
+# =========================================================
+# PROCESAR VENEZUELA - VERSIÓN CORREGIDA
+# =========================================================
+
 def procesar_venezuela(df):
-    """Procesa archivo del Banco de Venezuela"""
-    
-    # Mostrar info para depuración
-    st.info("Procesando archivo de Banco de Venezuela...")
-    
+
+    st.info("Procesando Banco de Venezuela...")
+
     # ============================================
-    # RENOMBRAR COLUMNAS
+    # BUSCAR COLUMNAS REALES
     # ============================================
-    columnas = df.columns.tolist()
-    
-    if len(columnas) >= 5:
-        df.rename(columns={
-            columnas[0]: "FECHA",
-            columnas[1]: "REFERENCIA",
-            columnas[2]: "TIPO",
-            columnas[3]: "DESCRIPCION",
-            columnas[4]: "MONTO",
-        }, inplace=True)
-    
+
+    rename_map = {}
+
+    for col in df.columns:
+
+        col_str = str(col).strip().lower()
+
+        if "día" in col_str or "fecha" in col_str:
+            rename_map[col] = "FECHA"
+
+        elif "referencia" in col_str:
+            rename_map[col] = "REFERENCIA"
+
+        elif "movimiento" in col_str or "tipo" in col_str:
+            rename_map[col] = "TIPO"
+
+        elif "descrip" in col_str or "concepto" in col_str:
+            rename_map[col] = "DESCRIPCION"
+
+        elif "monto" in col_str:
+            rename_map[col] = "MONTO"
+
+    df = df.rename(columns=rename_map)
+
+    # ============================================
+    # VALIDAR COLUMNAS
+    # ============================================
+
+    st.write("COLUMNAS DETECTADAS:")
+    st.write(df.columns.tolist())
+
     # ============================================
     # FECHAS
     # ============================================
-    df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
-    
+
+    if "FECHA" in df.columns:
+
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
+        )
+
+        df = df[df["FECHA"].notna()]
+
     # ============================================
     # MONTO
     # ============================================
+
     if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
-    
-    # ============================================
-    # ELIMINAR FECHAS INVÁLIDAS Y MONTOS NULOS
-    # ============================================
-    df = df[df["FECHA"].notna()]
-    if "MONTO" in df.columns:
+
+        df["MONTO"] = pd.to_numeric(
+            df["MONTO"],
+            errors="coerce"
+        )
+
         df = df[df["MONTO"].notna()]
-    
+
     # ============================================
-    # NORMALIZAR PARA QUE FUNCIONE CON EL PROCESADOR ORIGINAL
+    # VISTA PREVIA
     # ============================================
-    # Convertir a formato de lista para que el procesador original lo entienda
-    # Esto es clave: mantenemos compatibilidad con el código existente
-    
+
+    st.write("VISTA PREVIA VENEZUELA:")
+    st.dataframe(df.head())
+
     return df
 
+# =========================================================
+# PROCESAR BANESCO - VERSIÓN CORREGIDA
+# =========================================================
+
 def procesar_banesco(df):
-    """Procesa archivo del Banco Banesco"""
-    
-    st.info("Procesando archivo de Banesco...")
-    
-    # ============================================
-    # RENOMBRAR
-    # ============================================
+
+    st.info("Procesando Banesco...")
+
     rename_map = {}
-    
+
     for col in df.columns:
-        col_str = str(col).strip()
-        col_lower = col_str.lower()
-        
-        if "fecha" in col_lower:
+
+        col_str = str(col).strip().lower()
+
+        if "fecha" in col_str:
             rename_map[col] = "FECHA"
-        elif "descrip" in col_lower or "concepto" in col_lower:
+
+        elif "descrip" in col_str:
             rename_map[col] = "DESCRIPCION"
-        elif "referencia" in col_lower or "ref" in col_lower:
+
+        elif "referencia" in col_str:
             rename_map[col] = "REFERENCIA"
-        elif "monto" in col_lower or "importe" in col_lower:
+
+        elif "monto" in col_str:
             rename_map[col] = "MONTO"
-        elif "tipo" in col_lower:
-            rename_map[col] = "TIPO"
-    
+
     df = df.rename(columns=rename_map)
-    
+
     # ============================================
     # FECHA
     # ============================================
+
     if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
+        )
+
         df = df[df["FECHA"].notna()]
-    
+
     # ============================================
     # MONTO
     # ============================================
+
     if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+
+        df["MONTO"] = pd.to_numeric(
+            df["MONTO"],
+            errors="coerce"
+        )
+
         df = df[df["MONTO"].notna()]
-    
+
     # ============================================
-    # ELIMINAR VACÍOS
+    # CREAR TIPO AUTOMÁTICO
     # ============================================
-    df = df[df["MONTO"].notna()]
-    
+
+    df["TIPO"] = df["MONTO"].apply(
+
+        lambda x: "NC" if x > 0 else "ND"
+    )
+
+    # ============================================
+    # ABSOLUTO
+    # ============================================
+
+    df["MONTO"] = df["MONTO"].abs()
+
+    # ============================================
+    # DEBUG
+    # ============================================
+
+    st.write("VISTA PREVIA BANESCO:")
+    st.dataframe(df.head())
+
     return df
 
 def procesar_provincial(df):
@@ -747,7 +808,7 @@ def convertir_a_formato_mercantil(df, banco):
             else:
                 fecha_str = str(fecha)
             
-            # Tipo (NC/ND/etc)
+            # Tipo (NC/ND/etc) - CRÍTICO: esto es lo que determina ingreso/egreso
             tipo = fila.get("TIPO", "")
             if pd.isna(tipo):
                 tipo = ""
@@ -774,7 +835,7 @@ def convertir_a_formato_mercantil(df, banco):
                 "",           # col2
                 fecha_str,    # col3 - FECHA
                 referencia,   # col4 - REFERENCIA
-                tipo,         # col5 - TIPO
+                tipo,         # col5 - TIPO (NC/ND) - ¡ESTO ES CLAVE!
                 descripcion,  # col6 - DESCRIPCION
                 monto,        # col7 - MONTO BS
                 "",           # col8
