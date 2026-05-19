@@ -161,6 +161,32 @@ def convertir_monto(valor):
         return None
 
 # =========================================================
+# CALCULAR USD SEGÚN TASA
+# =========================================================
+
+def calcular_usd(monto_bs, tasa):
+
+    try:
+
+        if monto_bs is None:
+            return None
+
+        if tasa is None:
+            return None
+
+        if tasa == 0:
+            return None
+
+        return round(
+            abs(monto_bs) / abs(tasa),
+            2
+        )
+
+    except:
+
+        return None
+
+# =========================================================
 # DETECTAR COMISIONES
 # =========================================================
 
@@ -199,28 +225,6 @@ def es_comision(texto):
         p in texto
         for p in palabras
     )
-
-# =========================================================
-# DETECTAR MONTO USD CORRECTO
-# =========================================================
-
-def detectar_monto_usd(fila):
-
-    columnas_prioridad = [9, 10, 11, 8]
-
-    for col in columnas_prioridad:
-
-        try:
-
-            valor = convertir_monto(fila[col])
-
-            if valor is not None and valor != 0:
-                return valor
-
-        except:
-            pass
-
-    return None
 
 # =========================================================
 # PROCESAMIENTO MERCANTIL
@@ -294,16 +298,30 @@ def procesar_archivo(df):
                 fila[4]
             ).strip()
 
+            # =================================================
+            # MONTO BS
+            # =================================================
+
             monto_bs = convertir_monto(
                 fila[7]
             )
 
-            # =============================================
-            # CORRECCIÓN NUEVA
-            # DETECCIÓN AUTOMÁTICA USD
-            # =============================================
+            # =================================================
+            # TASA DEL DIA
+            # =================================================
 
-            monto_usd = detectar_monto_usd(fila)
+            tasa = convertir_monto(
+                fila[9]
+            )
+
+            # =================================================
+            # CALCULAR USD REAL
+            # =================================================
+
+            monto_usd = calcular_usd(
+                monto_bs,
+                tasa
+            )
 
             if descripcion == "" or descripcion.lower() == "nan":
                 continue
@@ -335,12 +353,12 @@ def procesar_archivo(df):
 
                 "DESCRIPCIÓN": descripcion,
 
-                "MONTO BS": round(
+                "MONTO": round(
                     abs(monto_bs),
                     2
                 ) if monto_bs else 0,
 
-                "MONTO USD": round(
+                "TASA DEL DIA": round(
                     abs(monto_usd),
                     2
                 ) if monto_usd else 0
@@ -469,17 +487,17 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             total_ingresos = (
-                df_ingresos["MONTO USD"].sum()
+                df_ingresos["TASA DEL DIA"].sum()
                 if not df_ingresos.empty else 0
             )
 
             total_egresos = (
-                df_egresos["MONTO USD"].sum()
+                df_egresos["TASA DEL DIA"].sum()
                 if not df_egresos.empty else 0
             )
 
             total_comisiones = (
-                df_comisiones["MONTO USD"].sum()
+                df_comisiones["TASA DEL DIA"].sum()
                 if not df_comisiones.empty else 0
             )
 
@@ -629,8 +647,8 @@ if archivo:
                         "FECHA",
                         "REFERENCIA",
                         "DESCRIPCIÓN",
-                        "MONTO BS",
-                        "MONTO USD",
+                        "MONTO",
+                        "TASA DEL DIA",
                         "STATUS",
                         "OBSERVACIÓN"
                     ]
@@ -657,8 +675,8 @@ if archivo:
                         hoja.cell(row=fila_data, column=1).value = row["FECHA"]
                         hoja.cell(row=fila_data, column=2).value = row["REFERENCIA"]
                         hoja.cell(row=fila_data, column=3).value = row["DESCRIPCIÓN"]
-                        hoja.cell(row=fila_data, column=4).value = row["MONTO BS"]
-                        hoja.cell(row=fila_data, column=5).value = row["MONTO USD"]
+                        hoja.cell(row=fila_data, column=4).value = row["MONTO"]
+                        hoja.cell(row=fila_data, column=5).value = row["TASA DEL DIA"]
 
                         hoja.cell(row=fila_data, column=4).number_format = '#,##0.00'
                         hoja.cell(row=fila_data, column=5).number_format = '$#,##0.00'
@@ -689,7 +707,7 @@ if archivo:
                     )
 
                     monto_total.value = dataframe[
-                        "MONTO USD"
+                        "TASA DEL DIA"
                     ].sum()
 
                     monto_total.number_format = '$#,##0.00'
