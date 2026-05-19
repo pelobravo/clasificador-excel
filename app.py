@@ -1,5 +1,3 @@
-# CÓDIGO COMPLETO CORREGIDO
-
 ```python
 import streamlit as st
 import pandas as pd
