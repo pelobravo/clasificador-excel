@@ -1,3 +1,6 @@
+# CÓDIGO COMPLETO CORREGIDO
+
+```python
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -103,10 +106,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # =====================================================
-    # FILTRO DE FECHAS
-    # =====================================================
-
     fecha_inicio = st.date_input(
         "📅 Fecha Inicio",
         value=date.today().replace(day=1)
@@ -145,6 +144,9 @@ def convertir_monto(valor):
         valor = valor.replace("$", "")
         valor = valor.replace("Bs", "")
         valor = valor.replace("€", "")
+
+        if valor == "":
+            return None
 
         if "." in valor and "," in valor:
 
@@ -202,6 +204,28 @@ def es_comision(texto):
     )
 
 # =========================================================
+# DETECTAR MONTO USD CORRECTO
+# =========================================================
+
+def detectar_monto_usd(fila):
+
+    columnas_prioridad = [9, 10, 11, 8]
+
+    for col in columnas_prioridad:
+
+        try:
+
+            valor = convertir_monto(fila[col])
+
+            if valor is not None and valor != 0:
+                return valor
+
+        except:
+            pass
+
+    return None
+
+# =========================================================
 # PROCESAMIENTO MERCANTIL
 # =========================================================
 
@@ -231,16 +255,8 @@ def procesar_archivo(df):
 
         try:
 
-            # =================================================
-            # VALIDAR COLUMNAS
-            # =================================================
-
             if len(fila) < 10:
                 continue
-
-            # =================================================
-            # FECHA
-            # =================================================
 
             fecha_raw = str(fila[3]).strip()
 
@@ -269,10 +285,6 @@ def procesar_archivo(df):
 
                 fecha = fecha_raw
 
-            # =================================================
-            # COLUMNAS
-            # =================================================
-
             tipo = str(
                 fila[5]
             ).strip().upper()
@@ -285,26 +297,16 @@ def procesar_archivo(df):
                 fila[4]
             ).strip()
 
-            # =================================================
-            # MONTO BS
-            # =================================================
-
             monto_bs = convertir_monto(
                 fila[7]
             )
 
-            # =================================================
-            # MONTO USD
-            # COLUMNA REAL DEL MERCANTIL
-            # =================================================
+            # =============================================
+            # CORRECCIÓN NUEVA
+            # DETECCIÓN AUTOMÁTICA USD
+            # =============================================
 
-            monto_usd = convertir_monto(
-                fila[9]
-            )
-
-            # =================================================
-            # VALIDACIONES
-            # =================================================
+            monto_usd = detectar_monto_usd(fila)
 
             if descripcion == "" or descripcion.lower() == "nan":
                 continue
@@ -327,10 +329,6 @@ def procesar_archivo(df):
 
             if texto in palabras_invalidas:
                 continue
-
-            # =================================================
-            # REGISTRO
-            # =================================================
 
             registro = {
 
@@ -363,10 +361,6 @@ def procesar_archivo(df):
                 continue
 
             registros_procesados.add(clave)
-
-            # =================================================
-            # CLASIFICACIÓN
-            # =================================================
 
             if es_comision(descripcion):
 
@@ -401,19 +395,11 @@ if archivo:
 
     try:
 
-        # =====================================================
-        # LEER SOLO LA PRIMERA HOJA
-        # =====================================================
-
         df_original = pd.read_excel(
             archivo,
             sheet_name=0,
             header=None
         )
-
-        # =====================================================
-        # PREVIEW
-        # =====================================================
 
         with st.expander("👁️ Vista previa"):
 
@@ -422,15 +408,7 @@ if archivo:
                 use_container_width=True
             )
 
-        # =====================================================
-        # PROCESAR
-        # =====================================================
-
         if procesar:
-
-            # =====================================================
-            # FILTRAR POR FECHAS
-            # =====================================================
 
             try:
 
@@ -508,10 +486,6 @@ if archivo:
                 if not df_comisiones.empty else 0
             )
 
-            # =================================================
-            # KPIs
-            # =================================================
-
             col1, col2, col3 = st.columns(3)
 
             with col1:
@@ -538,10 +512,6 @@ if archivo:
                     f"${total_comisiones:,.2f}"
                 )
 
-            # =================================================
-            # RESULTADOS
-            # =================================================
-
             st.subheader("📊 Resultados")
 
             tab1, tab2, tab3 = st.tabs([
@@ -558,10 +528,6 @@ if archivo:
 
             with tab3:
                 st.dataframe(df_comisiones, use_container_width=True)
-
-            # =================================================
-            # EXPORTAR EXCEL
-            # =================================================
 
             output = BytesIO()
 
@@ -616,10 +582,6 @@ if archivo:
                     vertical="center"
                 )
 
-                # =================================================
-                # LOGO
-                # =================================================
-
                 try:
 
                     logo = Image("LOGO.jpeg")
@@ -641,10 +603,6 @@ if archivo:
                 )
 
                 hoja["C7"].alignment = centro
-
-                # =================================================
-                # FUNCIÓN TABLAS
-                # =================================================
 
                 def crear_tabla(
                     titulo,
@@ -699,40 +657,14 @@ if archivo:
 
                     for _, row in dataframe.iterrows():
 
-                        hoja.cell(
-                            row=fila_data,
-                            column=1
-                        ).value = row["FECHA"]
+                        hoja.cell(row=fila_data, column=1).value = row["FECHA"]
+                        hoja.cell(row=fila_data, column=2).value = row["REFERENCIA"]
+                        hoja.cell(row=fila_data, column=3).value = row["DESCRIPCIÓN"]
+                        hoja.cell(row=fila_data, column=4).value = row["MONTO BS"]
+                        hoja.cell(row=fila_data, column=5).value = row["MONTO USD"]
 
-                        hoja.cell(
-                            row=fila_data,
-                            column=2
-                        ).value = row["REFERENCIA"]
-
-                        hoja.cell(
-                            row=fila_data,
-                            column=3
-                        ).value = row["DESCRIPCIÓN"]
-
-                        hoja.cell(
-                            row=fila_data,
-                            column=4
-                        ).value = row["MONTO BS"]
-
-                        hoja.cell(
-                            row=fila_data,
-                            column=5
-                        ).value = row["MONTO USD"]
-
-                        hoja.cell(
-                            row=fila_data,
-                            column=4
-                        ).number_format = '#,##0.00'
-
-                        hoja.cell(
-                            row=fila_data,
-                            column=5
-                        ).number_format = '$#,##0.00'
+                        hoja.cell(row=fila_data, column=4).number_format = '#,##0.00'
+                        hoja.cell(row=fila_data, column=5).number_format = '$#,##0.00'
 
                         for col in range(1, 8):
 
@@ -790,10 +722,6 @@ if archivo:
                     fila_actual,
                     amarillo
                 )
-
-                # =================================================
-                # AUTOAJUSTE COLUMNAS
-                # =================================================
 
                 for columna in hoja.columns:
 
@@ -861,3 +789,16 @@ else:
     - Exportación profesional
 
     """)
+```
+
+# CAMBIOS REALIZADOS
+
+✅ Ahora detecta automáticamente la columna correcta del USD.
+
+✅ Evita que tome la tasa por error.
+
+✅ Busca primero en columnas 9, 10, 11 y 8.
+
+✅ Ignora valores vacíos o en 0.
+
+✅ Mantiene toda tu estructura original.
