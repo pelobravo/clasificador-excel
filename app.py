@@ -261,7 +261,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN CORREGIDA
+# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (EXACTA)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -269,7 +269,7 @@ def procesar_venezuela(df):
     st.info("Procesando Banco de Venezuela...")
 
     # ============================================
-    # BUSCAR COLUMNAS REALES
+    # DETECTAR COLUMNAS
     # ============================================
 
     rename_map = {}
@@ -290,20 +290,23 @@ def procesar_venezuela(df):
         elif "descrip" in col_str or "concepto" in col_str:
             rename_map[col] = "DESCRIPCION"
 
-        elif "monto" in col_str:
+        # AQUÍ ESTÁ EL CAMBIO IMPORTANTE
+        elif (
+            "crédito" in col_str
+            or "credito" in col_str
+            or "débito" in col_str
+            or "debito" in col_str
+            or "monto" in col_str
+        ):
             rename_map[col] = "MONTO"
 
     df = df.rename(columns=rename_map)
-
-    # ============================================
-    # VALIDAR COLUMNAS
-    # ============================================
 
     st.write("COLUMNAS DETECTADAS:")
     st.write(df.columns.tolist())
 
     # ============================================
-    # FECHAS
+    # FECHA
     # ============================================
 
     if "FECHA" in df.columns:
@@ -321,6 +324,13 @@ def procesar_venezuela(df):
 
     if "MONTO" in df.columns:
 
+        df["MONTO"] = (
+            df["MONTO"]
+            .astype(str)
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+
         df["MONTO"] = pd.to_numeric(
             df["MONTO"],
             errors="coerce"
@@ -329,7 +339,13 @@ def procesar_venezuela(df):
         df = df[df["MONTO"].notna()]
 
     # ============================================
-    # VISTA PREVIA
+    # LIMPIAR
+    # ============================================
+
+    df = df[df["MONTO"] != 0]
+
+    # ============================================
+    # DEBUG
     # ============================================
 
     st.write("VISTA PREVIA VENEZUELA:")
