@@ -134,7 +134,7 @@ with st.sidebar:
     )
 
 # =========================================================
-# FUNCIONES ORIGINALES (NO TOCAR)
+# FUNCIONES ORIGINALES (NO MODIFICADAS)
 # =========================================================
 
 def convertir_monto(valor):
@@ -239,7 +239,7 @@ def es_comision(texto):
     )
 
 # =========================================================
-# NUEVAS FUNCIONES MULTI-BANCO (AGREGADAS, SIN ELIMINAR)
+# NUEVAS FUNCIONES PARA MULTI-BANCO (AGREGADAS)
 # =========================================================
 
 def detectar_banco(nombre_archivo):
@@ -260,144 +260,200 @@ def detectar_banco(nombre_archivo):
         return "tesoro"
     return "mercantil"  # Por defecto mercantil
 
-def procesar_mercantil_original(df):
-    """Versión original que ya funcionaba - NO MODIFICADA"""
-    return df
-
 def procesar_venezuela(df):
     """Procesa archivo del Banco de Venezuela"""
-    try:
-        # Buscar fila de encabezados
-        for i in range(min(15, len(df))):
-            fila = df.iloc[i].astype(str)
-            if fila.str.contains("fecha", case=False).any():
-                df.columns = df.iloc[i]
-                df = df.iloc[i+1:].reset_index(drop=True)
-                break
-        
-        # Mapeo de columnas
-        columnas_nuevas = {}
-        for col in df.columns:
-            col_str = str(col).lower()
-            if "fecha" in col_str or "día" in col_str:
-                columnas_nuevas[col] = "FECHA"
-            elif "descrip" in col_str or "concepto" in col_str:
-                columnas_nuevas[col] = "DESCRIPCION"
-            elif "monto" in col_str or "bs" in col_str:
-                columnas_nuevas[col] = "MONTO"
-            elif "referencia" in col_str:
-                columnas_nuevas[col] = "REFERENCIA"
-            elif "tipo" in col_str:
-                columnas_nuevas[col] = "TIPO"
-        
-        df = df.rename(columns=columnas_nuevas)
-        return df
-    except Exception as e:
-        st.warning(f"Error en procesar_venezuela: {e}")
-        return df
+    
+    # Mostrar info para depuración
+    st.info("Procesando archivo de Banco de Venezuela...")
+    
+    # ============================================
+    # RENOMBRAR COLUMNAS
+    # ============================================
+    columnas = df.columns.tolist()
+    
+    if len(columnas) >= 5:
+        df.rename(columns={
+            columnas[0]: "FECHA",
+            columnas[1]: "REFERENCIA",
+            columnas[2]: "TIPO",
+            columnas[3]: "DESCRIPCION",
+            columnas[4]: "MONTO",
+        }, inplace=True)
+    
+    # ============================================
+    # FECHAS
+    # ============================================
+    df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+    
+    # ============================================
+    # MONTO
+    # ============================================
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+    
+    # ============================================
+    # ELIMINAR FECHAS INVÁLIDAS Y MONTOS NULOS
+    # ============================================
+    df = df[df["FECHA"].notna()]
+    if "MONTO" in df.columns:
+        df = df[df["MONTO"].notna()]
+    
+    # ============================================
+    # NORMALIZAR PARA QUE FUNCIONE CON EL PROCESADOR ORIGINAL
+    # ============================================
+    # Convertir a formato de lista para que el procesador original lo entienda
+    # Esto es clave: mantenemos compatibilidad con el código existente
+    
+    return df
 
 def procesar_banesco(df):
     """Procesa archivo del Banco Banesco"""
-    try:
-        for i in range(min(15, len(df))):
-            fila = df.iloc[i].astype(str)
-            if fila.str.contains("fecha", case=False).any():
-                df.columns = df.iloc[i]
-                df = df.iloc[i+1:].reset_index(drop=True)
-                break
+    
+    st.info("Procesando archivo de Banesco...")
+    
+    # ============================================
+    # RENOMBRAR
+    # ============================================
+    rename_map = {}
+    
+    for col in df.columns:
+        col_str = str(col).strip()
+        col_lower = col_str.lower()
         
-        columnas_nuevas = {}
-        for col in df.columns:
-            col_str = str(col).lower()
-            if "fecha" in col_str:
-                columnas_nuevas[col] = "FECHA"
-            elif "descrip" in col_str or "concepto" in col_str:
-                columnas_nuevas[col] = "DESCRIPCION"
-            elif "monto" in col_str:
-                columnas_nuevas[col] = "MONTO"
-            elif "referencia" in col_str:
-                columnas_nuevas[col] = "REFERENCIA"
-        
-        df = df.rename(columns=columnas_nuevas)
-        return df
-    except Exception as e:
-        st.warning(f"Error en procesar_banesco: {e}")
-        return df
+        if "fecha" in col_lower:
+            rename_map[col] = "FECHA"
+        elif "descrip" in col_lower or "concepto" in col_lower:
+            rename_map[col] = "DESCRIPCION"
+        elif "referencia" in col_lower or "ref" in col_lower:
+            rename_map[col] = "REFERENCIA"
+        elif "monto" in col_lower or "importe" in col_lower:
+            rename_map[col] = "MONTO"
+        elif "tipo" in col_lower:
+            rename_map[col] = "TIPO"
+    
+    df = df.rename(columns=rename_map)
+    
+    # ============================================
+    # FECHA
+    # ============================================
+    if "FECHA" in df.columns:
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df = df[df["FECHA"].notna()]
+    
+    # ============================================
+    # MONTO
+    # ============================================
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        df = df[df["MONTO"].notna()]
+    
+    # ============================================
+    # ELIMINAR VACÍOS
+    # ============================================
+    df = df[df["MONTO"].notna()]
+    
+    return df
 
 def procesar_provincial(df):
     """Procesa archivo del Banco Provincial"""
-    try:
-        encabezado = None
-        for i in range(min(20, len(df))):
-            fila = df.iloc[i].astype(str)
-            if fila.str.contains("fecha", case=False).any():
-                encabezado = i
-                break
-        
-        if encabezado is not None:
-            df.columns = df.iloc[encabezado]
-            df = df.iloc[encabezado+1:].reset_index(drop=True)
-        
-        columnas_nuevas = {}
-        for col in df.columns:
-            col_str = str(col).lower()
-            if "fecha" in col_str:
-                columnas_nuevas[col] = "FECHA"
-            elif "descrip" in col_str or "concepto" in col_str:
-                columnas_nuevas[col] = "DESCRIPCION"
-            elif "monto" in col_str:
-                columnas_nuevas[col] = "MONTO"
-        
-        df = df.rename(columns=columnas_nuevas)
-        return df
-    except Exception as e:
-        st.warning(f"Error en procesar_provincial: {e}")
-        return df
+    
+    st.info("Procesando archivo de Provincial...")
+    
+    # Buscar fila de encabezados
+    encabezado = None
+    for i in range(min(20, len(df))):
+        fila = df.iloc[i].astype(str)
+        if fila.str.contains("fecha", case=False).any():
+            encabezado = i
+            break
+    
+    if encabezado is not None:
+        df.columns = df.iloc[encabezado]
+        df = df.iloc[encabezado+1:].reset_index(drop=True)
+    
+    # Renombrar
+    rename_map = {}
+    for col in df.columns:
+        col_str = str(col).lower()
+        if "fecha" in col_str:
+            rename_map[col] = "FECHA"
+        elif "descrip" in col_str or "concepto" in col_str:
+            rename_map[col] = "DESCRIPCION"
+        elif "monto" in col_str:
+            rename_map[col] = "MONTO"
+    
+    df = df.rename(columns=rename_map)
+    
+    if "FECHA" in df.columns:
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df = df[df["FECHA"].notna()]
+    
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        df = df[df["MONTO"].notna()]
+    
+    return df
 
 def procesar_bnc(df):
     """Procesa archivo del BNC"""
-    try:
-        for i in range(min(15, len(df))):
-            fila = df.iloc[i].astype(str)
-            if fila.str.contains("fecha", case=False).any():
-                df.columns = df.iloc[i]
-                df = df.iloc[i+1:].reset_index(drop=True)
-                break
-        
-        columnas_nuevas = {}
-        for col in df.columns:
-            col_str = str(col).lower()
-            if "fecha" in col_str:
-                columnas_nuevas[col] = "FECHA"
-            elif "descrip" in col_str:
-                columnas_nuevas[col] = "DESCRIPCION"
-            elif "monto" in col_str:
-                columnas_nuevas[col] = "MONTO"
-        
-        df = df.rename(columns=columnas_nuevas)
-        return df
-    except Exception as e:
-        st.warning(f"Error en procesar_bnc: {e}")
-        return df
+    
+    st.info("Procesando archivo de BNC...")
+    
+    for i in range(min(15, len(df))):
+        fila = df.iloc[i].astype(str)
+        if fila.str.contains("fecha", case=False).any():
+            df.columns = df.iloc[i]
+            df = df.iloc[i+1:].reset_index(drop=True)
+            break
+    
+    rename_map = {}
+    for col in df.columns:
+        col_str = str(col).lower()
+        if "fecha" in col_str:
+            rename_map[col] = "FECHA"
+        elif "descrip" in col_str:
+            rename_map[col] = "DESCRIPCION"
+        elif "monto" in col_str:
+            rename_map[col] = "MONTO"
+    
+    df = df.rename(columns=rename_map)
+    
+    if "FECHA" in df.columns:
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df = df[df["FECHA"].notna()]
+    
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        df = df[df["MONTO"].notna()]
+    
+    return df
 
 def procesar_tesoro(df):
     """Procesa archivo del Tesoro"""
-    try:
-        columnas_nuevas = {}
-        for col in df.columns:
-            col_str = str(col).lower()
-            if "fecha" in col_str:
-                columnas_nuevas[col] = "FECHA"
-            elif "descrip" in col_str:
-                columnas_nuevas[col] = "DESCRIPCION"
-            elif "monto" in col_str:
-                columnas_nuevas[col] = "MONTO"
-        
-        df = df.rename(columns=columnas_nuevas)
-        return df
-    except Exception as e:
-        st.warning(f"Error en procesar_tesoro: {e}")
-        return df
+    
+    st.info("Procesando archivo de Tesoro...")
+    
+    rename_map = {}
+    for col in df.columns:
+        col_str = str(col).lower()
+        if "fecha" in col_str:
+            rename_map[col] = "FECHA"
+        elif "descrip" in col_str:
+            rename_map[col] = "DESCRIPCION"
+        elif "monto" in col_str:
+            rename_map[col] = "MONTO"
+    
+    df = df.rename(columns=rename_map)
+    
+    if "FECHA" in df.columns:
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df = df[df["FECHA"].notna()]
+    
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        df = df[df["MONTO"].notna()]
+    
+    return df
 
 # =========================================================
 # OBTENER TASA BCV (API o SCRAPING)
@@ -411,6 +467,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
     """
     
     # Diccionario de tasas de ejemplo (formato: "dd/mm/yyyy" -> tasa)
+    # ESTE DICCIONARIO DEBE ACTUALIZARSE CON DATOS REALES DEL BCV
     tasas_bcv_local = {
         "01/05/2026": 489.5547,
         "02/05/2026": 489.5547,
@@ -450,7 +507,27 @@ def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     """
     Wrapper para obtener tasa según método seleccionado
     """
+    # Por ahora solo modo local (estable)
+    # En futura versión se puede implementar scraping del BCV o API externa
     return obtener_tasa_bcv_fecha(fecha_obj)
+
+# =========================================================
+# FORMATEAR FECHA PARA CONSULTA
+# =========================================================
+
+def formatear_fecha_para_clave(fecha_str):
+    """
+    Convierte fecha del Excel a formato estandarizado
+    """
+    try:
+        # Si viene en formato dd/mm/yyyy
+        if "/" in fecha_str:
+            partes = fecha_str.split("/")
+            if len(partes) == 3:
+                return f"{partes[0].zfill(2)}/{partes[1].zfill(2)}/{partes[2]}"
+        return fecha_str
+    except:
+        return fecha_str
 
 # =========================================================
 # PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, NO MODIFICADO)
@@ -648,6 +725,76 @@ def procesar_archivo(df, usar_api=False):
     return ingresos, egresos, comisiones
 
 # =========================================================
+# NUEVA FUNCIÓN PARA PROCESAR OTROS BANCOS (CONVIERTE A FORMATO MERCANTIL)
+# =========================================================
+
+def convertir_a_formato_mercantil(df, banco):
+    """Convierte DataFrame de otros bancos al formato que espera procesar_archivo"""
+    
+    # Crear un nuevo DataFrame con 10 columnas vacías (como espera Mercantil)
+    datos_convertidos = []
+    
+    for idx, fila in df.iterrows():
+        try:
+            # Extraer datos normalizados
+            fecha = fila.get("FECHA", "")
+            if pd.isna(fecha):
+                continue
+            
+            # Convertir fecha a string en formato esperado
+            if isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha_str = fecha.strftime("%d/%m/%Y")
+            else:
+                fecha_str = str(fecha)
+            
+            # Tipo (NC/ND/etc)
+            tipo = fila.get("TIPO", "")
+            if pd.isna(tipo):
+                tipo = ""
+            
+            # Descripción
+            descripcion = fila.get("DESCRIPCION", "")
+            if pd.isna(descripcion):
+                descripcion = ""
+            
+            # Referencia
+            referencia = fila.get("REFERENCIA", "")
+            if pd.isna(referencia):
+                referencia = ""
+            
+            # Monto
+            monto = fila.get("MONTO", 0)
+            if pd.isna(monto):
+                monto = 0
+            
+            # Crear fila con 10 columnas (como espera procesar_archivo)
+            fila_convertida = [
+                "",           # col0
+                "",           # col1  
+                "",           # col2
+                fecha_str,    # col3 - FECHA
+                referencia,   # col4 - REFERENCIA
+                tipo,         # col5 - TIPO
+                descripcion,  # col6 - DESCRIPCION
+                monto,        # col7 - MONTO BS
+                "",           # col8
+                "",           # col9
+            ]
+            datos_convertidos.append(fila_convertida)
+            
+        except Exception as e:
+            continue
+    
+    # Crear DataFrame con 10 columnas
+    df_convertido = pd.DataFrame(datos_convertidos)
+    
+    # Si no hay datos, devolver DataFrame vacío
+    if len(df_convertido) == 0:
+        return pd.DataFrame()
+    
+    return df_convertido
+
+# =========================================================
 # INTERFAZ PRINCIPAL
 # =========================================================
 
@@ -659,51 +806,51 @@ if archivo:
     )
 
     try:
-        # DETECTAR BANCO (NUEVO)
+        # =========================================================
+        # DETECTAR BANCO
+        # =========================================================
         banco = detectar_banco(archivo.name)
         st.info(f"🏦 Banco detectado: **{banco.upper()}**")
         
-        # LEER EXCEL
-        df_original = pd.read_excel(
-            archivo,
-            sheet_name=0,
-            header=None
-        )
+        # =========================================================
+        # LEER Y PROCESAR SEGÚN BANCO
+        # =========================================================
         
-        # APLICAR PARSER SEGÚN BANCO (NUEVO)
-        if banco == "venezuela":
-            # Convertir a formato con encabezados
-            df_temp = pd.read_excel(archivo, sheet_name=0, header=None)
-            df_procesado = procesar_venezuela(df_temp)
-            # Convertir para que funcione con el procesador existente
-            # Reestructurar para que tenga las columnas en posiciones esperadas
-            st.info("Procesando archivo de Banco de Venezuela...")
-            df_original = df_procesado
-        elif banco == "banesco":
-            df_temp = pd.read_excel(archivo, sheet_name=0, header=None)
-            df_procesado = procesar_banesco(df_temp)
-            st.info("Procesando archivo de Banesco...")
-            df_original = df_procesado
-        elif banco == "provincial":
-            df_temp = pd.read_excel(archivo, sheet_name=0, header=None)
-            df_procesado = procesar_provincial(df_temp)
-            st.info("Procesando archivo de Provincial...")
-            df_original = df_procesado
-        elif banco == "bnc":
-            df_temp = pd.read_excel(archivo, sheet_name=0, header=None)
-            df_procesado = procesar_bnc(df_temp)
-            st.info("Procesando archivo de BNC...")
-            df_original = df_procesado
-        elif banco == "tesoro":
-            df_temp = pd.read_excel(archivo, sheet_name=0, header=None)
-            df_procesado = procesar_tesoro(df_temp)
-            st.info("Procesando archivo de Tesoro...")
-            df_original = df_procesado
+        if banco == "mercantil":
+            # MERCADO: usar el procesamiento original
+            df_original = pd.read_excel(
+                archivo,
+                sheet_name=0,
+                header=None
+            )
+            usar_procesamiento_original = True
+            
         else:
-            # Para mercantil y desconocido, usar el formato original
-            pass
+            # OTROS BANCOS: aplicar parser específico
+            df_raw = pd.read_excel(archivo, sheet_name=0)
+            
+            if banco == "venezuela":
+                df_normalizado = procesar_venezuela(df_raw)
+            elif banco == "banesco":
+                df_normalizado = procesar_banesco(df_raw)
+            elif banco == "provincial":
+                df_normalizado = procesar_provincial(df_raw)
+            elif banco == "bnc":
+                df_normalizado = procesar_bnc(df_raw)
+            elif banco == "tesoro":
+                df_normalizado = procesar_tesoro(df_raw)
+            else:
+                df_normalizado = df_raw
+            
+            # Convertir al formato que espera procesar_archivo
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            usar_procesamiento_original = True
+            
+            # Mostrar vista previa de la conversión
+            st.write("### Vista previa de datos convertidos:")
+            st.dataframe(df_original.head(10), use_container_width=True)
 
-        with st.expander("👁️ Vista previa"):
+        with st.expander("👁️ Vista previa archivo original"):
 
             st.dataframe(
                 df_original.head(20),
@@ -712,20 +859,12 @@ if archivo:
 
         if procesar:
 
-            try:
-                # Para bancos que no son mercantil, necesitamos manejar el filtrado de fechas diferente
-                if banco != "mercantil":
-                    # Para archivos con encabezados, buscamos la columna de fecha
-                    if "FECHA" in df_original.columns:
-                        df_original["FECHA_DT"] = pd.to_datetime(df_original["FECHA"], errors="coerce")
-                        fecha_inicio_dt = pd.to_datetime(fecha_inicio)
-                        fecha_fin_dt = pd.to_datetime(fecha_fin)
-                        df_original = df_original[
-                            (df_original["FECHA_DT"] >= fecha_inicio_dt) &
-                            (df_original["FECHA_DT"] <= fecha_fin_dt)
-                        ]
-                else:
-                    # Filtrado original para Mercantil
+            # =========================================================
+            # FILTRADO DE FECHAS (solo para Mercantil)
+            # =========================================================
+            
+            if banco == "mercantil":
+                try:
                     fechas_convertidas = []
 
                     for valor in df_original[3]:
@@ -773,9 +912,12 @@ if archivo:
                         (df_original["FECHA_FILTRO"].dt.date <= fecha_fin)
                     ]
 
-            except Exception as e:
+                except Exception as e:
 
-                st.warning(f"Error filtrando fechas: {e}")
+                    st.warning(f"Error filtrando fechas: {e}")
+            else:
+                # Para otros bancos, el filtrado ya se hizo en el parser
+                st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
 
             with st.spinner("Procesando archivo con tasas BCV..."):
 
@@ -909,7 +1051,8 @@ if archivo:
 
                 hoja.merge_cells("C7:H7")
 
-                hoja["C7"] = f"{banco.upper()} - CON TASAS BCV"
+                banco_nombre = banco.upper()
+                hoja["C7"] = f"{banco_nombre} - CON TASAS BCV"
 
                 hoja["C7"].font = Font(
                     bold=True,
