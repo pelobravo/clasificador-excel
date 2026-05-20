@@ -511,45 +511,155 @@ def procesar_provincial(df):
     return df
 
 # =========================================================
-# PROCESAR BNC (con soporte .xls)
+# PROCESAR BNC - SOLUCIÓN DEFINITIVA
 # =========================================================
 
 def procesar_bnc(df):
-    """Procesa archivo del BNC"""
-    
-    st.info("Procesando archivo de BNC...")
-    
-    # Buscar fila de encabezados
-    for i in range(min(15, len(df))):
+
+    st.info("Procesando archivo BNC...")
+
+    # ============================================
+    # BUSCAR FILA ENCABEZADO
+    # ============================================
+
+    encabezado = None
+
+    for i in range(min(30, len(df))):
+
         fila = df.iloc[i].astype(str)
-        if fila.str.contains("fecha", case=False).any():
-            df.columns = df.iloc[i]
-            df = df.iloc[i+1:].reset_index(drop=True)
+
+        texto = " ".join(fila).lower()
+
+        if (
+            "fecha" in texto
+            and (
+                "descripcion" in texto
+                or "descripción" in texto
+            )
+        ):
+
+            encabezado = i
             break
-    
+
+    if encabezado is None:
+
+        st.error(
+            "No se encontró encabezado válido en BNC"
+        )
+
+        return pd.DataFrame()
+
+    # ============================================
+    # RECONSTRUIR DATAFRAME
+    # ============================================
+
+    df.columns = df.iloc[encabezado]
+
+    df = df.iloc[
+        encabezado + 1:
+    ].reset_index(drop=True)
+
+    # ============================================
+    # RENOMBRAR
+    # ============================================
+
     rename_map = {}
+
     for col in df.columns:
-        col_str = str(col).lower()
+
+        col_str = str(col).strip().lower()
+
         if "fecha" in col_str:
+
             rename_map[col] = "FECHA"
-        elif "descrip" in col_str:
+
+        elif (
+            "descripcion" in col_str
+            or "descripción" in col_str
+            or "concepto" in col_str
+        ):
+
             rename_map[col] = "DESCRIPCION"
-        elif "monto" in col_str:
-            rename_map[col] = "MONTO"
-    
+
+        elif "referencia" in col_str:
+
+            rename_map[col] = "REFERENCIA"
+
+        elif "credito" in col_str:
+
+            rename_map[col] = "CREDITO"
+
+        elif "debito" in col_str:
+
+            rename_map[col] = "DEBITO"
+
     df = df.rename(columns=rename_map)
-    
+
+    # ============================================
+    # FECHA
+    # ============================================
+
     if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
+        )
+
         df = df[df["FECHA"].notna()]
-    
-    if "MONTO" in df.columns:
-        monto = df["MONTO"]
-        if isinstance(monto, pd.DataFrame):
-            monto = monto.iloc[:, 0]
-        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
-        df = df[df["MONTO"].notna()]
-    
+
+    # ============================================
+    # NUMÉRICOS
+    # ============================================
+
+    if "CREDITO" in df.columns:
+
+        df["CREDITO"] = pd.to_numeric(
+            df["CREDITO"],
+            errors="coerce"
+        ).fillna(0)
+
+    else:
+
+        df["CREDITO"] = 0
+
+    if "DEBITO" in df.columns:
+
+        df["DEBITO"] = pd.to_numeric(
+            df["DEBITO"],
+            errors="coerce"
+        ).fillna(0)
+
+    else:
+
+        df["DEBITO"] = 0
+
+    # ============================================
+    # MONTO
+    # ============================================
+
+    df["MONTO"] = (
+        df["CREDITO"]
+        - df["DEBITO"]
+    )
+
+    df["TIPO"] = df["MONTO"].apply(
+
+        lambda x: "NC" if x > 0 else "ND"
+    )
+
+    df["MONTO"] = df["MONTO"].abs()
+
+    df = df[df["MONTO"] != 0]
+
+    # ============================================
+    # DEBUG
+    # ============================================
+
+    st.success(f"Registros BNC: {len(df)}")
+
+    st.dataframe(df.head())
+
     return df
 
 # =========================================================
