@@ -4,3 +4,4 @@ openpyxl
 beautifulsoup4
 requests
 lxml
+xlrd>=2.0.1
