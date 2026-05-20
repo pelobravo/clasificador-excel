@@ -308,188 +308,224 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN DEFINITIVA (SOLO ESTE CAMBIO)
+# PROCESAR VENEZUELA - VERSIÓN REEMPLAZADA
 # =========================================================
 
 def procesar_venezuela(df):
 
     st.info("Procesando Banco de Venezuela...")
 
-    # =========================================
-    # LIMPIAR COLUMNAS DUPLICADAS
-    # =========================================
+    try:
 
-    columnas_unicas = []
-    contador = {}
+        # =========================================
+        # LIMPIAR COLUMNAS
+        # =========================================
 
-    for col in df.columns:
+        df.columns = [
+            str(c).strip()
+            for c in df.columns
+        ]
 
-        col = str(col).strip()
+        st.write("COLUMNAS ORIGINALES:")
+        st.write(df.columns.tolist())
 
-        if col in contador:
-            contador[col] += 1
-            col = f"{col}_{contador[col]}"
-        else:
-            contador[col] = 0
+        # =========================================
+        # RENOMBRAR
+        # =========================================
 
-        columnas_unicas.append(col)
+        rename_map = {}
 
-    df.columns = columnas_unicas
+        for col in df.columns:
 
-    # =========================================
-    # RENOMBRAR COLUMNAS
-    # =========================================
+            c = col.lower()
 
-    rename_map = {}
+            if c == "fecha":
 
-    for col in df.columns:
+                rename_map[col] = "FECHA"
 
-        c = str(col).strip().lower()
+            elif "referencia" in c:
 
-        if c == "fecha":
-            rename_map[col] = "FECHA"
+                rename_map[col] = "REFERENCIA"
 
-        elif "referencia" in c:
-            rename_map[col] = "REFERENCIA"
+            elif "descrip" in c:
 
-        elif "descrip" in c:
-            rename_map[col] = "DESCRIPCION"
+                rename_map[col] = "DESCRIPCION"
 
-        elif "tipo de movimiento" in c:
-            rename_map[col] = "TIPO"
+            elif "tipo de movimiento" in c:
 
-        elif "crédito" in c or "credito" in c:
-            rename_map[col] = "CREDITO"
+                rename_map[col] = "TIPO"
 
-        elif "débito" in c or "debito" in c:
-            rename_map[col] = "DEBITO"
+            elif "crédito" in c or "credito" in c:
 
-    df = df.rename(columns=rename_map)
+                rename_map[col] = "CREDITO"
 
-    # =========================================
-    # VERIFICAR COLUMNAS (PARA DEBUG)
-    # =========================================
-    
-    st.write("📋 COLUMNAS ENCONTRADAS EN VENEZUELA:")
-    st.write(df.columns.tolist())
+            elif "débito" in c or "debito" in c:
 
-    # =========================================
-    # VALIDAR COLUMNAS NECESARIAS
-    # =========================================
+                rename_map[col] = "DEBITO"
 
-    columnas_necesarias = [
-        "FECHA",
-        "DESCRIPCION",
-        "TIPO"
-    ]
+        df = df.rename(columns=rename_map)
 
-    for col in columnas_necesarias:
+        st.write("COLUMNAS RENOMBRADAS:")
+        st.write(df.columns.tolist())
 
-        if col not in df.columns:
+        # =========================================
+        # VALIDAR
+        # =========================================
 
-            st.error(f"No existe columna: {col}")
-            st.error(f"Columnas disponibles: {df.columns.tolist()}")
+        if "FECHA" not in df.columns:
+
+            st.error("No existe FECHA")
             return pd.DataFrame()
 
-    # =========================================
-    # FECHA
-    # =========================================
+        # =========================================
+        # FECHA
+        # =========================================
 
-    df["FECHA"] = pd.to_datetime(
-        df["FECHA"],
-        errors="coerce",
-        dayfirst=True
-    )
-
-    df = df[df["FECHA"].notna()]
-
-    # =========================================
-    # NUMÉRICOS
-    # =========================================
-
-    def limpiar_numero(valor):
-
-        valor = str(valor)
-
-        valor = valor.replace(".", "")
-        valor = valor.replace(",", ".")
-
-        valor = valor.replace(" ", "")
-
-        try:
-            return float(valor)
-        except:
-            return 0
-
-    if "CREDITO" in df.columns:
-
-        df["CREDITO"] = df["CREDITO"].apply(
-            limpiar_numero
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce",
+            dayfirst=True
         )
 
-    else:
+        df = df[
+            df["FECHA"].notna()
+        ]
 
-        df["CREDITO"] = 0
+        # =========================================
+        # TIPO
+        # =========================================
 
-    if "DEBITO" in df.columns:
+        if "TIPO" not in df.columns:
 
-        df["DEBITO"] = df["DEBITO"].apply(
-            limpiar_numero
+            df["TIPO"] = ""
+
+        df["TIPO"] = (
+            df["TIPO"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
         )
 
-    else:
+        st.write(
+            "TIPOS DETECTADOS:"
+        )
 
-        df["DEBITO"] = 0
+        st.write(
+            df["TIPO"].unique()
+        )
 
-    # =========================================
-    # MONTO
-    # =========================================
+        # =========================================
+        # LIMPIAR NÚMEROS
+        # =========================================
 
-    df["MONTO"] = df.apply(
+        def limpiar_numero(valor):
 
-        lambda row:
-            row["CREDITO"]
-            if row["TIPO"] == "NC"
-            else abs(row["DEBITO"]),
+            valor = str(valor)
 
-        axis=1
-    )
+            valor = valor.replace(".", "")
+            valor = valor.replace(",", ".")
 
-    # =========================================
-    # FILTRAR SOLO MOVIMIENTOS
-    # =========================================
+            valor = valor.strip()
 
-    df = df[
-        df["TIPO"].isin(["NC", "ND"])
-    ]
+            try:
+                return float(valor)
+            except:
+                return 0
 
-    df = df[df["MONTO"] > 0]
+        # =========================================
+        # CREDITO
+        # =========================================
 
-    # =========================================
-    # COLUMNAS FINALES
-    # =========================================
+        if "CREDITO" in df.columns:
 
-    columnas_finales = [
-        "FECHA",
-        "REFERENCIA",
-        "DESCRIPCION",
-        "TIPO",
-        "MONTO"
-    ]
+            df["CREDITO"] = df[
+                "CREDITO"
+            ].apply(limpiar_numero)
 
-    for c in columnas_finales:
-        if c not in df.columns:
-            df[c] = ""
+        else:
 
-    df = df[columnas_finales]
+            df["CREDITO"] = 0
 
-    st.success(
-        f"Banco Venezuela procesado: {len(df)} registros"
-    )
+        # =========================================
+        # DEBITO
+        # =========================================
 
-    st.dataframe(df.head())
+        if "DEBITO" in df.columns:
 
-    return df
+            df["DEBITO"] = df[
+                "DEBITO"
+            ].apply(limpiar_numero)
+
+        else:
+
+            df["DEBITO"] = 0
+
+        # =========================================
+        # MONTO
+        # =========================================
+
+        df["MONTO"] = df.apply(
+
+            lambda row:
+
+                row["CREDITO"]
+
+                if row["CREDITO"] > 0
+
+                else abs(row["DEBITO"]),
+
+            axis=1
+        )
+
+        # =========================================
+        # ELIMINAR CEROS
+        # =========================================
+
+        df = df[
+            df["MONTO"] > 0
+        ]
+
+        # =========================================
+        # COLUMNAS FINALES
+        # =========================================
+
+        columnas_finales = [
+
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "TIPO",
+            "MONTO"
+
+        ]
+
+        for c in columnas_finales:
+
+            if c not in df.columns:
+
+                df[c] = ""
+
+        df = df[columnas_finales]
+
+        # =========================================
+        # RESULTADO
+        # =========================================
+
+        st.success(
+            f"Registros procesados: {len(df)}"
+        )
+
+        st.dataframe(df.head())
+
+        return df
+
+    except Exception as e:
+
+        st.error(
+            f"Error Venezuela: {str(e)}"
+        )
+
+        return pd.DataFrame()
 
 # =========================================================
 # PROCESAR BANESCO - VERSIÓN CORREGIDA (SIN CAMBIOS)
