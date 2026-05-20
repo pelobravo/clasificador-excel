@@ -968,13 +968,13 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "11/05/2026": 493.1023,
         "12/05/2026": 493.1023,
         "13/05/2026": 493.1023,
-        "14/05/2026": 494.8765,
-        "15/05/2026": 494.8765,
-        "16/05/2026": 494.8765,
-        "17/05/2026": 494.8765,
-        "18/05/2026": 496.0012,
-        "19/05/2026": 496.0012,
-        "20/05/2026": 496.0012,
+        "14/05/2026": 514.5360,
+        "15/05/2026": 517.3144,
+        "16/05/2026": 517.3144,
+        "17/05/2026": 517.3144,
+        "18/05/2026": 517.3144,
+        "19/05/2026": 520.2631,
+        "20/05/2026": 520.9142,
     }
     
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
@@ -1343,29 +1343,39 @@ if archivo:
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         # ============================================
-        # FILTRAR POR FECHAS PARA TODOS LOS BANCOS
+        # FILTRAR POR FECHAS
         # ============================================
-        
+
         try:
-            if not df_original.empty:
+            if banco == "mercantil":
+                # Mercantil usa formato "ddmmyyyy" (ej: 14052026)
+                fechas_convertidas = pd.to_datetime(
+                    df_original[3],
+                    format="%d%m%Y",
+                    errors="coerce"
+                )
+            else:
+                # Otros bancos usan formato con separadores (ej: 14/05/2026)
                 fechas_convertidas = pd.to_datetime(
                     df_original.iloc[:, 3],
                     errors="coerce",
                     dayfirst=True
                 )
-                
-                df_original = df_original[
-                    (
-                        fechas_convertidas.dt.date >= fecha_inicio
-                    )
-                    &
-                    (
-                        fechas_convertidas.dt.date <= fecha_fin
-                    )
-                ]
-                
-                st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
-            
+
+            df_original = df_original[
+                (
+                    fechas_convertidas.dt.date >= fecha_inicio
+                )
+                &
+                (
+                    fechas_convertidas.dt.date <= fecha_fin
+                )
+            ]
+
+            st.success(
+                f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}"
+            )
+
         except Exception as e:
             st.warning(f"Error filtrando fechas: {e}")
             
