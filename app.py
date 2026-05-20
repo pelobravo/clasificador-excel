@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN DEFINITIVA
+# PROCESAR VENEZUELA - VERSIÓN DEFINITIVA (SOLO ESTE CAMBIO)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -367,7 +367,14 @@ def procesar_venezuela(df):
     df = df.rename(columns=rename_map)
 
     # =========================================
-    # VALIDAR COLUMNAS
+    # VERIFICAR COLUMNAS (PARA DEBUG)
+    # =========================================
+    
+    st.write("📋 COLUMNAS ENCONTRADAS EN VENEZUELA:")
+    st.write(df.columns.tolist())
+
+    # =========================================
+    # VALIDAR COLUMNAS NECESARIAS
     # =========================================
 
     columnas_necesarias = [
@@ -381,6 +388,7 @@ def procesar_venezuela(df):
         if col not in df.columns:
 
             st.error(f"No existe columna: {col}")
+            st.error(f"Columnas disponibles: {df.columns.tolist()}")
             return pd.DataFrame()
 
     # =========================================
@@ -484,7 +492,7 @@ def procesar_venezuela(df):
     return df
 
 # =========================================================
-# PROCESAR BANESCO - VERSIÓN CORREGIDA
+# PROCESAR BANESCO - VERSIÓN CORREGIDA (SIN CAMBIOS)
 # =========================================================
 
 def procesar_banesco(df):
@@ -560,7 +568,7 @@ def procesar_banesco(df):
     return df
 
 # =========================================================
-# PROCESAR PROVINCIAL
+# PROCESAR PROVINCIAL (SIN CAMBIOS)
 # =========================================================
 
 def procesar_provincial(df):
@@ -607,7 +615,7 @@ def procesar_provincial(df):
     return df
 
 # =========================================================
-# PROCESAR BNC - SOLUCIÓN DEFINITIVA CON CORRECCIÓN
+# PROCESAR BNC - SOLUCIÓN DEFINITIVA (SIN CAMBIOS)
 # =========================================================
 
 def procesar_bnc(df):
@@ -622,7 +630,6 @@ def procesar_bnc(df):
 
     for i in range(min(30, len(df))):
 
-        # CORRECCIÓN: fillna("") para manejar NaN, luego convertir a string
         fila = df.iloc[i].fillna("").astype(str)
 
         texto = " ".join(
@@ -762,7 +769,7 @@ def procesar_bnc(df):
     return df
 
 # =========================================================
-# PROCESAR TESORO - VERSIÓN CORREGIDA (CON HTML MULTINIVEL)
+# PROCESAR TESORO - VERSIÓN CORREGIDA (SIN CAMBIOS)
 # =========================================================
 
 def procesar_tesoro(df):
@@ -931,7 +938,7 @@ def formatear_fecha_para_clave(fecha_str):
         return fecha_str
 
 # =========================================================
-# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, NO MODIFICADO)
+# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, SIN CAMBIOS)
 # =========================================================
 
 def procesar_archivo(df, usar_api=False):
@@ -1131,6 +1138,10 @@ def procesar_archivo(df, usar_api=False):
 
 def convertir_a_formato_mercantil(df, banco):
     """Convierte DataFrame de otros bancos al formato que espera procesar_archivo"""
+    
+    # Verificar columnas antes de convertir
+    st.write(f"📋 COLUMNAS ANTES DE CONVERTIR {banco.upper()}:")
+    st.write(df.columns.tolist())
     
     # Crear un nuevo DataFrame con 10 columnas vacías (como espera Mercantil)
     datos_convertidos = []
