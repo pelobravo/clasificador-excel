@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (CON DUPLICADOS)
+# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (CON COLUMNAS REALES)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -316,111 +316,73 @@ def procesar_venezuela(df):
     st.info("Procesando Banco de Venezuela...")
 
     # ============================================
-    # DETECTAR COLUMNAS
+    # RENOMBRAR COLUMNAS REALES
     # ============================================
 
-    rename_map = {}
+    df = df.rename(columns={
 
-    for col in df.columns:
+        "Día": "FECHA",
+        "Referencia": "REFERENCIA",
+        "Descripción": "DESCRIPCION",
+        "Tipo de Movimiento": "TIPO",
+        "Crédito": "CREDITO",
+        "Débito": "DEBITO"
 
-        col_str = str(col).strip().lower()
-
-        if "día" in col_str or "fecha" in col_str:
-            rename_map[col] = "FECHA"
-
-        elif "referencia" in col_str:
-            rename_map[col] = "REFERENCIA"
-
-        elif "movimiento" in col_str or "tipo" in col_str:
-            rename_map[col] = "TIPO"
-
-        elif "descrip" in col_str or "concepto" in col_str:
-            rename_map[col] = "DESCRIPCION"
-
-        # SEPARAR CRÉDITO Y DÉBITO - SOLO LA PRIMERA VEZ
-        elif "crédito" in col_str or "credito" in col_str:
-            if "MONTO_CREDITO" not in rename_map.values():
-                rename_map[col] = "MONTO_CREDITO"
-
-        elif "débito" in col_str or "debito" in col_str:
-            if "MONTO_DEBITO" not in rename_map.values():
-                rename_map[col] = "MONTO_DEBITO"
-
-        elif "monto" in col_str:
-            rename_map[col] = "MONTO"
-
-    df = df.rename(columns=rename_map)
-
-    # ============================================
-    # ELIMINAR COLUMNAS DUPLICADAS
-    # ============================================
-
-    df = df.loc[:, ~df.columns.duplicated()]
-
-    st.write("COLUMNAS DETECTADAS:")
-    st.write(df.columns.tolist())
+    })
 
     # ============================================
     # FECHA
     # ============================================
 
-    if "FECHA" in df.columns:
+    df["FECHA"] = pd.to_datetime(
+        df["FECHA"],
+        errors="coerce"
+    )
 
-        df["FECHA"] = pd.to_datetime(
-            df["FECHA"],
-            errors="coerce"
-        )
-
-        df = df[df["FECHA"].notna()]
+    df = df[df["FECHA"].notna()]
 
     # ============================================
-    # TOMAR SOLO LA PRIMERA COLUMNA SI HAY DUPLICADAS
+    # LIMPIAR MONTOS
     # ============================================
 
-    if "MONTO_CREDITO" in df.columns:
-        credito = df["MONTO_CREDITO"]
-        # Si es DataFrame con múltiples columnas, tomar solo la primera
-        if isinstance(credito, pd.DataFrame):
-            credito = credito.iloc[:, 0]
-        credito = pd.to_numeric(credito, errors="coerce").fillna(0)
-    else:
-        credito = 0
+    def limpiar_numero(valor):
 
-    if "MONTO_DEBITO" in df.columns:
-        debito = df["MONTO_DEBITO"]
-        # Si es DataFrame con múltiples columnas, tomar solo la primera
-        if isinstance(debito, pd.DataFrame):
-            debito = debito.iloc[:, 0]
-        debito = pd.to_numeric(debito, errors="coerce").fillna(0)
-    else:
-        debito = 0
+        valor = str(valor)
 
-    # Calcular MONTO final (Crédito positivo, Débito negativo)
-    df["MONTO"] = credito - debito
+        valor = valor.replace(".", "")
+        valor = valor.replace(",", ".")
 
-    # Si no hay datos, intentar con columna MONTO directa
-    if df["MONTO"].sum() == 0 and "MONTO" in df.columns:
-        monto_directo = df["MONTO"]
-        if isinstance(monto_directo, pd.DataFrame):
-            monto_directo = monto_directo.iloc[:, 0]
-        df["MONTO"] = pd.to_numeric(monto_directo, errors="coerce").fillna(0)
+        try:
+            return float(valor)
+        except:
+            return 0
+
+    df["CREDITO"] = df["CREDITO"].apply(
+        limpiar_numero
+    )
+
+    df["DEBITO"] = df["DEBITO"].apply(
+        limpiar_numero
+    )
 
     # ============================================
-    # LIMPIAR
+    # CREAR MONTO FINAL
+    # ============================================
+
+    df["MONTO"] = df["CREDITO"] + df["DEBITO"]
+
+    # ============================================
+    # ELIMINAR CEROS
     # ============================================
 
     df = df[df["MONTO"] != 0]
-
-    # Asegurar que MONTO sea numérico
-    if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce").fillna(0)
-        df = df[df["MONTO"] != 0]
 
     # ============================================
     # DEBUG
     # ============================================
 
-    st.write("VISTA PREVIA VENEZUELA:")
+    st.success(f"Registros Venezuela: {len(df)}")
+
     st.dataframe(df.head())
 
     return df
@@ -591,60 +553,96 @@ def procesar_bnc(df):
     return df
 
 # =========================================================
-# PROCESAR TESORO - VERSIÓN CORREGIDA (CON HTML)
+# PROCESAR TESORO - VERSIÓN CORREGIDA (CON HTML MULTINIVEL)
 # =========================================================
 
 def procesar_tesoro(df):
 
     st.info("Procesando Banco del Tesoro...")
 
-    rename_map = {}
+    # ============================================
+    # APLANAR COLUMNAS MULTINIVEL
+    # ============================================
 
-    for col in df.columns:
+    if isinstance(df.columns, pd.MultiIndex):
 
-        col_str = str(col).strip().lower()
+        df.columns = [
+            col[-1]
+            for col in df.columns
+        ]
 
-        if "fecha" in col_str:
-            rename_map[col] = "FECHA"
+    # ============================================
+    # RENOMBRAR
+    # ============================================
 
-        elif "descrip" in col_str or "concepto" in col_str:
-            rename_map[col] = "DESCRIPCION"
+    df = df.rename(columns={
 
-        elif "referencia" in col_str:
-            rename_map[col] = "REFERENCIA"
+        "Fecha": "FECHA",
+        "Referencia": "REFERENCIA",
+        "Concepto": "DESCRIPCION",
+        "Débito": "DEBITO",
+        "Crédito": "CREDITO",
+        "Código": "TIPO"
 
-        elif "monto" in col_str:
-            rename_map[col] = "MONTO"
+    })
 
-    df = df.rename(columns=rename_map)
+    # ============================================
+    # FECHA
+    # ============================================
 
-    df = df.loc[:, ~df.columns.duplicated()]
+    df["FECHA"] = pd.to_datetime(
+        df["FECHA"],
+        format="%d/%m/%Y",
+        errors="coerce"
+    )
 
-    if "FECHA" in df.columns:
+    df = df[df["FECHA"].notna()]
 
-        df["FECHA"] = pd.to_datetime(
-            df["FECHA"],
-            errors="coerce"
-        )
+    # ============================================
+    # NUMÉRICOS
+    # ============================================
 
-        df = df[df["FECHA"].notna()]
+    df["CREDITO"] = pd.to_numeric(
+        df["CREDITO"],
+        errors="coerce"
+    ).fillna(0)
 
-    if "MONTO" in df.columns:
+    df["DEBITO"] = pd.to_numeric(
+        df["DEBITO"],
+        errors="coerce"
+    ).fillna(0)
 
-        df["MONTO"] = pd.to_numeric(
-            df["MONTO"],
-            errors="coerce"
-        )
+    # ============================================
+    # MONTO FINAL
+    # ============================================
 
-        df = df[df["MONTO"].notna()]
+    df["MONTO"] = (
+        df["CREDITO"] - df["DEBITO"]
+    )
+
+    # ============================================
+    # TIPO NC / ND
+    # ============================================
 
     df["TIPO"] = df["MONTO"].apply(
+
         lambda x: "NC" if x > 0 else "ND"
     )
 
+    # ============================================
+    # ABS
+    # ============================================
+
     df["MONTO"] = df["MONTO"].abs()
 
-    st.write("VISTA PREVIA TESORO:")
+    # ============================================
+    # LIMPIAR
+    # ============================================
+
+    df = df[df["MONTO"] != 0]
+
+    st.success(f"Registros Tesoro: {len(df)}")
+
     st.dataframe(df.head())
 
     return df
