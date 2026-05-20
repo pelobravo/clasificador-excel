@@ -511,7 +511,7 @@ def procesar_provincial(df):
     return df
 
 # =========================================================
-# PROCESAR BNC - SOLUCIÓN DEFINITIVA
+# PROCESAR BNC - SOLUCIÓN DEFINITIVA CON CORRECCIÓN
 # =========================================================
 
 def procesar_bnc(df):
@@ -526,9 +526,12 @@ def procesar_bnc(df):
 
     for i in range(min(30, len(df))):
 
-        fila = df.iloc[i].astype(str)
+        # CORRECCIÓN: fillna("") para manejar NaN, luego convertir a string
+        fila = df.iloc[i].fillna("").astype(str)
 
-        texto = " ".join(fila).lower()
+        texto = " ".join(
+            fila.tolist()
+        ).lower()
 
         if (
             "fecha" in texto
