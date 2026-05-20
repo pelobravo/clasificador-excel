@@ -1347,23 +1347,24 @@ if archivo:
         # ============================================
         
         try:
-            df_original["FECHA_FILTRO"] = pd.to_datetime(
-                df_original[3],
-                errors="coerce",
-                dayfirst=True
-            )
-            
-            df_original = df_original[
-                (
-                    df_original["FECHA_FILTRO"].dt.date >= fecha_inicio
+            if not df_original.empty:
+                fechas_convertidas = pd.to_datetime(
+                    df_original.iloc[:, 3],
+                    errors="coerce",
+                    dayfirst=True
                 )
-                &
-                (
-                    df_original["FECHA_FILTRO"].dt.date <= fecha_fin
-                )
-            ]
-            
-            st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
+                
+                df_original = df_original[
+                    (
+                        fechas_convertidas.dt.date >= fecha_inicio
+                    )
+                    &
+                    (
+                        fechas_convertidas.dt.date <= fecha_fin
+                    )
+                ]
+                
+                st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
             
         except Exception as e:
             st.warning(f"Error filtrando fechas: {e}")
