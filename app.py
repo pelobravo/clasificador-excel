@@ -942,7 +942,7 @@ def procesar_tesoro(df):
     return df
 
 # =========================================================
-# OBTENER TASA BCV (API o SCRAPING)
+# OBTENER TASA BCV (API o SCRAPING) - CORREGIDO
 # =========================================================
 
 @st.cache_data(ttl=3600)
@@ -982,11 +982,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
     if fecha_str in tasas_bcv_local:
         return tasas_bcv_local[fecha_str]
     
-    # Si no hay tasa para esa fecha, buscar la última disponible
-    if tasas_bcv_local:
-        ultima_fecha = max(tasas_bcv_local.keys())
-        return tasas_bcv_local[ultima_fecha]
-    
+    # NO usar última tasa automáticamente
     return None
 
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
@@ -1346,6 +1342,32 @@ if archivo:
             # Convertir al formato que espera procesar_archivo
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
+        # ============================================
+        # FILTRAR POR FECHAS PARA TODOS LOS BANCOS
+        # ============================================
+        
+        try:
+            df_original["FECHA_FILTRO"] = pd.to_datetime(
+                df_original[3],
+                errors="coerce",
+                dayfirst=True
+            )
+            
+            df_original = df_original[
+                (
+                    df_original["FECHA_FILTRO"].dt.date >= fecha_inicio
+                )
+                &
+                (
+                    df_original["FECHA_FILTRO"].dt.date <= fecha_fin
+                )
+            ]
+            
+            st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
+            
+        except Exception as e:
+            st.warning(f"Error filtrando fechas: {e}")
+            
         # Verificar que se pudieron convertir los datos
         if df_original.empty or len(df_original) == 0:
             st.error("No se pudieron convertir los datos. Verifica el formato del archivo.")
@@ -1359,66 +1381,6 @@ if archivo:
             )
 
         if procesar:
-
-            # =========================================================
-            # FILTRADO DE FECHAS (solo para Mercantil)
-            # =========================================================
-            
-            if banco == "mercantil":
-                try:
-                    fechas_convertidas = []
-
-                    for valor in df_original[3]:
-
-                        fecha_raw = str(valor).strip()
-
-                        fecha_raw = fecha_raw.replace(".0", "")
-
-                        fecha_convertida = pd.NaT
-
-                        if len(fecha_raw) == 7:
-
-                            dia = fecha_raw[0]
-                            mes = fecha_raw[1:3]
-                            anio = fecha_raw[3:]
-
-                            fecha_texto = f"0{dia}/{mes}/{anio}"
-
-                            fecha_convertida = pd.to_datetime(
-                                fecha_texto,
-                                format="%d/%m/%Y",
-                                errors="coerce"
-                            )
-
-                        elif len(fecha_raw) == 8:
-
-                            dia = fecha_raw[0:2]
-                            mes = fecha_raw[2:4]
-                            anio = fecha_raw[4:]
-
-                            fecha_texto = f"{dia}/{mes}/{anio}"
-
-                            fecha_convertida = pd.to_datetime(
-                                fecha_texto,
-                                format="%d/%m/%Y",
-                                errors="coerce"
-                            )
-
-                        fechas_convertidas.append(fecha_convertida)
-
-                    df_original["FECHA_FILTRO"] = fechas_convertidas
-
-                    df_original = df_original[
-                        (df_original["FECHA_FILTRO"].dt.date >= fecha_inicio) &
-                        (df_original["FECHA_FILTRO"].dt.date <= fecha_fin)
-                    ]
-
-                except Exception as e:
-
-                    st.warning(f"Error filtrando fechas: {e}")
-            else:
-                # Para otros bancos, el filtrado ya se hizo en el parser
-                st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
 
             with st.spinner("Procesando archivo con tasas BCV..."):
 
@@ -1647,6 +1609,20 @@ if archivo:
                         bold=True
                     )
 
+                    # TOTAL BS
+                    total_bs_cell = hoja.cell(
+                        row=fila_data,
+                        column=4
+                    )
+
+                    total_bs_cell.value = dataframe[
+                        "MONTO BS"
+                    ].sum()
+
+                    total_bs_cell.number_format = '#,##0.00'
+                    total_bs_cell.fill = color_total
+
+                    # TOTAL USD
                     monto_total = hoja.cell(
                         row=fila_data,
                         column=6
