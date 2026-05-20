@@ -261,7 +261,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (EXACTA)
+# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (CON CRÉDITO/DÉBITO)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -290,14 +290,14 @@ def procesar_venezuela(df):
         elif "descrip" in col_str or "concepto" in col_str:
             rename_map[col] = "DESCRIPCION"
 
-        # AQUÍ ESTÁ EL CAMBIO IMPORTANTE
-        elif (
-            "crédito" in col_str
-            or "credito" in col_str
-            or "débito" in col_str
-            or "debito" in col_str
-            or "monto" in col_str
-        ):
+        # SEPARAR CRÉDITO Y DÉBITO (NO UNIFICAR EN MONTO AÚN)
+        elif "crédito" in col_str or "credito" in col_str:
+            rename_map[col] = "MONTO_CREDITO"
+
+        elif "débito" in col_str or "debito" in col_str:
+            rename_map[col] = "MONTO_DEBITO"
+
+        elif "monto" in col_str:
             rename_map[col] = "MONTO"
 
     df = df.rename(columns=rename_map)
@@ -319,24 +319,31 @@ def procesar_venezuela(df):
         df = df[df["FECHA"].notna()]
 
     # ============================================
-    # MONTO
+    # UNIFICAR MONTOS (CRÉDITO - DÉBITO)
     # ============================================
 
-    if "MONTO" in df.columns:
-
-        df["MONTO"] = (
-            df["MONTO"]
-            .astype(str)
-            .str.replace(".", "", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-
-        df["MONTO"] = pd.to_numeric(
-            df["MONTO"],
+    if "MONTO_CREDITO" in df.columns:
+        df["MONTO_CREDITO"] = pd.to_numeric(
+            df["MONTO_CREDITO"],
             errors="coerce"
-        )
+        ).fillna(0)
+    else:
+        df["MONTO_CREDITO"] = 0
 
-        df = df[df["MONTO"].notna()]
+    if "MONTO_DEBITO" in df.columns:
+        df["MONTO_DEBITO"] = pd.to_numeric(
+            df["MONTO_DEBITO"],
+            errors="coerce"
+        ).fillna(0)
+    else:
+        df["MONTO_DEBITO"] = 0
+
+    # Crédito positivo, Débito negativo
+    df["MONTO"] = df["MONTO_CREDITO"] - df["MONTO_DEBITO"]
+
+    # Si no hay crédito ni débito, intentar usar columna MONTO directa
+    if "MONTO" in df.columns and df["MONTO"].sum() == 0:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce").fillna(0)
 
     # ============================================
     # LIMPIAR
