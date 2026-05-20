@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - PARSER INTELIGENTE
+# PROCESAR VENEZUELA - PARSER INTELIGENTE (CON FECHA CORREGIDA)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -412,13 +412,12 @@ def procesar_venezuela(df):
             return pd.DataFrame()
 
         # =========================================
-        # FECHA
+        # FECHA - SIN dayfirst, SIN conversiones adicionales
         # =========================================
 
         df["FECHA"] = pd.to_datetime(
             df["FECHA"],
-            errors="coerce",
-            dayfirst=True
+            errors="coerce"
         )
 
         df = df[
