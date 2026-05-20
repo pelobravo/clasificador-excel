@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN DEFINITIVA CORREGIDA
+# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (CON DUPLICADOS)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -337,17 +337,25 @@ def procesar_venezuela(df):
         elif "descrip" in col_str or "concepto" in col_str:
             rename_map[col] = "DESCRIPCION"
 
-        # SEPARAR CRÉDITO Y DÉBITO (NO UNIFICAR EN MONTO AÚN)
+        # SEPARAR CRÉDITO Y DÉBITO - SOLO LA PRIMERA VEZ
         elif "crédito" in col_str or "credito" in col_str:
-            rename_map[col] = "MONTO_CREDITO"
+            if "MONTO_CREDITO" not in rename_map.values():
+                rename_map[col] = "MONTO_CREDITO"
 
         elif "débito" in col_str or "debito" in col_str:
-            rename_map[col] = "MONTO_DEBITO"
+            if "MONTO_DEBITO" not in rename_map.values():
+                rename_map[col] = "MONTO_DEBITO"
 
         elif "monto" in col_str:
             rename_map[col] = "MONTO"
 
     df = df.rename(columns=rename_map)
+
+    # ============================================
+    # ELIMINAR COLUMNAS DUPLICADAS
+    # ============================================
+
+    df = df.loc[:, ~df.columns.duplicated()]
 
     st.write("COLUMNAS DETECTADAS:")
     st.write(df.columns.tolist())
@@ -583,37 +591,62 @@ def procesar_bnc(df):
     return df
 
 # =========================================================
-# PROCESAR TESORO
+# PROCESAR TESORO - VERSIÓN CORREGIDA (CON HTML)
 # =========================================================
 
 def procesar_tesoro(df):
-    """Procesa archivo del Tesoro"""
-    
-    st.info("Procesando archivo de Tesoro...")
-    
+
+    st.info("Procesando Banco del Tesoro...")
+
     rename_map = {}
+
     for col in df.columns:
-        col_str = str(col).lower()
+
+        col_str = str(col).strip().lower()
+
         if "fecha" in col_str:
             rename_map[col] = "FECHA"
-        elif "descrip" in col_str:
+
+        elif "descrip" in col_str or "concepto" in col_str:
             rename_map[col] = "DESCRIPCION"
-        elif "monto" in col_str or "importe" in col_str:
+
+        elif "referencia" in col_str:
+            rename_map[col] = "REFERENCIA"
+
+        elif "monto" in col_str:
             rename_map[col] = "MONTO"
-    
+
     df = df.rename(columns=rename_map)
-    
+
+    df = df.loc[:, ~df.columns.duplicated()]
+
     if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
+        )
+
         df = df[df["FECHA"].notna()]
-    
+
     if "MONTO" in df.columns:
-        monto = df["MONTO"]
-        if isinstance(monto, pd.DataFrame):
-            monto = monto.iloc[:, 0]
-        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
+
+        df["MONTO"] = pd.to_numeric(
+            df["MONTO"],
+            errors="coerce"
+        )
+
         df = df[df["MONTO"].notna()]
-    
+
+    df["TIPO"] = df["MONTO"].apply(
+        lambda x: "NC" if x > 0 else "ND"
+    )
+
+    df["MONTO"] = df["MONTO"].abs()
+
+    st.write("VISTA PREVIA TESORO:")
+    st.dataframe(df.head())
+
     return df
 
 # =========================================================
@@ -982,6 +1015,23 @@ if archivo:
             df_original = leer_excel_sin_encabezados(archivo)
             usar_procesamiento_original = True
             
+        elif banco == "tesoro":
+            # TESORO: usar read_html porque son archivos HTML disfrazados
+            try:
+                tablas = pd.read_html(archivo)
+                if len(tablas) > 0:
+                    df_raw = tablas[0]
+                    st.success(f"✓ Se encontraron {len(tablas)} tablas en el archivo Tesoro. Usando la primera.")
+                else:
+                    st.error("No se encontraron tablas en el archivo Tesoro")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error al leer archivo Tesoro: {str(e)}")
+                st.stop()
+            
+            df_normalizado = procesar_tesoro(df_raw)
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            
         else:
             # OTROS BANCOS: aplicar parser específico
             df_raw = leer_excel_con_encabezados(archivo)
@@ -994,18 +1044,16 @@ if archivo:
                 df_normalizado = procesar_provincial(df_raw)
             elif banco == "bnc":
                 df_normalizado = procesar_bnc(df_raw)
-            elif banco == "tesoro":
-                df_normalizado = procesar_tesoro(df_raw)
             else:
                 df_normalizado = df_raw
             
             # Convertir al formato que espera procesar_archivo
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            usar_procesamiento_original = True
             
-            # Mostrar vista previa de la conversión
-            st.write("### Vista previa de datos convertidos:")
-            st.dataframe(df_original.head(10), use_container_width=True)
+        # Verificar que se pudieron convertir los datos
+        if df_original.empty or len(df_original) == 0:
+            st.error("No se pudieron convertir los datos. Verifica el formato del archivo.")
+            st.stop()
 
         with st.expander("👁️ Vista previa archivo original"):
 
