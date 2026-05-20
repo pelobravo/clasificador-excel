@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN REEMPLAZADA
+# PROCESAR VENEZUELA - PARSER INTELIGENTE
 # =========================================================
 
 def procesar_venezuela(df):
@@ -321,60 +321,94 @@ def procesar_venezuela(df):
         # LIMPIAR COLUMNAS
         # =========================================
 
-        df.columns = [
-            str(c).strip()
-            for c in df.columns
-        ]
+        columnas_limpias = []
 
-        st.write("COLUMNAS ORIGINALES:")
+        for c in df.columns:
+
+            c = str(c).strip()
+
+            columnas_limpias.append(c)
+
+        df.columns = columnas_limpias
+
+        st.write("COLUMNAS DETECTADAS:")
         st.write(df.columns.tolist())
 
         # =========================================
-        # RENOMBRAR
+        # RENOMBRAR COLUMNAS
         # =========================================
 
         rename_map = {}
 
         for col in df.columns:
 
-            c = col.lower()
+            c = str(col).strip().lower()
 
-            if c == "fecha":
+            # FECHA
+            if (
+                c == "fecha"
+                or c == "día"
+                or c == "dia"
+            ):
 
                 rename_map[col] = "FECHA"
 
+            # REFERENCIA
             elif "referencia" in c:
 
                 rename_map[col] = "REFERENCIA"
 
+            # DESCRIPCION
             elif "descrip" in c:
 
                 rename_map[col] = "DESCRIPCION"
 
+            # TIPO
             elif "tipo de movimiento" in c:
 
                 rename_map[col] = "TIPO"
 
-            elif "crédito" in c or "credito" in c:
+            # CREDITO
+            elif (
+                ("crédito" in c or "credito" in c)
+                and "total" not in c
+            ):
 
                 rename_map[col] = "CREDITO"
 
-            elif "débito" in c or "debito" in c:
+            # DEBITO
+            elif (
+                ("débito" in c or "debito" in c)
+                and "total" not in c
+                and "todal" not in c
+            ):
 
                 rename_map[col] = "DEBITO"
 
         df = df.rename(columns=rename_map)
 
-        st.write("COLUMNAS RENOMBRADAS:")
+        # =========================================
+        # ELIMINAR DUPLICADAS
+        # =========================================
+
+        df = df.loc[
+            :,
+            ~df.columns.duplicated()
+        ]
+
+        st.write("COLUMNAS FINALES:")
         st.write(df.columns.tolist())
 
         # =========================================
-        # VALIDAR
+        # VALIDAR FECHA
         # =========================================
 
         if "FECHA" not in df.columns:
 
-            st.error("No existe FECHA")
+            st.error(
+                "No se detectó columna FECHA"
+            )
+
             return pd.DataFrame()
 
         # =========================================
@@ -392,7 +426,7 @@ def procesar_venezuela(df):
         ]
 
         # =========================================
-        # TIPO
+        # LIMPIAR TIPO
         # =========================================
 
         if "TIPO" not in df.columns:
@@ -400,22 +434,19 @@ def procesar_venezuela(df):
             df["TIPO"] = ""
 
         df["TIPO"] = (
+
             df["TIPO"]
+
             .astype(str)
+
             .str.strip()
+
             .str.upper()
-        )
 
-        st.write(
-            "TIPOS DETECTADOS:"
-        )
-
-        st.write(
-            df["TIPO"].unique()
         )
 
         # =========================================
-        # LIMPIAR NÚMEROS
+        # LIMPIAR NUMEROS
         # =========================================
 
         def limpiar_numero(valor):
@@ -423,13 +454,17 @@ def procesar_venezuela(df):
             valor = str(valor)
 
             valor = valor.replace(".", "")
+
             valor = valor.replace(",", ".")
 
             valor = valor.strip()
 
             try:
+
                 return float(valor)
+
             except:
+
                 return 0
 
         # =========================================
@@ -507,12 +542,8 @@ def procesar_venezuela(df):
 
         df = df[columnas_finales]
 
-        # =========================================
-        # RESULTADO
-        # =========================================
-
         st.success(
-            f"Registros procesados: {len(df)}"
+            f"Venezuela OK: {len(df)} registros"
         )
 
         st.dataframe(df.head())
