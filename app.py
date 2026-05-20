@@ -103,7 +103,7 @@ with st.sidebar:
 
     archivo = st.file_uploader(
         "📂 Cargar archivo Excel",
-        type=["xlsx", "xls"]
+        type=["xlsx", "xls", "xlsm"]
     )
 
     st.markdown("---")
@@ -132,6 +132,50 @@ with st.sidebar:
         type="primary",
         use_container_width=True
     )
+
+# =========================================================
+# FUNCIONES PARA LEER EXCEL CON ENGINE AUTOMÁTICO
+# =========================================================
+
+def leer_excel_sin_encabezados(archivo):
+    """Lee archivo Excel sin encabezados detectando el engine correcto"""
+    nombre = archivo.name.lower()
+    
+    try:
+        if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            try:
+                import xlrd
+                return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
+            except ImportError:
+                st.error("❌ Para archivos .xls es necesario instalar xlrd. Ejecuta: pip install xlrd")
+                st.stop()
+        else:
+            return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo. Error: {str(e)}")
+        st.stop()
+
+def leer_excel_con_encabezados(archivo):
+    """Lee archivo Excel con encabezados detectando el engine correcto"""
+    nombre = archivo.name.lower()
+    
+    try:
+        if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            try:
+                import xlrd
+                return pd.read_excel(archivo, sheet_name=0, header=0, engine='xlrd')
+            except ImportError:
+                st.error("❌ Para archivos .xls es necesario instalar xlrd. Ejecuta: pip install xlrd")
+                st.stop()
+        else:
+            return pd.read_excel(archivo, sheet_name=0, header=0, engine='openpyxl')
+    except Exception as e:
+        # Si falla, intentar sin encabezados
+        try:
+            return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
+        except:
+            st.error(f"No se pudo leer el archivo. Error: {str(e)}")
+            st.stop()
 
 # =========================================================
 # FUNCIONES ORIGINALES (NO MODIFICADAS)
@@ -239,29 +283,32 @@ def es_comision(texto):
     )
 
 # =========================================================
-# NUEVAS FUNCIONES PARA MULTI-BANCO (AGREGADAS)
+# DETECTOR DE BANCO CORREGIDO
 # =========================================================
 
 def detectar_banco(nombre_archivo):
     """Detecta el banco por el nombre del archivo"""
     nombre = nombre_archivo.upper()
     
-    if "MERCANTIL" in nombre:
-        return "mercantil"
-    elif "VENEZUELA" in nombre or "BANCO DE VENEZUELA" in nombre:
-        return "venezuela"
+    # ORDEN IMPORTANTE: TESORO primero (por TES)
+    if "TESORO" in nombre or "TESORERIA" in nombre:
+        return "tesoro"
+    elif "TES" in nombre:  # BONUS: detectar TES como Tesoro
+        return "tesoro"
     elif "BANESCO" in nombre:
         return "banesco"
+    elif "VENEZUELA" in nombre or "BANCO DE VENEZUELA" in nombre:
+        return "venezuela"
     elif "PROVINCIAL" in nombre:
         return "provincial"
     elif "BNC" in nombre:
         return "bnc"
-    elif "TESORO" in nombre or "TESORERIA" in nombre:
-        return "tesoro"
+    elif "MERCANTIL" in nombre:
+        return "mercantil"
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN CORREGIDA (CON CRÉDITO/DÉBITO)
+# PROCESAR VENEZUELA - VERSIÓN DEFINITIVA CORREGIDA
 # =========================================================
 
 def procesar_venezuela(df):
@@ -319,37 +366,47 @@ def procesar_venezuela(df):
         df = df[df["FECHA"].notna()]
 
     # ============================================
-    # UNIFICAR MONTOS (CRÉDITO - DÉBITO)
+    # TOMAR SOLO LA PRIMERA COLUMNA SI HAY DUPLICADAS
     # ============================================
 
     if "MONTO_CREDITO" in df.columns:
-        df["MONTO_CREDITO"] = pd.to_numeric(
-            df["MONTO_CREDITO"],
-            errors="coerce"
-        ).fillna(0)
+        credito = df["MONTO_CREDITO"]
+        # Si es DataFrame con múltiples columnas, tomar solo la primera
+        if isinstance(credito, pd.DataFrame):
+            credito = credito.iloc[:, 0]
+        credito = pd.to_numeric(credito, errors="coerce").fillna(0)
     else:
-        df["MONTO_CREDITO"] = 0
+        credito = 0
 
     if "MONTO_DEBITO" in df.columns:
-        df["MONTO_DEBITO"] = pd.to_numeric(
-            df["MONTO_DEBITO"],
-            errors="coerce"
-        ).fillna(0)
+        debito = df["MONTO_DEBITO"]
+        # Si es DataFrame con múltiples columnas, tomar solo la primera
+        if isinstance(debito, pd.DataFrame):
+            debito = debito.iloc[:, 0]
+        debito = pd.to_numeric(debito, errors="coerce").fillna(0)
     else:
-        df["MONTO_DEBITO"] = 0
+        debito = 0
 
-    # Crédito positivo, Débito negativo
-    df["MONTO"] = df["MONTO_CREDITO"] - df["MONTO_DEBITO"]
+    # Calcular MONTO final (Crédito positivo, Débito negativo)
+    df["MONTO"] = credito - debito
 
-    # Si no hay crédito ni débito, intentar usar columna MONTO directa
-    if "MONTO" in df.columns and df["MONTO"].sum() == 0:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce").fillna(0)
+    # Si no hay datos, intentar con columna MONTO directa
+    if df["MONTO"].sum() == 0 and "MONTO" in df.columns:
+        monto_directo = df["MONTO"]
+        if isinstance(monto_directo, pd.DataFrame):
+            monto_directo = monto_directo.iloc[:, 0]
+        df["MONTO"] = pd.to_numeric(monto_directo, errors="coerce").fillna(0)
 
     # ============================================
     # LIMPIAR
     # ============================================
 
     df = df[df["MONTO"] != 0]
+
+    # Asegurar que MONTO sea numérico
+    if "MONTO" in df.columns:
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce").fillna(0)
+        df = df[df["MONTO"] != 0]
 
     # ============================================
     # DEBUG
@@ -402,16 +459,14 @@ def procesar_banesco(df):
         df = df[df["FECHA"].notna()]
 
     # ============================================
-    # MONTO
+    # MONTO (con manejo de columnas duplicadas)
     # ============================================
 
     if "MONTO" in df.columns:
-
-        df["MONTO"] = pd.to_numeric(
-            df["MONTO"],
-            errors="coerce"
-        )
-
+        monto = df["MONTO"]
+        if isinstance(monto, pd.DataFrame):
+            monto = monto.iloc[:, 0]
+        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
         df = df[df["MONTO"].notna()]
 
     # ============================================
@@ -437,6 +492,10 @@ def procesar_banesco(df):
     st.dataframe(df.head())
 
     return df
+
+# =========================================================
+# PROCESAR PROVINCIAL
+# =========================================================
 
 def procesar_provincial(df):
     """Procesa archivo del Banco Provincial"""
@@ -473,16 +532,24 @@ def procesar_provincial(df):
         df = df[df["FECHA"].notna()]
     
     if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        monto = df["MONTO"]
+        if isinstance(monto, pd.DataFrame):
+            monto = monto.iloc[:, 0]
+        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
         df = df[df["MONTO"].notna()]
     
     return df
+
+# =========================================================
+# PROCESAR BNC (con soporte .xls)
+# =========================================================
 
 def procesar_bnc(df):
     """Procesa archivo del BNC"""
     
     st.info("Procesando archivo de BNC...")
     
+    # Buscar fila de encabezados
     for i in range(min(15, len(df))):
         fila = df.iloc[i].astype(str)
         if fila.str.contains("fecha", case=False).any():
@@ -507,10 +574,17 @@ def procesar_bnc(df):
         df = df[df["FECHA"].notna()]
     
     if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        monto = df["MONTO"]
+        if isinstance(monto, pd.DataFrame):
+            monto = monto.iloc[:, 0]
+        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
         df = df[df["MONTO"].notna()]
     
     return df
+
+# =========================================================
+# PROCESAR TESORO
+# =========================================================
 
 def procesar_tesoro(df):
     """Procesa archivo del Tesoro"""
@@ -524,7 +598,7 @@ def procesar_tesoro(df):
             rename_map[col] = "FECHA"
         elif "descrip" in col_str:
             rename_map[col] = "DESCRIPCION"
-        elif "monto" in col_str:
+        elif "monto" in col_str or "importe" in col_str:
             rename_map[col] = "MONTO"
     
     df = df.rename(columns=rename_map)
@@ -534,7 +608,10 @@ def procesar_tesoro(df):
         df = df[df["FECHA"].notna()]
     
     if "MONTO" in df.columns:
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        monto = df["MONTO"]
+        if isinstance(monto, pd.DataFrame):
+            monto = monto.iloc[:, 0]
+        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
         df = df[df["MONTO"].notna()]
     
     return df
@@ -901,17 +978,13 @@ if archivo:
         # =========================================================
         
         if banco == "mercantil":
-            # MERCADO: usar el procesamiento original
-            df_original = pd.read_excel(
-                archivo,
-                sheet_name=0,
-                header=None
-            )
+            # MERCANTIL: usar el procesamiento original con lectura sin encabezados
+            df_original = leer_excel_sin_encabezados(archivo)
             usar_procesamiento_original = True
             
         else:
             # OTROS BANCOS: aplicar parser específico
-            df_raw = pd.read_excel(archivo, sheet_name=0)
+            df_raw = leer_excel_con_encabezados(archivo)
             
             if banco == "venezuela":
                 df_normalizado = procesar_venezuela(df_raw)
