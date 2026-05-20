@@ -308,7 +308,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"  # Por defecto mercantil
 
 # =========================================================
-# PROCESAR VENEZUELA - PARSER INTELIGENTE (CON FECHA CORREGIDA)
+# PROCESAR VENEZUELA - PARSER INTELIGENTE (CON PRIORIDAD FECHA)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -344,12 +344,8 @@ def procesar_venezuela(df):
 
             c = str(col).strip().lower()
 
-            # FECHA
-            if (
-                c == "fecha"
-                or c == "día"
-                or c == "dia"
-            ):
+            # FECHA - SOLO SI ES EXACTAMENTE "fecha"
+            if c == "fecha":
 
                 rename_map[col] = "FECHA"
 
@@ -384,6 +380,22 @@ def procesar_venezuela(df):
             ):
 
                 rename_map[col] = "DEBITO"
+
+        # =========================================
+        # SI NO EXISTE FECHA, USAR DIA COMO RESPALDO
+        # =========================================
+
+        if "FECHA" not in rename_map.values():
+
+            for col in df.columns:
+
+                c = str(col).strip().lower()
+
+                if c == "día" or c == "dia":
+
+                    rename_map[col] = "FECHA"
+
+                    break
 
         df = df.rename(columns=rename_map)
 
