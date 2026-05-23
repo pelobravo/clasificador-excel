@@ -1413,8 +1413,10 @@ if archivo:
                 # Limpiar referencia iPago
                 df_ipago["Referencia"] = (
                     df_ipago["Referencia"]
+                    .fillna("")
                     .astype(str)
-                    .str.replace(".0", "")
+                    .str.replace(".0", "", regex=False)
+                    .str.replace(" ", "", regex=False)
                     .str.strip()
                 )
                 
@@ -1438,10 +1440,23 @@ if archivo:
             if not df_egresos.empty:
                 df_egresos["REFERENCIA"] = (
                     df_egresos["REFERENCIA"]
+                    .fillna("")
                     .astype(str)
-                    .str.replace(".0", "")
+                    .str.replace(".0", "", regex=False)
+                    .str.replace(" ", "", regex=False)
                     .str.strip()
                 )
+            
+            # =========================================================
+            # DEBUG - MOSTRAR REFERENCIAS ANTES DEL MERGE
+            # =========================================================
+            
+            if df_ipago is not None and not df_egresos.empty:
+                st.write("🔍 REFERENCIAS BANCO (primeros 5):")
+                st.write(df_egresos["REFERENCIA"].head().tolist())
+                
+                st.write("🔍 REFERENCIAS IPAGO (primeros 5):")
+                st.write(df_ipago["Referencia"].head().tolist())
             
             # =========================================================
             # HACER EL CRUCE CON IPAGO
