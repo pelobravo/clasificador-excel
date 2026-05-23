@@ -106,6 +106,11 @@ with st.sidebar:
         type=["xlsx", "xls", "xlsm"]
     )
 
+    archivo_ipago = st.file_uploader(
+        "📂 Cargar archivo iPago",
+        type=["xlsx", "xls", "xlsm"]
+    )
+
     st.markdown("---")
 
     fecha_inicio = st.date_input(
@@ -1284,6 +1289,8 @@ def convertir_a_formato_mercantil(df, banco):
 # INTERFAZ PRINCIPAL
 # =========================================================
 
+df_ipago = None
+
 if archivo:
 
     st.info(
@@ -1391,6 +1398,29 @@ if archivo:
                 use_container_width=True
             )
 
+        # =========================================================
+        # LEER ARCHIVO IPAGO
+        # =========================================================
+        
+        if archivo_ipago:
+            try:
+                df_ipago = pd.read_excel(
+                    archivo_ipago,
+                    engine="openpyxl"
+                )
+                st.success(f"Archivo iPago cargado: {len(df_ipago)} registros")
+                
+                # Limpiar referencia iPago
+                df_ipago["Referencia"] = (
+                    df_ipago["Referencia"]
+                    .astype(str)
+                    .str.replace(".0", "")
+                    .str.strip()
+                )
+                
+            except Exception as e:
+                st.error(f"Error leyendo archivo iPago: {e}")
+
         if procesar:
 
             with st.spinner("Procesando archivo con tasas BCV..."):
@@ -1400,6 +1430,31 @@ if archivo:
             df_ingresos = pd.DataFrame(ingresos)
             df_egresos = pd.DataFrame(egresos)
             df_comisiones = pd.DataFrame(comisiones)
+
+            # =========================================================
+            # LIMPIAR REFERENCIAS DEL BANCO
+            # =========================================================
+            
+            if not df_egresos.empty:
+                df_egresos["REFERENCIA"] = (
+                    df_egresos["REFERENCIA"]
+                    .astype(str)
+                    .str.replace(".0", "")
+                    .str.strip()
+                )
+            
+            # =========================================================
+            # HACER EL CRUCE CON IPAGO
+            # =========================================================
+            
+            if df_ipago is not None and not df_egresos.empty:
+                df_egresos = df_egresos.merge(
+                    df_ipago,
+                    left_on="REFERENCIA",
+                    right_on="Referencia",
+                    how="left"
+                )
+                st.success("Cruce con iPago realizado correctamente")
 
             total_ingresos = (
                 df_ingresos["MONTO USD"].sum()
