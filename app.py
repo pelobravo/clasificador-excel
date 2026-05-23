@@ -1472,6 +1472,28 @@ if archivo:
                     how="left"
                 )
                 st.success("Cruce con iPago realizado correctamente")
+                
+                # =========================================================
+                # REEMPLAZAR DESCRIPCIÓN CON DATOS DE IPAGO
+                # =========================================================
+                
+                # Reemplazar descripción del banco con la descripción de iPago (si existe)
+                if "Descripción" in df_egresos.columns:
+                    df_egresos["DESCRIPCIÓN"] = (
+                        df_egresos["Descripción"]
+                        .fillna(df_egresos["DESCRIPCIÓN"])
+                    )
+                
+                # Reemplazar beneficiario con Proveedor de iPago (si existe)
+                if "Proveedor" in df_egresos.columns:
+                    df_egresos["BENEFICIARIO"] = (
+                        df_egresos["Proveedor"]
+                        .fillna(df_egresos.get("BENEFICIARIO", ""))
+                    )
+                
+                # Crear columna CONCEPTO con el Tipo de Egreso de iPago
+                if "Tipo de Egreso" in df_egresos.columns:
+                    df_egresos["CONCEPTO"] = df_egresos["Tipo de Egreso"]
 
             total_ingresos = (
                 df_ingresos["MONTO USD"].sum()
