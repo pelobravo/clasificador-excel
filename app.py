@@ -1410,14 +1410,15 @@ if archivo:
                 )
                 st.success(f"Archivo iPago cargado: {len(df_ipago)} registros")
                 
-                # Limpiar referencia iPago
+                # Limpiar referencia iPago - CONVERTIR A ENTERO REAL
                 df_ipago["Referencia"] = (
-                    df_ipago["Referencia"]
-                    .fillna("")
+                    pd.to_numeric(
+                        df_ipago["Referencia"],
+                        errors="coerce"
+                    )
+                    .fillna(0)
+                    .astype("Int64")
                     .astype(str)
-                    .str.replace(".0", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.strip()
                 )
                 
             except Exception as e:
@@ -1434,17 +1435,18 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # LIMPIAR REFERENCIAS DEL BANCO
+            # LIMPIAR REFERENCIAS DEL BANCO - CONVERTIR A ENTERO REAL
             # =========================================================
             
             if not df_egresos.empty:
                 df_egresos["REFERENCIA"] = (
-                    df_egresos["REFERENCIA"]
-                    .fillna("")
+                    pd.to_numeric(
+                        df_egresos["REFERENCIA"],
+                        errors="coerce"
+                    )
+                    .fillna(0)
+                    .astype("Int64")
                     .astype(str)
-                    .str.replace(".0", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.strip()
                 )
             
             # =========================================================
