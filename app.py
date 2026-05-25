@@ -1521,12 +1521,20 @@ if archivo:
             # BANESCO: usar read_html porque son archivos HTML disfrazados
             try:
                 tablas = pd.read_html(archivo)
-                if len(tablas) > 0:
-                    df_raw = tablas[0]
-                    st.success(f"✓ Banesco: {len(tablas)} tablas encontradas")
-                else:
-                    st.error("No se encontraron tablas válidas en Banesco")
+                
+                df_raw = None
+                
+                for t in tablas:
+                    if len(t.columns) >= 4:
+                        df_raw = t.copy()
+                        break
+                
+                if df_raw is None:
+                    st.error("No se encontró tabla válida en Banesco")
                     st.stop()
+                
+                st.success(f"✓ Banesco: {len(tablas)} tablas encontradas")
+                
             except Exception as e:
                 st.error(f"Error leyendo Banesco: {str(e)}")
                 st.stop()
