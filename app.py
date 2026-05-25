@@ -1405,7 +1405,7 @@ if archivo:
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         # ============================================
-        # FILTRAR POR FECHAS
+        # FILTRAR POR FECHAS - CORREGIDO
         # ============================================
 
         try:
@@ -1424,14 +1424,14 @@ if archivo:
                     dayfirst=True
                 )
 
+            # Convertir fechas del filtro a datetime
+            fecha_inicio_dt = pd.to_datetime(fecha_inicio)
+            fecha_fin_dt = pd.to_datetime(fecha_fin)
+
+            # Filtrar correctamente
             df_original = df_original[
-                (
-                    fechas_convertidas.dt.date >= fecha_inicio
-                )
-                &
-                (
-                    fechas_convertidas.dt.date <= fecha_fin
-                )
+                (fechas_convertidas >= fecha_inicio_dt) & 
+                (fechas_convertidas <= fecha_fin_dt)
             ]
 
             st.success(
