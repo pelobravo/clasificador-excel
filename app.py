@@ -1675,14 +1675,29 @@ Por favor cargue el archivo ORIGINAL del banco.
                         tipo = str(row["TIPO"]).strip().upper()
                         descripcion = str(row["DESCRIPCION"]).strip()
 
+                        # ============================================
+                        # COMISIONES
+                        # ============================================
                         if es_comision(descripcion):
                             comisiones.append(registro)
-                        elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
+                            continue
+
+                        # ============================================
+                        # INGRESOS
+                        # ============================================
+                        if tipo in ["NC", "C", "CREDITO", "ABONO"]:
                             ingresos.append(registro)
+
+                        # ============================================
+                        # EGRESOS
+                        # ============================================
                         elif tipo in ["ND", "D", "DEBITO", "DEBIT"]:
                             egresos.append(registro)
+
+                        # ============================================
+                        # DEFAULT
+                        # ============================================
                         else:
-                            # Si no identifica, asumir egreso
                             egresos.append(registro)
                 else:
                     ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api)
