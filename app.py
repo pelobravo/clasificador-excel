@@ -1344,8 +1344,7 @@ def convertir_a_formato_mercantil(df, banco):
             if pd.isna(fecha):
                 continue
             
-            # Convertir fecha a string en formato esperado
-            if isinstance(fecha, (pd.Timestamp, datetime)):
+            # Convertir fecha a string en formato esperado            if isinstance(fecha, (pd.Timestamp, datetime)):
                 fecha_str = fecha.strftime("%d/%m/%Y")
             else:
                 fecha_str = str(fecha)
@@ -1462,23 +1461,42 @@ if archivo:
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         elif banco == "provincial":
-            # PROVINCIAL: usar read_html con latin-1 porque son archivos HTML disfrazados
+            # PROVINCIAL: parsear líneas de texto plano
             try:
-                # Leer contenido usando latin-1
+                # Leer como texto plano latin-1
                 contenido = archivo.read().decode("latin-1")
-                tablas = pd.read_html(contenido)
-                if len(tablas) > 0:
-                    df_raw = tablas[0]
-                    st.success(f"✓ Provincial: {len(tablas)} tablas encontradas")
-                else:
-                    st.error("No se encontraron tablas válidas en Provincial")
-                    st.stop()
+                lineas = contenido.splitlines()
+                movimientos = []
+                for linea in lineas:
+                    linea = linea.strip()
+                    # Detectar líneas con movimientos
+                    if "CR./" in linea or "TRAE" in linea or "COMIS." in linea:
+                        partes = linea.split()
+                        if len(partes) >= 6:
+                            try:
+                                fecha = partes[0]
+                                referencia = partes[3].replace("'", "")
+                                descripcion = " ".join(partes[4:-2])
+                                monto_raw = partes[-2]
+                                monto = convertir_monto(monto_raw)
+                                if monto is None:
+                                    continue
+                                movimientos.append({
+                                    "FECHA": fecha,
+                                    "REFERENCIA": referencia,
+                                    "DESCRIPCION": descripcion,
+                                    "TIPO": "ND",
+                                    "MONTO": abs(monto)
+                                })
+                            except:
+                                continue
+                df_normalizado = pd.DataFrame(movimientos)
+                st.success(f"✓ Provincial: {len(df_normalizado)} movimientos detectados")
+                st.dataframe(df_normalizado.head())
+                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             except Exception as e:
                 st.error(f"Error leyendo Provincial: {str(e)}")
                 st.stop()
-            
-            df_normalizado = procesar_provincial(df_raw)
-            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         else:
             # OTROS BANCOS: aplicar parser específico
