@@ -586,80 +586,158 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANESCO - VERSIÓN CORREGIDA (SIN CAMBIOS)
+# PROCESAR BANESCO - VERSIÓN MEJORADA
 # =========================================================
 
 def procesar_banesco(df):
 
     st.info("Procesando Banesco...")
 
-    rename_map = {}
+    try:
 
-    for col in df.columns:
+        # ============================================
+        # LIMPIAR COLUMNAS
+        # ============================================
 
-        col_str = str(col).strip().lower()
+        columnas_limpias = []
 
-        if "fecha" in col_str:
-            rename_map[col] = "FECHA"
+        for c in df.columns:
 
-        elif "descrip" in col_str:
-            rename_map[col] = "DESCRIPCION"
+            columnas_limpias.append(
+                str(c).strip()
+            )
 
-        elif "referencia" in col_str:
-            rename_map[col] = "REFERENCIA"
+        df.columns = columnas_limpias
 
-        elif "monto" in col_str:
-            rename_map[col] = "MONTO"
+        # ============================================
+        # RENOMBRAR
+        # ============================================
 
-    df = df.rename(columns=rename_map)
+        rename_map = {}
 
-    # ============================================
-    # FECHA
-    # ============================================
+        for col in df.columns:
 
-    if "FECHA" in df.columns:
+            col_str = str(col).strip().lower()
 
-        df["FECHA"] = pd.to_datetime(
-            df["FECHA"],
-            errors="coerce"
+            if "fecha" in col_str:
+
+                rename_map[col] = "FECHA"
+
+            elif (
+                "descrip" in col_str
+                or "concepto" in col_str
+            ):
+
+                rename_map[col] = "DESCRIPCION"
+
+            elif "referencia" in col_str:
+
+                rename_map[col] = "REFERENCIA"
+
+            elif (
+                "credito" in col_str
+                or "crédito" in col_str
+            ):
+
+                rename_map[col] = "CREDITO"
+
+            elif (
+                "debito" in col_str
+                or "débito" in col_str
+            ):
+
+                rename_map[col] = "DEBITO"
+
+        df = df.rename(columns=rename_map)
+
+        # ============================================
+        # FECHA
+        # ============================================
+
+        if "FECHA" in df.columns:
+
+            df["FECHA"] = pd.to_datetime(
+                df["FECHA"],
+                errors="coerce"
+            )
+
+            df = df[
+                df["FECHA"].notna()
+            ]
+
+        # ============================================
+        # NUMERICOS
+        # ============================================
+
+        if "CREDITO" in df.columns:
+
+            df["CREDITO"] = pd.to_numeric(
+                df["CREDITO"],
+                errors="coerce"
+            ).fillna(0)
+
+        else:
+
+            df["CREDITO"] = 0
+
+        if "DEBITO" in df.columns:
+
+            df["DEBITO"] = pd.to_numeric(
+                df["DEBITO"],
+                errors="coerce"
+            ).fillna(0)
+
+        else:
+
+            df["DEBITO"] = 0
+
+        # ============================================
+        # MONTO
+        # ============================================
+
+        df["MONTO"] = (
+            df["CREDITO"]
+            - df["DEBITO"]
         )
 
-        df = df[df["FECHA"].notna()]
+        # ============================================
+        # TIPO
+        # ============================================
 
-    # ============================================
-    # MONTO (con manejo de columnas duplicadas)
-    # ============================================
+        df["TIPO"] = df["MONTO"].apply(
 
-    if "MONTO" in df.columns:
-        monto = df["MONTO"]
-        if isinstance(monto, pd.DataFrame):
-            monto = monto.iloc[:, 0]
-        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
-        df = df[df["MONTO"].notna()]
+            lambda x: "NC" if x > 0 else "ND"
+        )
 
-    # ============================================
-    # CREAR TIPO AUTOMÁTICO
-    # ============================================
+        # ============================================
+        # ABS
+        # ============================================
 
-    df["TIPO"] = df["MONTO"].apply(
+        df["MONTO"] = df["MONTO"].abs()
 
-        lambda x: "NC" if x > 0 else "ND"
-    )
+        # ============================================
+        # LIMPIAR
+        # ============================================
 
-    # ============================================
-    # ABSOLUTO
-    # ============================================
+        df = df[
+            df["MONTO"] > 0
+        ]
 
-    df["MONTO"] = df["MONTO"].abs()
+        st.success(
+            f"Banesco OK: {len(df)} registros"
+        )
 
-    # ============================================
-    # DEBUG
-    # ============================================
+        st.dataframe(df.head())
 
-    st.write("VISTA PREVIA BANESCO:")
-    st.dataframe(df.head())
+        return df
 
-    return df
+    except Exception as e:
+
+        st.error(
+            f"Error Banesco: {str(e)}"
+        )
+
+        return pd.DataFrame()
 
 # =========================================================
 # PROCESAR PROVINCIAL (SIN CAMBIOS)
