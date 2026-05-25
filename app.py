@@ -1533,7 +1533,10 @@ if archivo:
                     texto = linea.strip()
                     # Detectar líneas con movimientos
                     if (
-                        "/" in texto
+                        (
+                            "/" in texto
+                            or "-" in texto
+                        )
                         and (
                             "+" in texto
                             or "-" in texto
