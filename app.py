@@ -1435,30 +1435,68 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # LIMPIAR REFERENCIAS DEL BANCO - CONVERTIR A ENTERO REAL
+            # NORMALIZAR REFERENCIAS BANCO
             # =========================================================
-            
+
             if not df_egresos.empty:
+
                 df_egresos["REFERENCIA"] = (
-                    pd.to_numeric(
-                        df_egresos["REFERENCIA"],
-                        errors="coerce"
-                    )
-                    .fillna(0)
-                    .astype("Int64")
+
+                    df_egresos["REFERENCIA"]
+
                     .astype(str)
+
+                    .str.replace(".0", "", regex=False)
+
+                    .str.replace(" ", "", regex=False)
+
+                    .str.strip()
+
                 )
-            
+
+                # Tomar últimos 6 dígitos
+                df_egresos["REF_CRUCE"] = (
+                    df_egresos["REFERENCIA"]
+                    .str[-6:]
+                )
+
             # =========================================================
-            # DEBUG - MOSTRAR REFERENCIAS ANTES DEL MERGE
+            # NORMALIZAR REFERENCIAS IPAGO
             # =========================================================
-            
+
+            if df_ipago is not None:
+
+                df_ipago["Referencia"] = (
+
+                    df_ipago["Referencia"]
+
+                    .astype(str)
+
+                    .str.replace(".0", "", regex=False)
+
+                    .str.replace(" ", "", regex=False)
+
+                    .str.strip()
+
+                )
+
+                # Tomar últimos 6 dígitos
+                df_ipago["REF_CRUCE"] = (
+                    df_ipago["Referencia"]
+                    .str[-6:]
+                )
+
+            # =========================================================
+            # DEBUG
+            # =========================================================
+
             if df_ipago is not None and not df_egresos.empty:
-                st.write("🔍 REFERENCIAS BANCO (primeros 5):")
-                st.write(df_egresos["REFERENCIA"].head().tolist())
-                
-                st.write("🔍 REFERENCIAS IPAGO (primeros 5):")
-                st.write(df_ipago["Referencia"].head().tolist())
+
+                st.write("🔍 REFERENCIAS BANCO:")
+                st.write(df_egresos[["REFERENCIA", "REF_CRUCE"]].head())
+
+                st.write("🔍 REFERENCIAS IPAGO:")
+                st.write(df_ipago[["Referencia", "REF_CRUCE"]].head())
             
             # =========================================================
             # HACER EL CRUCE CON IPAGO
@@ -1467,8 +1505,7 @@ if archivo:
             if df_ipago is not None and not df_egresos.empty:
                 df_egresos = df_egresos.merge(
                     df_ipago,
-                    left_on="REFERENCIA",
-                    right_on="Referencia",
+                    on="REF_CRUCE",
                     how="left"
                 )
                 st.success("Cruce con iPago realizado correctamente")
