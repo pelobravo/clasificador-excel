@@ -1754,22 +1754,81 @@ if archivo:
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         elif banco == "bancamiga":
-            # BANCAMIGA: usar read_html porque son archivos HTML disfrazados
+
             try:
-                tablas = pd.read_html(archivo)
-                if len(tablas) > 0:
-                    df_raw = tablas[0]
-                    st.success(f"✓ Bancamiga: {len(tablas)} tablas encontradas")
-                else:
-                    st.error("No se encontraron tablas válidas en Bancamiga")
-                    st.stop()
+
+                nombre = archivo.name.lower()
+
+                # ============================================
+                # PRIMER INTENTO: HTML DISFRAZADO
+                # ============================================
+
+                try:
+
+                    tablas = pd.read_html(archivo)
+
+                    if len(tablas) > 0:
+
+                        df_raw = tablas[0]
+
+                        st.success(
+                            f"✓ Bancamiga HTML: {len(df_raw)} registros"
+                        )
+
+                    else:
+
+                        raise Exception(
+                            "Sin tablas HTML"
+                        )
+
+                # ============================================
+                # SEGUNDO INTENTO: EXCEL REAL
+                # ============================================
+
+                except:
+
+                    archivo.seek(0)
+
+                    if nombre.endswith(".xls"):
+
+                        df_raw = pd.read_excel(
+                            archivo,
+                            engine="xlrd",
+                            header=0
+                        )
+
+                    else:
+
+                        df_raw = pd.read_excel(
+                            archivo,
+                            engine="openpyxl",
+                            header=0
+                        )
+
+                    st.success(
+                        f"✓ Bancamiga Excel: {len(df_raw)} registros"
+                    )
+
+                st.dataframe(df_raw.head())
+
+                # ============================================
+                # PROCESAR
+                # ============================================
+
+                df_normalizado = procesar_bancamiga(df_raw)
+
+                df_original = convertir_a_formato_mercantil(
+                    df_normalizado,
+                    banco
+                )
+
             except Exception as e:
-                st.error(f"Error leyendo Bancamiga: {str(e)}")
+
+                st.error(
+                    f"Error leyendo Bancamiga: {str(e)}"
+                )
+
                 st.stop()
-            
-            # Usar procesador específico de Bancamiga
-            df_normalizado = procesar_bancamiga(df_raw)
-            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         elif banco == "provincial":
             # PROVINCIAL: parsear líneas de texto plano
