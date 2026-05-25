@@ -295,33 +295,85 @@ def es_comision(texto):
     )
 
 # =========================================================
-# DETECTOR DE BANCO CORREGIDO
+# DETECTOR DE BANCO CORREGIDO - VERSIÓN MEJORADA
 # =========================================================
 
 def detectar_banco(nombre_archivo):
-    """Detecta el banco por el nombre del archivo"""
+
     nombre = nombre_archivo.upper()
-    
-    # ORDEN IMPORTANTE: TESORO primero (por TES)
-    if "TESORO" in nombre or "TESORERIA" in nombre:
+
+    # =====================================
+    # TESORO
+    # =====================================
+
+    if (
+        "TESORO" in nombre
+        or "TESORERIA" in nombre
+        or "TES" in nombre
+    ):
+
         return "tesoro"
-    elif "TES" in nombre:  # BONUS: detectar TES como Tesoro
-        return "tesoro"
+
+    # =====================================
+    # BANESCO
+    # =====================================
+
     elif "BANESCO" in nombre:
+
         return "banesco"
-    elif "MOVIMIENTOS EN MONEDA NACIONAL" in nombre:
-        return "venezuela"
-    elif "VENEZUELA" in nombre or "BANCO DE VENEZUELA" in nombre:
-        return "venezuela"
-    elif "PROVINCIAL" in nombre:
-        return "provincial"
-    elif "BNC" in nombre:
-        return "bnc"
-    elif "MERCANTIL" in nombre:
-        return "mercantil"
-    elif "BANCAMIGA" in nombre:
+
+    # =====================================
+    # BANCAMIGA
+    # =====================================
+
+    elif (
+        "BANCAMIGA" in nombre
+        or "MOVIMIENTOS_" in nombre
+    ):
+
         return "bancamiga"
-    return "mercantil"  # Por defecto mercantil
+
+    # =====================================
+    # VENEZUELA
+    # =====================================
+
+    elif (
+        "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
+        or "VENEZUELA" in nombre
+        or "BANCO DE VENEZUELA" in nombre
+    ):
+
+        return "venezuela"
+
+    # =====================================
+    # PROVINCIAL
+    # =====================================
+
+    elif "PROVINCIAL" in nombre:
+
+        return "provincial"
+
+    # =====================================
+    # BNC
+    # =====================================
+
+    elif "BNC" in nombre:
+
+        return "bnc"
+
+    # =====================================
+    # MERCANTIL
+    # =====================================
+
+    elif "MERCANTIL" in nombre:
+
+        return "mercantil"
+
+    # =====================================
+    # DEFAULT
+    # =====================================
+
+    return "mercantil"
 
 # =========================================================
 # PROCESAR VENEZUELA - PARSER INTELIGENTE (CON PRIORIDAD FECHA)
