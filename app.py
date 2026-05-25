@@ -279,7 +279,14 @@ def es_comision(texto):
         "gasto bancario",
 
         "mantenimiento de cuenta",
-        "debito automatico bancario"
+        "debito automatico bancario",
+
+        "com ",
+        "com.",
+        "com pago",
+        "com pago otr",
+        "com pago otr bcos",
+        "comision pago proveedores"
     ]
 
     return any(
@@ -1347,7 +1354,8 @@ def convertir_a_formato_mercantil(df, banco):
             if pd.isna(fecha):
                 continue
             
-            # Convertir fecha a string en formato esperado            if isinstance(fecha, (pd.Timestamp, datetime)):
+            # Convertir fecha a string en formato esperado
+            if isinstance(fecha, (pd.Timestamp, datetime)):
                 fecha_str = fecha.strftime("%d/%m/%Y")
             else:
                 fecha_str = str(fecha)
