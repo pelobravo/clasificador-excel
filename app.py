@@ -302,6 +302,8 @@ def detectar_banco(nombre_archivo):
         return "tesoro"
     elif "BANESCO" in nombre:
         return "banesco"
+    elif "MOVIMIENTOS EN MONEDA NACIONAL" in nombre:
+        return "venezuela"
     elif "VENEZUELA" in nombre or "BANCO DE VENEZUELA" in nombre:
         return "venezuela"
     elif "PROVINCIAL" in nombre:
