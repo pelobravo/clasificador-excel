@@ -596,6 +596,14 @@ def procesar_banesco(df):
     try:
 
         # ============================================
+        # USAR PRIMERA FILA COMO ENCABEZADO
+        # ============================================
+
+        df.columns = df.iloc[0]
+
+        df = df.iloc[1:].reset_index(drop=True)
+
+        # ============================================
         # LIMPIAR COLUMNAS
         # ============================================
 
