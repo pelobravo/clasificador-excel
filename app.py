@@ -1646,11 +1646,17 @@ Por favor cargue el archivo ORIGINAL del banco.
                             "MONTO USD": row["MONTO"]
                         }
 
-                        if es_comision(row["DESCRIPCION"]):
+                        tipo = str(row["TIPO"]).strip().upper()
+                        descripcion = str(row["DESCRIPCION"]).strip()
+
+                        if es_comision(descripcion):
                             comisiones.append(registro)
-                        elif row["TIPO"] == "NC":
+                        elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
                             ingresos.append(registro)
+                        elif tipo in ["ND", "D", "DEBITO", "DEBIT"]:
+                            egresos.append(registro)
                         else:
+                            # Si no identifica, asumir egreso
                             egresos.append(registro)
                 else:
                     ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api)
