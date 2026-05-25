@@ -1505,6 +1505,30 @@ if archivo:
             df_raw = leer_excel_con_encabezados(archivo)
             
             if banco == "venezuela":
+                # Venezuela necesita lectura sin encabezados
+                df_raw = leer_excel_sin_encabezados(archivo)
+
+                # Buscar encabezado real automáticamente
+                encabezado = None
+
+                for i in range(min(20, len(df_raw))):
+                    fila = df_raw.iloc[i].astype(str)
+                    texto = " ".join(fila.tolist()).lower()
+                    if (
+                        "fecha" in texto
+                        and (
+                            "referencia" in texto
+                            or "descripcion" in texto
+                            or "descripción" in texto
+                        )
+                    ):
+                        encabezado = i
+                        break
+
+                if encabezado is not None:
+                    df_raw.columns = df_raw.iloc[encabezado]
+                    df_raw = df_raw.iloc[encabezado + 1:].reset_index(drop=True)
+
                 df_normalizado = procesar_venezuela(df_raw)
             elif banco == "banesco":
                 df_normalizado = procesar_banesco(df_raw)
