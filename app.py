@@ -1462,9 +1462,11 @@ if archivo:
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         elif banco == "provincial":
-            # PROVINCIAL: usar read_html porque son archivos HTML disfrazados
+            # PROVINCIAL: usar read_html con latin-1 porque son archivos HTML disfrazados
             try:
-                tablas = pd.read_html(archivo)
+                # Leer contenido usando latin-1
+                contenido = archivo.read().decode("latin-1")
+                tablas = pd.read_html(contenido)
                 if len(tablas) > 0:
                     df_raw = tablas[0]
                     st.success(f"✓ Provincial: {len(tablas)} tablas encontradas")
