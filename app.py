@@ -949,33 +949,6 @@ def procesar_tesoro(df):
     return df
 
 # =========================================================
-# PROCESAR BANCAMIGA
-# =========================================================
-
-def procesar_bancamiga(archivo):
-    """Procesa archivo de Bancamiga (HTML disfrazado de Excel)"""
-    
-    st.info("Procesando Bancamiga...")
-    
-    try:
-        # Leer HTML desde el archivo
-        tablas = pd.read_html(archivo)
-        
-        if len(tablas) > 0:
-            df_raw = tablas[0]
-            st.success(f"✓ Se encontraron {len(tablas)} tablas en el archivo Bancamiga. Usando la primera.")
-            st.write("VISTA PREVIA BANCAMIGA:")
-            st.dataframe(df_raw.head())
-            return df_raw
-        else:
-            st.error("No se encontraron tablas en el archivo Bancamiga")
-            st.stop()
-            
-    except Exception as e:
-        st.error(f"Error leyendo Bancamiga: {str(e)}")
-        st.stop()
-
-# =========================================================
 # OBTENER TASA BCV (API o SCRAPING) - CORREGIDO
 # =========================================================
 
@@ -1367,23 +1340,20 @@ if archivo:
             
         elif banco == "bancamiga":
             # BANCAMIGA: usar read_html porque son archivos HTML disfrazados
-            df_raw = procesar_bancamiga(archivo)
-            # Intentar convertir directamente sin procesador especial
-            # Buscar fila de encabezados si es necesario
-            df_normalizado = df_raw
-            # Intentar renombrar columnas si es necesario
-            for col in df_normalizado.columns:
-                col_str = str(col).lower()
-                if "fecha" in col_str:
-                    df_normalizado = df_normalizado.rename(columns={col: "FECHA"})
-                elif "descrip" in col_str or "concepto" in col_str:
-                    df_normalizado = df_normalizado.rename(columns={col: "DESCRIPCION"})
-                elif "referencia" in col_str:
-                    df_normalizado = df_normalizado.rename(columns={col: "REFERENCIA"})
-                elif "monto" in col_str or "importe" in col_str:
-                    df_normalizado = df_normalizado.rename(columns={col: "MONTO"})
+            try:
+                tablas = pd.read_html(archivo)
+                if len(tablas) > 0:
+                    df_raw = tablas[0]
+                    st.success(f"✓ Bancamiga: {len(tablas)} tablas encontradas")
+                else:
+                    st.error("No se encontraron tablas válidas en Bancamiga")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error leyendo Bancamiga: {str(e)}")
+                st.stop()
             
-            # Convertir formato
+            # Reutilizar parser provincial temporalmente
+            df_normalizado = procesar_provincial(df_raw)
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         else:
