@@ -1638,7 +1638,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                     egresos = []
                     comisiones = []
 
-                    for _, row in df_original.iterrows():
+                    for _, row in df_normalizado.iterrows():
                         registro = {
                             "FECHA": row["FECHA"],
                             "REFERENCIA": row["REFERENCIA"],
