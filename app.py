@@ -1537,17 +1537,16 @@ if archivo:
                 st.stop()
             
         elif banco == "tesoro":
-            # TESORO: usar read_html porque son archivos HTML disfrazados
+            # TESORO: leer Excel real
             try:
-                tablas = pd.read_html(archivo)
-                if len(tablas) > 0:
-                    df_raw = tablas[0]
-                    st.success(f"✓ Se encontraron {len(tablas)} tablas en el archivo Tesoro. Usando la primera.")
-                else:
-                    st.error("No se encontraron tablas en el archivo Tesoro")
-                    st.stop()
+                df_raw = pd.read_excel(
+                    archivo,
+                    engine="openpyxl"
+                )
+                st.success(f"✓ Tesoro: {len(df_raw)} registros encontrados")
+                st.dataframe(df_raw.head())
             except Exception as e:
-                st.error(f"Error al leer archivo Tesoro: {str(e)}")
+                st.error(f"Error leyendo Tesoro: {str(e)}")
                 st.stop()
             
             df_normalizado = procesar_tesoro(df_raw)
