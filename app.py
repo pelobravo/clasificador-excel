@@ -954,7 +954,7 @@ def procesar_bnc(df):
     return df
 
 # =========================================================
-# PROCESAR TESORO - VERSIÓN CORREGIDA (REEMPLAZADA)
+# PROCESAR TESORO - VERSIÓN CORREGIDA CON MAP
 # =========================================================
 
 def procesar_tesoro(df):
@@ -973,7 +973,9 @@ def procesar_tesoro(df):
 
             fila = df.iloc[i].astype(str)
 
-            texto = " ".join(fila.tolist()).lower()
+            texto = " ".join(
+                map(str, fila.tolist())
+            ).lower()
 
             if (
                 "fecha" in texto
@@ -1805,7 +1807,7 @@ if archivo:
             
         # Verificar que se pudieron convertir los datos
         if df_original.empty or len(df_original) == 0:
-            st.error(""""
+            st.error("""
 
 ❌ No se encontraron movimientos válidos.
 
