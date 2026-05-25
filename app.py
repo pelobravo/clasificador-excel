@@ -956,6 +956,104 @@ def procesar_tesoro(df):
     return df
 
 # =========================================================
+# PROCESAR BANCAMIGA
+# =========================================================
+
+def procesar_bancamiga(df):
+
+    st.info("Procesando Bancamiga...")
+
+    try:
+
+        # Aplanar columnas multinivel
+        if isinstance(df.columns, pd.MultiIndex):
+
+            df.columns = [
+                col[-1]
+                for col in df.columns
+            ]
+
+        # Renombrar columnas
+        df = df.rename(columns={
+
+            "Fecha": "FECHA",
+            "Referencia": "REFERENCIA",
+            "Concepto": "DESCRIPCION",
+            "Débito": "DEBITO",
+            "Crédito": "CREDITO"
+
+        })
+
+        # Validar fecha
+        if "FECHA" not in df.columns:
+
+            st.error("No se encontró columna FECHA")
+
+            return pd.DataFrame()
+
+        # Convertir fecha
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            format="%d/%m/%y",
+            errors="coerce"
+        )
+
+        df = df[df["FECHA"].notna()]
+
+        # Convertir numéricos
+        df["CREDITO"] = pd.to_numeric(
+            df["CREDITO"],
+            errors="coerce"
+        ).fillna(0)
+
+        df["DEBITO"] = pd.to_numeric(
+            df["DEBITO"],
+            errors="coerce"
+        ).fillna(0)
+
+        # Calcular monto
+        df["MONTO"] = (
+            df["CREDITO"] - df["DEBITO"]
+        )
+
+        # Crear tipo
+        df["TIPO"] = df["MONTO"].apply(
+            lambda x: "NC" if x > 0 else "ND"
+        )
+
+        # Absoluto
+        df["MONTO"] = df["MONTO"].abs()
+
+        # Limpiar
+        df = df[df["MONTO"] > 0]
+
+        columnas_finales = [
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "TIPO",
+            "MONTO"
+        ]
+
+        df = df[columnas_finales]
+
+        st.success(
+            f"Bancamiga OK: {len(df)} registros"
+        )
+
+        st.dataframe(df.head())
+
+        return df
+
+    except Exception as e:
+
+        st.error(
+            f"Error Bancamiga: {str(e)}"
+        )
+
+        return pd.DataFrame()
+
+# =========================================================
 # OBTENER TASA BCV (API o SCRAPING) - CORREGIDO
 # =========================================================
 
@@ -1359,8 +1457,8 @@ if archivo:
                 st.error(f"Error leyendo Bancamiga: {str(e)}")
                 st.stop()
             
-            # Reutilizar parser provincial temporalmente
-            df_normalizado = procesar_provincial(df_raw)
+            # Usar procesador específico de Bancamiga
+            df_normalizado = procesar_bancamiga(df_raw)
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         else:
