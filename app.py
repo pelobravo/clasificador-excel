@@ -1218,18 +1218,19 @@ def procesar_archivo(df, usar_api=False):
             # OBTENER TASA BCV SEGÚN FECHA
             # =================================================
             
-            # Convertir fecha a objeto datetime para consultar tasa
-            try:
-                fecha_obj = pd.to_datetime(fecha, format="%d/%m/%Y", errors="coerce")
-                fecha_key = fecha_obj.strftime("%d/%m/%Y")
-            except:
-                fecha_key = fecha
-                fecha_obj = None
+            # Intentar múltiples formatos de fecha
+            fecha_obj = pd.to_datetime(
+                fecha,
+                dayfirst=True,
+                errors="coerce"
+            )
             
             # Validar que la fecha sea válida antes de buscar tasa
             if pd.isna(fecha_obj):
                 st.warning(f"Fecha inválida: {fecha}, se omite")
                 continue
+            
+            fecha_key = fecha_obj.strftime("%d/%m/%Y")
             
             # Buscar tasa en cache o consultar
             if fecha_key in cache_tasas:
@@ -1344,7 +1345,8 @@ def convertir_a_formato_mercantil(df, banco):
             if pd.isna(fecha):
                 continue
             
-            # Convertir fecha a string en formato esperado            if isinstance(fecha, (pd.Timestamp, datetime)):
+            # Convertir fecha a string en formato esperado
+            if isinstance(fecha, (pd.Timestamp, datetime)):
                 fecha_str = fecha.strftime("%d/%m/%Y")
             else:
                 fecha_str = str(fecha)
