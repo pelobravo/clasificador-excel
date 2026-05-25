@@ -1308,7 +1308,7 @@ if archivo:
         # DETECTAR BANCO
         # =========================================================
         banco = detectar_banco(archivo.name)
-        st.info(f"🏦 Banco detectado: **{banco.upper()}**")
+        # st.info(f"🏦 Banco detectado: **{banco.upper()}**")
         
         # =========================================================
         # LEER Y PROCESAR SEGÚN BANCO
@@ -1393,7 +1393,19 @@ if archivo:
             
         # Verificar que se pudieron convertir los datos
         if df_original.empty or len(df_original) == 0:
-            st.error("No se pudieron convertir los datos. Verifica el formato del archivo.")
+            st.error("""
+
+❌ No se encontraron movimientos válidos.
+
+Posibles causas:
+
+• El archivo ya fue procesado anteriormente por el sistema.
+• El archivo no es el original descargado del banco.
+• El formato del banco no coincide con el esperado.
+
+Por favor cargue el archivo ORIGINAL del banco.
+
+""")
             st.stop()
 
         with st.expander("👁️ Vista previa archivo original"):
