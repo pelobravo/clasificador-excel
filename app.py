@@ -1518,29 +1518,69 @@ if archivo:
             usar_procesamiento_original = True
             
         elif banco == "banesco":
-            # BANESCO: usar read_html porque son archivos HTML disfrazados
+            # BANESCO: leer como texto plano
             try:
-                tablas = pd.read_html(archivo)
-                
-                df_raw = None
-                
-                for t in tablas:
-                    if len(t.columns) >= 4:
-                        df_raw = t.copy()
-                        break
-                
-                if df_raw is None:
-                    st.error("No se encontró tabla válida en Banesco")
-                    st.stop()
-                
-                st.success(f"✓ Banesco: {len(tablas)} tablas encontradas")
-                
+                # ============================================
+                # LEER COMO TEXTO
+                # ============================================
+                contenido = archivo.read().decode(
+                    "latin-1",
+                    errors="ignore"
+                )
+                lineas = contenido.splitlines()
+                movimientos = []
+                for linea in lineas:
+                    texto = linea.strip()
+                    # Detectar líneas con movimientos
+                    if (
+                        "/" in texto
+                        and (
+                            "+" in texto
+                            or "-" in texto
+                        )
+                    ):
+                        partes = texto.split()
+                        if len(partes) >= 4:
+                            try:
+                                fecha = partes[0]
+                                referencia = partes[1]
+                                monto_raw = partes[-2]
+                                descripcion = " ".join(
+                                    partes[2:-2]
+                                )
+                                tipo = (
+                                    "NC"
+                                    if "+"
+                                    in monto_raw
+                                    else "ND"
+                                )
+                                monto = (
+                                    monto_raw
+                                    .replace("+", "")
+                                    .replace("-", "")
+                                    .replace(".", "")
+                                    .replace(",", ".")
+                                )
+                                monto = float(monto)
+                                movimientos.append({
+                                    "FECHA": fecha,
+                                    "REFERENCIA": referencia,
+                                    "DESCRIPCION": descripcion,
+                                    "TIPO": tipo,
+                                    "MONTO": monto
+                                })
+                            except:
+                                continue
+                df_normalizado = pd.DataFrame(movimientos)
+                st.success(f"✓ Banesco: {len(df_normalizado)} movimientos")
+                st.dataframe(df_normalizado.head())
+                df_original = convertir_a_formato_mercantil(
+                    df_normalizado,
+                    banco
+                )
             except Exception as e:
                 st.error(f"Error leyendo Banesco: {str(e)}")
                 st.stop()
-            
-            df_normalizado = procesar_banesco(df_raw)
-            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
         elif banco == "tesoro":
             # TESORO: usar read_html porque son archivos HTML disfrazados
