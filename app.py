@@ -1347,8 +1347,7 @@ def convertir_a_formato_mercantil(df, banco):
             if pd.isna(fecha):
                 continue
             
-            # Convertir fecha a string en formato esperado
-            if isinstance(fecha, (pd.Timestamp, datetime)):
+            # Convertir fecha a string en formato esperado            if isinstance(fecha, (pd.Timestamp, datetime)):
                 fecha_str = fecha.strftime("%d/%m/%Y")
             else:
                 fecha_str = str(fecha)
@@ -1639,13 +1638,38 @@ Por favor cargue el archivo ORIGINAL del banco.
                     comisiones = []
 
                     for _, row in df_normalizado.iterrows():
+                        # ============================================
+                        # OBTENER FECHA
+                        # ============================================
+                        fecha_obj = pd.to_datetime(
+                            row["FECHA"],
+                            errors="coerce"
+                        )
+
+                        # ============================================
+                        # OBTENER TASA BCV
+                        # ============================================
+                        tasa = obtener_tasa_por_fecha(
+                            fecha_obj,
+                            usar_api
+                        )
+
+                        if tasa is None:
+                            tasa = 1.0
+
+                        # ============================================
+                        # CALCULAR USD
+                        # ============================================
+                        monto_bs = float(row["MONTO"])
+                        monto_usd = calcular_usd(monto_bs, tasa)
+
                         registro = {
                             "FECHA": row["FECHA"],
                             "REFERENCIA": row["REFERENCIA"],
                             "DESCRIPCIÓN": row["DESCRIPCION"],
-                            "MONTO BS": row["MONTO"],
-                            "TASA BCV": 1,
-                            "MONTO USD": row["MONTO"]
+                            "MONTO BS": monto_bs,
+                            "TASA BCV": tasa,
+                            "MONTO USD": monto_usd
                         }
 
                         tipo = str(row["TIPO"]).strip().upper()
