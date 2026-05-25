@@ -586,7 +586,7 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANESCO - VERSIÓN MEJORADA
+# PROCESAR BANESCO - VERSIÓN CON MONTO ORIGINAL
 # =========================================================
 
 def procesar_banesco(df):
@@ -634,20 +634,6 @@ def procesar_banesco(df):
 
                 rename_map[col] = "REFERENCIA"
 
-            elif (
-                "credito" in col_str
-                or "crédito" in col_str
-            ):
-
-                rename_map[col] = "CREDITO"
-
-            elif (
-                "debito" in col_str
-                or "débito" in col_str
-            ):
-
-                rename_map[col] = "DEBITO"
-
         df = df.rename(columns=rename_map)
 
         # ============================================
@@ -666,58 +652,75 @@ def procesar_banesco(df):
             ]
 
         # ============================================
-        # NUMERICOS
+        # USAR COLUMNA MONTO ORIGINAL
         # ============================================
 
-        if "CREDITO" in df.columns:
+        monto_col = None
 
-            df["CREDITO"] = pd.to_numeric(
-                df["CREDITO"],
-                errors="coerce"
-            ).fillna(0)
+        for col in df.columns:
 
-        else:
+            if "monto" in str(col).lower():
 
-            df["CREDITO"] = 0
+                monto_col = col
+                break
 
-        if "DEBITO" in df.columns:
+        if monto_col is None:
 
-            df["DEBITO"] = pd.to_numeric(
-                df["DEBITO"],
-                errors="coerce"
-            ).fillna(0)
+            st.error("No se encontró columna MONTO")
 
-        else:
-
-            df["DEBITO"] = 0
+            return pd.DataFrame()
 
         # ============================================
-        # MONTO
+        # LIMPIAR MONTO
         # ============================================
 
-        df["MONTO"] = (
-            df["CREDITO"]
-            - df["DEBITO"]
+        df["MONTO_RAW"] = (
+            df[monto_col]
+            .astype(str)
+            .str.strip()
         )
 
         # ============================================
         # TIPO
         # ============================================
 
-        df["TIPO"] = df["MONTO"].apply(
+        df["TIPO"] = df["MONTO_RAW"].apply(
 
-            lambda x: "NC" if x > 0 else "ND"
+            lambda x: "NC"
+            if str(x).startswith("+")
+            else "ND"
         )
 
         # ============================================
-        # ABS
+        # MONTO NUMERICO
         # ============================================
 
-        df["MONTO"] = df["MONTO"].abs()
+        df["MONTO"] = (
+
+            df["MONTO_RAW"]
+
+            .str.replace("+", "", regex=False)
+
+            .str.replace("-", "", regex=False)
+
+            .str.replace(".", "", regex=False)
+
+            .str.replace(",", ".", regex=False)
+
+        )
+
+        df["MONTO"] = pd.to_numeric(
+            df["MONTO"],
+            errors="coerce"
+        )
 
         # ============================================
         # LIMPIAR
         # ============================================
+
+        df = df[
+            df["MONTO"].notna()
+        ]
 
         df = df[
             df["MONTO"] > 0
