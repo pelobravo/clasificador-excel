@@ -954,99 +954,219 @@ def procesar_bnc(df):
     return df
 
 # =========================================================
-# PROCESAR TESORO - VERSIÓN CORREGIDA (SIN CAMBIOS)
+# PROCESAR TESORO - VERSIÓN CORREGIDA (REEMPLAZADA)
 # =========================================================
 
 def procesar_tesoro(df):
 
     st.info("Procesando Banco del Tesoro...")
 
-    # ============================================
-    # APLANAR COLUMNAS MULTINIVEL
-    # ============================================
+    try:
 
-    if isinstance(df.columns, pd.MultiIndex):
+        # ============================================
+        # BUSCAR FILA ENCABEZADO REAL
+        # ============================================
+
+        encabezado = None
+
+        for i in range(min(20, len(df))):
+
+            fila = df.iloc[i].astype(str)
+
+            texto = " ".join(fila.tolist()).lower()
+
+            if (
+                "fecha" in texto
+                and "referencia" in texto
+                and "concepto" in texto
+            ):
+
+                encabezado = i
+                break
+
+        if encabezado is None:
+
+            st.error(
+                "No se encontró encabezado válido en Tesoro"
+            )
+
+            return pd.DataFrame()
+
+        # ============================================
+        # USAR ESA FILA COMO HEADER
+        # ============================================
+
+        df.columns = df.iloc[encabezado]
+
+        df = df.iloc[
+            encabezado + 1:
+        ].reset_index(drop=True)
+
+        # ============================================
+        # LIMPIAR COLUMNAS
+        # ============================================
 
         df.columns = [
-            col[-1]
-            for col in df.columns
+            str(c).strip()
+            for c in df.columns
         ]
 
-    # ============================================
-    # RENOMBRAR
-    # ============================================
+        # ============================================
+        # RENOMBRAR
+        # ============================================
 
-    df = df.rename(columns={
+        rename_map = {}
 
-        "Fecha": "FECHA",
-        "Referencia": "REFERENCIA",
-        "Concepto": "DESCRIPCION",
-        "Débito": "DEBITO",
-        "Crédito": "CREDITO",
-        "Código": "TIPO"
+        for col in df.columns:
 
-    })
+            c = str(col).strip().lower()
 
-    # ============================================
-    # FECHA
-    # ============================================
+            if "fecha" in c:
 
-    df["FECHA"] = pd.to_datetime(
-        df["FECHA"],
-        format="%d/%m/%Y",
-        errors="coerce"
-    )
+                rename_map[col] = "FECHA"
 
-    df = df[df["FECHA"].notna()]
+            elif "referencia" in c:
 
-    # ============================================
-    # NUMÉRICOS
-    # ============================================
+                rename_map[col] = "REFERENCIA"
 
-    df["CREDITO"] = pd.to_numeric(
-        df["CREDITO"],
-        errors="coerce"
-    ).fillna(0)
+            elif "concepto" in c:
 
-    df["DEBITO"] = pd.to_numeric(
-        df["DEBITO"],
-        errors="coerce"
-    ).fillna(0)
+                rename_map[col] = "DESCRIPCION"
 
-    # ============================================
-    # MONTO FINAL
-    # ============================================
+            elif "débito" in c or "debito" in c:
 
-    df["MONTO"] = (
-        df["CREDITO"] - df["DEBITO"]
-    )
+                rename_map[col] = "DEBITO"
 
-    # ============================================
-    # TIPO NC / ND
-    # ============================================
+            elif "crédito" in c or "credito" in c:
 
-    df["TIPO"] = df["MONTO"].apply(
+                rename_map[col] = "CREDITO"
 
-        lambda x: "NC" if x > 0 else "ND"
-    )
+            elif "código" in c or "codigo" in c:
 
-    # ============================================
-    # ABS
-    # ============================================
+                rename_map[col] = "TIPO"
 
-    df["MONTO"] = df["MONTO"].abs()
+        df = df.rename(columns=rename_map)
 
-    # ============================================
-    # LIMPIAR
-    # ============================================
+        # ============================================
+        # VALIDAR FECHA
+        # ============================================
 
-    df = df[df["MONTO"] != 0]
+        if "FECHA" not in df.columns:
 
-    st.success(f"Registros Tesoro: {len(df)}")
+            st.error("No existe columna FECHA")
 
-    st.dataframe(df.head())
+            return pd.DataFrame()
 
-    return df
+        # ============================================
+        # FECHA
+        # ============================================
+
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
+        )
+
+        df = df[
+            df["FECHA"].notna()
+        ]
+
+        # ============================================
+        # NUMÉRICOS
+        # ============================================
+
+        def limpiar_numero(valor):
+
+            valor = str(valor)
+
+            valor = valor.replace(".", "")
+            valor = valor.replace(",", ".")
+
+            try:
+                return float(valor)
+            except:
+                return 0
+
+        if "CREDITO" in df.columns:
+
+            df["CREDITO"] = df[
+                "CREDITO"
+            ].apply(limpiar_numero)
+
+        else:
+
+            df["CREDITO"] = 0
+
+        if "DEBITO" in df.columns:
+
+            df["DEBITO"] = df[
+                "DEBITO"
+            ].apply(limpiar_numero)
+
+        else:
+
+            df["DEBITO"] = 0
+
+        # ============================================
+        # MONTO
+        # ============================================
+
+        df["MONTO"] = (
+            df["CREDITO"]
+            - df["DEBITO"]
+        )
+
+        # ============================================
+        # TIPO
+        # ============================================
+
+        df["TIPO"] = df["MONTO"].apply(
+
+            lambda x: "NC"
+            if x > 0
+            else "ND"
+        )
+
+        # ============================================
+        # ABS
+        # ============================================
+
+        df["MONTO"] = df["MONTO"].abs()
+
+        # ============================================
+        # LIMPIAR
+        # ============================================
+
+        df = df[
+            df["MONTO"] > 0
+        ]
+
+        # ============================================
+        # COLUMNAS FINALES
+        # ============================================
+
+        df = df[[
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "TIPO",
+            "MONTO"
+        ]]
+
+        st.success(
+            f"Tesoro OK: {len(df)} registros"
+        )
+
+        st.dataframe(df.head())
+
+        return df
+
+    except Exception as e:
+
+        st.error(
+            f"Error Tesoro: {str(e)}"
+        )
+
+        return pd.DataFrame()
 
 # =========================================================
 # PROCESAR BANCAMIGA
@@ -1685,7 +1805,7 @@ if archivo:
             
         # Verificar que se pudieron convertir los datos
         if df_original.empty or len(df_original) == 0:
-            st.error("""
+            st.error(""""
 
 ❌ No se encontraron movimientos válidos.
 
