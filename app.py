@@ -800,7 +800,7 @@ def procesar_provincial(df):
     return df
 
 # =========================================================
-# PROCESAR BNC - SOLUCIÓN DEFINITIVA (SIN CAMBIOS)
+# PROCESAR BNC - SOLUCIÓN DEFINITIVA CON HEADERS ÚNICOS
 # =========================================================
 
 def procesar_bnc(df):
@@ -841,10 +841,51 @@ def procesar_bnc(df):
         return pd.DataFrame()
 
     # ============================================
-    # RECONSTRUIR DATAFRAME
+    # LIMPIAR Y CREAR HEADERS ÚNICOS
     # ============================================
 
-    df.columns = df.iloc[encabezado]
+    headers = []
+
+    for idx, col in enumerate(df.iloc[encabezado]):
+
+        col = str(col).strip()
+
+        col = col.replace("\n", " ")
+
+        if col == "" or col.lower() == "nan":
+            col = f"COLUMNA_{idx}"
+
+        headers.append(col)
+
+    # ============================================
+    # HACER COLUMNAS ÚNICAS
+    # ============================================
+
+    headers_unicos = []
+
+    contador = {}
+
+    for h in headers:
+
+        if h in contador:
+
+            contador[h] += 1
+
+            nuevo = f"{h}_{contador[h]}"
+
+        else:
+
+            contador[h] = 0
+
+            nuevo = h
+
+        headers_unicos.append(nuevo)
+
+    # ============================================
+    # ASIGNAR COLUMNAS
+    # ============================================
+
+    df.columns = headers_unicos
 
     df = df.iloc[
         encabezado + 1:
@@ -876,11 +917,11 @@ def procesar_bnc(df):
 
             rename_map[col] = "REFERENCIA"
 
-        elif "credito" in col_str:
+        elif "credito" in col_str or "haber" in col_str:
 
             rename_map[col] = "CREDITO"
 
-        elif "debito" in col_str:
+        elif "debito" in col_str or "debe" in col_str:
 
             rename_map[col] = "DEBITO"
 
