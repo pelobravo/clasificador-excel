@@ -1461,6 +1461,23 @@ if archivo:
             df_normalizado = procesar_bancamiga(df_raw)
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             
+        elif banco == "provincial":
+            # PROVINCIAL: usar read_html porque son archivos HTML disfrazados
+            try:
+                tablas = pd.read_html(archivo)
+                if len(tablas) > 0:
+                    df_raw = tablas[0]
+                    st.success(f"✓ Provincial: {len(tablas)} tablas encontradas")
+                else:
+                    st.error("No se encontraron tablas válidas en Provincial")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error leyendo Provincial: {str(e)}")
+                st.stop()
+            
+            df_normalizado = procesar_provincial(df_raw)
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            
         else:
             # OTROS BANCOS: aplicar parser específico
             df_raw = leer_excel_con_encabezados(archivo)
@@ -1469,8 +1486,6 @@ if archivo:
                 df_normalizado = procesar_venezuela(df_raw)
             elif banco == "banesco":
                 df_normalizado = procesar_banesco(df_raw)
-            elif banco == "provincial":
-                df_normalizado = procesar_provincial(df_raw)
             elif banco == "bnc":
                 df_normalizado = procesar_bnc(df_raw)
             else:
