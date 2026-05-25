@@ -1436,6 +1436,23 @@ if archivo:
             df_original = leer_excel_sin_encabezados(archivo)
             usar_procesamiento_original = True
             
+        elif banco == "banesco":
+            # BANESCO: usar read_html porque son archivos HTML disfrazados
+            try:
+                tablas = pd.read_html(archivo)
+                if len(tablas) > 0:
+                    df_raw = tablas[0]
+                    st.success(f"✓ Banesco: {len(tablas)} tablas encontradas")
+                else:
+                    st.error("No se encontraron tablas válidas en Banesco")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error leyendo Banesco: {str(e)}")
+                st.stop()
+            
+            df_normalizado = procesar_banesco(df_raw)
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            
         elif banco == "tesoro":
             # TESORO: usar read_html porque son archivos HTML disfrazados
             try:
@@ -1539,8 +1556,6 @@ if archivo:
                     df_raw = df_raw.iloc[encabezado + 1:].reset_index(drop=True)
 
                 df_normalizado = procesar_venezuela(df_raw)
-            elif banco == "banesco":
-                df_normalizado = procesar_banesco(df_raw)
             elif banco == "bnc":
                 df_normalizado = procesar_bnc(df_raw)
             else:
