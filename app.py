@@ -1631,7 +1631,29 @@ Por favor cargue el archivo ORIGINAL del banco.
 
             with st.spinner("Procesando archivo con tasas BCV..."):
 
-                ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api)
+                if banco == "venezuela":
+                    ingresos = []
+                    egresos = []
+                    comisiones = []
+
+                    for _, row in df_original.iterrows():
+                        registro = {
+                            "FECHA": row["FECHA"],
+                            "REFERENCIA": row["REFERENCIA"],
+                            "DESCRIPCIÓN": row["DESCRIPCION"],
+                            "MONTO BS": row["MONTO"],
+                            "TASA BCV": 1,
+                            "MONTO USD": row["MONTO"]
+                        }
+
+                        if es_comision(row["DESCRIPCION"]):
+                            comisiones.append(registro)
+                        elif row["TIPO"] == "NC":
+                            ingresos.append(registro)
+                        else:
+                            egresos.append(registro)
+                else:
+                    ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api)
 
             df_ingresos = pd.DataFrame(ingresos)
             df_egresos = pd.DataFrame(egresos)
