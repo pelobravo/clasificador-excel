@@ -697,6 +697,13 @@ def procesar_provincial(df):
         df["MONTO"] = pd.to_numeric(monto, errors="coerce")
         df = df[df["MONTO"].notna()]
     
+    # =====================================================
+    # TIPO TEMPORAL PARA BANCAMIGA
+    # =====================================================
+    
+    if "TIPO" not in df.columns:
+        df["TIPO"] = "ND"
+    
     return df
 
 # =========================================================
