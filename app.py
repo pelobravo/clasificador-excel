@@ -1684,19 +1684,57 @@ if archivo:
             usar_procesamiento_original = True
             
         elif banco == "banesco":
-            # BANESCO: usar read_html porque son archivos HTML disfrazados
+
             try:
-                tablas = pd.read_html(archivo)
-                if len(tablas) == 0:
-                    st.error("No se encontraron tablas en Banesco")
-                    st.stop()
-                df_raw = tablas[0]
-                st.success(f"✓ Banesco: {len(df_raw)} registros encontrados")
+
+                nombre = archivo.name.lower()
+
+                # ============================================
+                # SI ES XLSX REAL
+                # ============================================
+
+                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+
+                    df_raw = pd.read_excel(
+                        archivo,
+                        engine="openpyxl",
+                        header=None
+                    )
+
+                # ============================================
+                # SI ES HTML DISFRAZADO
+                # ============================================
+
+                else:
+
+                    tablas = pd.read_html(archivo)
+
+                    if len(tablas) == 0:
+
+                        st.error("No se encontraron tablas en Banesco")
+                        st.stop()
+
+                    df_raw = tablas[0]
+
+                st.success(
+                    f"✓ Banesco: {len(df_raw)} registros encontrados"
+                )
+
                 st.dataframe(df_raw.head())
+
                 df_normalizado = procesar_banesco(df_raw)
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+
+                df_original = convertir_a_formato_mercantil(
+                    df_normalizado,
+                    banco
+                )
+
             except Exception as e:
-                st.error(f"Error leyendo Banesco: {str(e)}")
+
+                st.error(
+                    f"Error leyendo Banesco: {str(e)}"
+                )
+
                 st.stop()
             
         elif banco == "tesoro":
