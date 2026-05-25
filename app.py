@@ -586,7 +586,7 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANESCO - VERSIÓN CON MONTO ORIGINAL
+# PROCESAR BANESCO - NUEVA VERSIÓN
 # =========================================================
 
 def procesar_banesco(df):
@@ -599,15 +599,10 @@ def procesar_banesco(df):
         # LIMPIAR COLUMNAS
         # ============================================
 
-        columnas_limpias = []
-
-        for c in df.columns:
-
-            columnas_limpias.append(
-                str(c).strip()
-            )
-
-        df.columns = columnas_limpias
+        df.columns = [
+            str(c).strip().upper()
+            for c in df.columns
+        ]
 
         # ============================================
         # RENOMBRAR
@@ -617,87 +612,76 @@ def procesar_banesco(df):
 
         for col in df.columns:
 
-            col_str = str(col).strip().lower()
+            c = str(col).lower()
 
-            if "fecha" in col_str:
+            if "fecha" in c:
 
                 rename_map[col] = "FECHA"
 
-            elif (
-                "descrip" in col_str
-                or "concepto" in col_str
-            ):
-
-                rename_map[col] = "DESCRIPCION"
-
-            elif "referencia" in col_str:
+            elif "referencia" in c:
 
                 rename_map[col] = "REFERENCIA"
 
+            elif "descrip" in c:
+
+                rename_map[col] = "DESCRIPCION"
+
+            elif "monto" in c:
+
+                rename_map[col] = "MONTO_RAW"
+
         df = df.rename(columns=rename_map)
+
+        # ============================================
+        # VALIDAR COLUMNAS
+        # ============================================
+
+        for col in [
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "MONTO_RAW"
+        ]:
+
+            if col not in df.columns:
+
+                st.error(f"No existe columna: {col}")
+
+                return pd.DataFrame()
 
         # ============================================
         # FECHA
         # ============================================
 
-        if "FECHA" in df.columns:
-
-            df["FECHA"] = pd.to_datetime(
-                df["FECHA"],
-                errors="coerce"
-            )
-
-            df = df[
-                df["FECHA"].notna()
-            ]
-
-        # ============================================
-        # USAR COLUMNA MONTO ORIGINAL
-        # ============================================
-
-        monto_col = None
-
-        for col in df.columns:
-
-            if "monto" in str(col).lower():
-
-                monto_col = col
-                break
-
-        if monto_col is None:
-
-            st.error("No se encontró columna MONTO")
-
-            return pd.DataFrame()
-
-        # ============================================
-        # LIMPIAR MONTO
-        # ============================================
-
-        df["MONTO_RAW"] = (
-            df[monto_col]
-            .astype(str)
-            .str.strip()
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            errors="coerce"
         )
+
+        df = df[
+            df["FECHA"].notna()
+        ]
 
         # ============================================
         # TIPO
         # ============================================
 
-        df["TIPO"] = df["MONTO_RAW"].apply(
+        df["TIPO"] = df["MONTO_RAW"].astype(str).apply(
 
             lambda x: "NC"
-            if str(x).startswith("+")
+            if "+" in x
             else "ND"
         )
 
         # ============================================
-        # MONTO NUMERICO
+        # LIMPIAR MONTO
         # ============================================
 
         df["MONTO"] = (
 
             df["MONTO_RAW"]
+
+            .astype(str)
 
             .str.replace("+", "", regex=False)
 
@@ -707,6 +691,7 @@ def procesar_banesco(df):
 
             .str.replace(",", ".", regex=False)
 
+            .str.strip()
         )
 
         df["MONTO"] = pd.to_numeric(
@@ -726,8 +711,20 @@ def procesar_banesco(df):
             df["MONTO"] > 0
         ]
 
+        # ============================================
+        # COLUMNAS FINALES
+        # ============================================
+
+        df = df[[
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "TIPO",
+            "MONTO"
+        ]]
+
         st.success(
-            f"Banesco OK: {len(df)} registros"
+            f"Banesco OK: {len(df)} movimientos"
         )
 
         st.dataframe(df.head())
@@ -736,9 +733,7 @@ def procesar_banesco(df):
 
     except Exception as e:
 
-        st.error(
-            f"Error Banesco: {str(e)}"
-        )
+        st.error(f"Error Banesco: {str(e)}")
 
         return pd.DataFrame()
 
@@ -1518,69 +1513,17 @@ if archivo:
             usar_procesamiento_original = True
             
         elif banco == "banesco":
-            # BANESCO: leer como texto plano
+            # BANESCO: usar read_html porque son archivos HTML disfrazados
             try:
-                # ============================================
-                # LEER COMO TEXTO
-                # ============================================
-                contenido = archivo.read().decode(
-                    "latin-1",
-                    errors="ignore"
-                )
-                lineas = contenido.splitlines()
-                movimientos = []
-                for linea in lineas:
-                    texto = linea.strip()
-                    # Detectar líneas con movimientos
-                    if (
-                        (
-                            "/" in texto
-                            or "-" in texto
-                        )
-                        and (
-                            "+" in texto
-                            or "-" in texto
-                        )
-                    ):
-                        partes = texto.split()
-                        if len(partes) >= 4:
-                            try:
-                                fecha = partes[0]
-                                referencia = partes[1]
-                                monto_raw = partes[-2]
-                                descripcion = " ".join(
-                                    partes[2:-2]
-                                )
-                                tipo = (
-                                    "NC"
-                                    if "+"
-                                    in monto_raw
-                                    else "ND"
-                                )
-                                monto = (
-                                    monto_raw
-                                    .replace("+", "")
-                                    .replace("-", "")
-                                    .replace(".", "")
-                                    .replace(",", ".")
-                                )
-                                monto = float(monto)
-                                movimientos.append({
-                                    "FECHA": fecha,
-                                    "REFERENCIA": referencia,
-                                    "DESCRIPCION": descripcion,
-                                    "TIPO": tipo,
-                                    "MONTO": monto
-                                })
-                            except:
-                                continue
-                df_normalizado = pd.DataFrame(movimientos)
-                st.success(f"✓ Banesco: {len(df_normalizado)} movimientos")
-                st.dataframe(df_normalizado.head())
-                df_original = convertir_a_formato_mercantil(
-                    df_normalizado,
-                    banco
-                )
+                tablas = pd.read_html(archivo)
+                if len(tablas) == 0:
+                    st.error("No se encontraron tablas en Banesco")
+                    st.stop()
+                df_raw = tablas[0]
+                st.success(f"✓ Banesco: {len(df_raw)} registros encontrados")
+                st.dataframe(df_raw.head())
+                df_normalizado = procesar_banesco(df_raw)
+                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             except Exception as e:
                 st.error(f"Error leyendo Banesco: {str(e)}")
                 st.stop()
