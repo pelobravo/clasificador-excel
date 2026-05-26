@@ -1264,7 +1264,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA
+# PROCESAR BANCAMIGA - CON LIMPIEZA CORREGIDA DE NÚMEROS
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -1306,18 +1306,36 @@ def procesar_bancamiga(df):
             errors="coerce"
         )
 
-        df = df[df["FECHA"].notna()]
+        df = df[
+            df["FECHA"].notna()
+        ]
 
-        # Convertir numéricos
-        df["CREDITO"] = pd.to_numeric(
-            df["CREDITO"],
-            errors="coerce"
-        ).fillna(0)
+        # =========================================================
+        # LIMPIAR NUMEROS BANCAMIGA
+        # =========================================================
 
-        df["DEBITO"] = pd.to_numeric(
-            df["DEBITO"],
-            errors="coerce"
-        ).fillna(0)
+        def limpiar_numero_bancamiga(valor):
+
+            if pd.isna(valor):
+                return 0
+
+            valor = str(valor).strip()
+
+            valor = valor.replace(".", "")
+            valor = valor.replace(",", ".")
+
+            try:
+                return float(valor)
+            except:
+                return 0
+
+        df["CREDITO"] = df["CREDITO"].apply(
+            limpiar_numero_bancamiga
+        )
+
+        df["DEBITO"] = df["DEBITO"].apply(
+            limpiar_numero_bancamiga
+        )
 
         # Calcular monto
         df["MONTO"] = (
