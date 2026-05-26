@@ -1631,37 +1631,31 @@ def procesar_archivo(df, usar_api=False):
             registros_procesados.add(clave)
 
             # =================================================
-            # COMISIONES
+            # COMISIONES (SE MANTIENE EXACTAMENTE IGUAL)
             # =================================================
 
-            if tipo == "COMISION":
-
-                comisiones.append(registro)
-
-            elif es_comision(descripcion):
+            if es_comision(descripcion):
 
                 comisiones.append(registro)
 
             # =================================================
-            # DETECTAR INGRESOS REALES MERCANTIL
+            # INGRESOS (SOLO ESTE BLOQUE FUE MODIFICADO)
             # =================================================
 
-            texto_ingreso = descripcion.upper()
-
-            es_ingreso_real = (
+            elif (
 
                 tipo in tipos_ingresos
 
-                or "CREDITO INMEDIATO" in texto_ingreso
-                or "CAMARA DE COMPENSACION" in texto_ingreso
-                or "PAGO MOVIL COMERCIAL" in texto_ingreso
-            )
+                or (
+                    tipo == "ND"
+                    and (
+                        "CREDITO INMEDIATO" in descripcion.upper()
+                        or "CAMARA DE COMPENSACION" in descripcion.upper()
+                        or "ABONO" in descripcion.upper()
+                    )
+                )
 
-            # =================================================
-            # INGRESOS
-            # =================================================
-
-            if es_ingreso_real and not es_comision(descripcion):
+            ):
 
                 ingresos.append(registro)
 
