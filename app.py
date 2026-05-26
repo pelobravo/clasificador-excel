@@ -798,7 +798,7 @@ def procesar_banesco(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR PROVINCIAL (SIN CAMBIOS)
+# PROCESAR PROVINCIAL - CON DETECCIÓN DE TIPO REAL
 # =========================================================
 
 def procesar_provincial(df):
@@ -1455,7 +1455,7 @@ def formatear_fecha_para_clave(fecha_str):
         return fecha_str
 
 # =========================================================
-# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, SIN CAMBIOS)
+# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, CON CLASIFICACIÓN MEJORADA)
 # =========================================================
 
 def procesar_archivo(df, usar_api=False):
@@ -1630,13 +1630,29 @@ def procesar_archivo(df, usar_api=False):
 
             registros_procesados.add(clave)
 
-            if es_comision(descripcion):
+            # =================================================
+            # COMISIONES
+            # =================================================
+
+            if tipo == "COMISION":
 
                 comisiones.append(registro)
+
+            elif es_comision(descripcion):
+
+                comisiones.append(registro)
+
+            # =================================================
+            # INGRESOS
+            # =================================================
 
             elif tipo in tipos_ingresos:
 
                 ingresos.append(registro)
+
+            # =================================================
+            # EGRESOS
+            # =================================================
 
             elif tipo in tipos_egresos:
 
@@ -1725,7 +1741,7 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido
 
 # =========================================================
-# INTERFAZ PRINCIPAL
+# INTERFAZ PRINCIPAL - CON LECTURA MEJORADA DE PROVINCIAL
 # =========================================================
 
 df_ipago = None
@@ -1901,7 +1917,7 @@ if archivo:
                 st.stop()
             
         elif banco == "provincial":
-            # PROVINCIAL: parsear líneas de texto plano
+            # PROVINCIAL: parsear líneas de texto plano CON DETECCIÓN DE TIPO REAL
             try:
                 # Leer como texto plano latin-1
                 contenido = archivo.read().decode("latin-1")
@@ -1921,11 +1937,24 @@ if archivo:
                                 monto = convertir_monto(monto_raw)
                                 if monto is None:
                                     continue
+                                
+                                # =====================================================
+                                # DETECTAR TIPO REAL PROVINCIAL
+                                # =====================================================
+                                descripcion_upper = descripcion.upper()
+                                
+                                if es_comision(descripcion_upper):
+                                    tipo_mov = "COMISION"
+                                elif "CR./" in linea:
+                                    tipo_mov = "NC"
+                                else:
+                                    tipo_mov = "ND"
+                                
                                 movimientos.append({
                                     "FECHA": fecha,
                                     "REFERENCIA": referencia,
                                     "DESCRIPCION": descripcion,
-                                    "TIPO": "ND",
+                                    "TIPO": tipo_mov,
                                     "MONTO": abs(monto)
                                 })
                             except:
