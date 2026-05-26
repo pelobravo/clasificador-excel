@@ -1455,7 +1455,7 @@ def formatear_fecha_para_clave(fecha_str):
         return fecha_str
 
 # =========================================================
-# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, CON CLASIFICACIÓN MEJORADA)
+# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, CON CLASIFICACIÓN MEJORADA DE INGRESOS)
 # =========================================================
 
 def procesar_archivo(df, usar_api=False):
@@ -1643,10 +1643,25 @@ def procesar_archivo(df, usar_api=False):
                 comisiones.append(registro)
 
             # =================================================
+            # DETECTAR INGRESOS REALES MERCANTIL
+            # =================================================
+
+            texto_ingreso = descripcion.upper()
+
+            es_ingreso_real = (
+
+                tipo in tipos_ingresos
+
+                or "CREDITO INMEDIATO" in texto_ingreso
+                or "CAMARA DE COMPENSACION" in texto_ingreso
+                or "PAGO MOVIL COMERCIAL" in texto_ingreso
+            )
+
+            # =================================================
             # INGRESOS
             # =================================================
 
-            elif tipo in tipos_ingresos:
+            if es_ingreso_real and not es_comision(descripcion):
 
                 ingresos.append(registro)
 
