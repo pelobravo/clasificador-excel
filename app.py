@@ -1325,7 +1325,7 @@ def procesar_bancamiga(df):
         ]
 
         # =========================================================
-        # LIMPIAR NUMEROS BANCAMIGA - NORMALIZACIÓN POR DECIMALES REALES
+        # LIMPIAR NUMEROS BANCAMIGA - SOLUCIÓN DEFINITIVA
         # =========================================================
 
         def limpiar_numero_bancamiga(valor):
@@ -1333,49 +1333,62 @@ def procesar_bancamiga(df):
             if pd.isna(valor):
                 return 0
 
-            valor_original = valor
-
-            valor = str(valor).strip()
-
-            valor = valor.replace(" ", "")
-
-            # =========================================
-            # FORMATO EUROPEO
-            # 21.844,76
-            # =========================================
-
-            if "." in valor and "," in valor:
-
-                valor = valor.replace(".", "")
-                valor = valor.replace(",", ".")
-
-            # =========================================
-            # FORMATO SOLO COMA
-            # 21844,76
-            # =========================================
-
-            elif "," in valor:
-
-                valor = valor.replace(",", ".")
-
             try:
+
+                # =========================================
+                # SI YA ES NUMÉRICO
+                # =========================================
+
+                if isinstance(valor, (int, float)):
+
+                    numero = float(valor)
+
+                    # =====================================
+                    # BANCAMIGA A VECES ELIMINA DECIMALES
+                    # EJEMPLO:
+                    # 1000000  ->  10000.00
+                    # =====================================
+
+                    if (
+                        isinstance(valor, int)
+                        and numero >= 100000
+                    ):
+
+                        numero = numero / 100
+
+                    return numero
+
+                # =========================================
+                # SI VIENE COMO TEXTO
+                # =========================================
+
+                valor = str(valor).strip()
+
+                valor = valor.replace(" ", "")
+
+                # FORMATO EUROPEO
+                # 21.844,76
+
+                if "." in valor and "," in valor:
+
+                    valor = valor.replace(".", "")
+                    valor = valor.replace(",", ".")
+
+                # FORMATO 21844,76
+
+                elif "," in valor:
+
+                    valor = valor.replace(",", ".")
 
                 numero = float(valor)
 
                 # =====================================
-                # DETECTAR NUMEROS INFLADOS
+                # DETECTAR ENTEROS INFLADOS
                 # =====================================
 
-                texto_original = str(valor_original)
-
-                # Si NO tenía coma decimal original
-                # y termina en .0
-                # probablemente Excel destruyó los decimales
-
                 if (
-                    "," not in texto_original
-                    and ".0" in texto_original
-                    and numero > 100000
+                    "." not in valor
+                    and numero >= 100000
                 ):
 
                     numero = numero / 100
