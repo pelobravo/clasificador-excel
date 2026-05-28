@@ -1311,7 +1311,7 @@ def procesar_bancamiga(df):
         ]
 
         # =========================================================
-        # LIMPIAR NUMEROS BANCAMIGA - VERSIÓN MEJORADA
+        # LIMPIAR NUMEROS BANCAMIGA - VERSIÓN FINAL CORRECTA
         # =========================================================
 
         def limpiar_numero_bancamiga(valor):
@@ -1319,13 +1319,13 @@ def procesar_bancamiga(df):
             if pd.isna(valor):
                 return 0
 
-            # Si ya viene numérico desde Excel
+            # Si Excel ya lo interpreta como número
             if isinstance(valor, (int, float)):
                 return float(valor)
 
             valor = str(valor).strip()
 
-            # SOLO limpiar separador de miles si existe coma decimal
+            # SOLO para textos tipo 1.234,56
             if "," in valor and "." in valor:
                 valor = valor.replace(".", "")
                 valor = valor.replace(",", ".")
@@ -1467,7 +1467,7 @@ def formatear_fecha_para_clave(fecha_str):
         return fecha_str
 
 # =========================================================
-# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, CON CLASIFICACIÓN MEJORADA DE INGRESOS)
+# PROCESAMIENTO MERCANTIL ORIGINAL (COMPLETO, SIN REGLAS ESPECIALES)
 # =========================================================
 
 def procesar_archivo(df, usar_api=False):
@@ -1643,7 +1643,7 @@ def procesar_archivo(df, usar_api=False):
             registros_procesados.add(clave)
 
             # =================================================
-            # COMISIONES (SE MANTIENE EXACTAMENTE IGUAL)
+            # COMISIONES
             # =================================================
 
             if es_comision(descripcion):
@@ -1651,23 +1651,10 @@ def procesar_archivo(df, usar_api=False):
                 comisiones.append(registro)
 
             # =================================================
-            # INGRESOS (SOLO ESTE BLOQUE FUE MODIFICADO)
+            # INGRESOS - SOLO POR TIPO (sin reglas especiales)
             # =================================================
 
-            elif (
-
-                tipo in tipos_ingresos
-
-                or (
-                    tipo == "ND"
-                    and (
-                        "CREDITO INMEDIATO" in descripcion.upper()
-                        or "CAMARA DE COMPENSACION" in descripcion.upper()
-                        or "ABONO" in descripcion.upper()
-                    )
-                )
-
-            ):
+            elif tipo in tipos_ingresos:
 
                 ingresos.append(registro)
 
