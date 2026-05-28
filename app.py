@@ -194,13 +194,30 @@ def convertir_monto(valor):
             return None
 
         # =========================================
-        # SI YA ES NUMÉRICO, NO TOCARLO
+        # SI YA ES NUMÉRICO
         # =========================================
 
         if isinstance(valor, (int, float)):
-            return float(valor)
 
-        valor = str(valor).strip()
+            numero = float(valor)
+
+            # =====================================
+            # CORRECCIÓN BANCAMIGA
+            # ENTEROS GRANDES SIN DECIMALES
+            # =====================================
+
+            if (
+                isinstance(valor, int)
+                and numero >= 100000
+            ):
+
+                numero = numero / 100
+
+            return numero
+
+        valor_original = str(valor).strip()
+
+        valor = valor_original
 
         valor = valor.replace(" ", "")
         valor = valor.replace("$", "")
@@ -229,7 +246,21 @@ def convertir_monto(valor):
 
             valor = valor.replace(",", ".")
 
-        return float(valor)
+        numero = float(valor)
+
+        # =====================================
+        # ENTEROS INFLADOS
+        # =====================================
+
+        if (
+            "." not in valor_original
+            and "," not in valor_original
+            and numero >= 100000
+        ):
+
+            numero = numero / 100
+
+        return numero
 
     except Exception:
 
@@ -1325,7 +1356,7 @@ def procesar_bancamiga(df):
         ]
 
         # =========================================================
-        # LIMPIAR NUMEROS BANCAMIGA - SOLUCIÓN DEFINITIVA
+        # LIMPIAR NUMEROS BANCAMIGA - USANDO LA MISMA LÓGICA DE CONVERTIR_MONTO
         # =========================================================
 
         def limpiar_numero_bancamiga(valor):
@@ -1344,9 +1375,8 @@ def procesar_bancamiga(df):
                     numero = float(valor)
 
                     # =====================================
-                    # BANCAMIGA A VECES ELIMINA DECIMALES
-                    # EJEMPLO:
-                    # 1000000  ->  10000.00
+                    # CORRECCIÓN BANCAMIGA
+                    # ENTEROS GRANDES SIN DECIMALES
                     # =====================================
 
                     if (
@@ -1358,23 +1388,32 @@ def procesar_bancamiga(df):
 
                     return numero
 
-                # =========================================
-                # SI VIENE COMO TEXTO
-                # =========================================
+                valor_original = str(valor).strip()
 
-                valor = str(valor).strip()
+                valor = valor_original
 
                 valor = valor.replace(" ", "")
+                valor = valor.replace("$", "")
+                valor = valor.replace("Bs", "")
+                valor = valor.replace("€", "")
 
+                if valor == "":
+                    return 0
+
+                # =========================================
                 # FORMATO EUROPEO
                 # 21.844,76
+                # =========================================
 
                 if "." in valor and "," in valor:
 
                     valor = valor.replace(".", "")
                     valor = valor.replace(",", ".")
 
-                # FORMATO 21844,76
+                # =========================================
+                # FORMATO SOLO COMA
+                # 21844,76
+                # =========================================
 
                 elif "," in valor:
 
@@ -1383,11 +1422,12 @@ def procesar_bancamiga(df):
                 numero = float(valor)
 
                 # =====================================
-                # DETECTAR ENTEROS INFLADOS
+                # ENTEROS INFLADOS
                 # =====================================
 
                 if (
-                    "." not in valor
+                    "." not in valor_original
+                    and "," not in valor_original
                     and numero >= 100000
                 ):
 
