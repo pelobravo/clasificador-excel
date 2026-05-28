@@ -1325,7 +1325,7 @@ def procesar_bancamiga(df):
         ]
 
         # =========================================================
-        # LIMPIAR NUMEROS BANCAMIGA - VERSIÓN FINAL CORRECTA
+        # LIMPIAR NUMEROS BANCAMIGA - NORMALIZACIÓN POR DECIMALES REALES
         # =========================================================
 
         def limpiar_numero_bancamiga(valor):
@@ -1333,53 +1333,54 @@ def procesar_bancamiga(df):
             if pd.isna(valor):
                 return 0
 
-            # =========================================
-            # SI YA ES NUMERO REAL DE EXCEL
-            # =========================================
-
-            if isinstance(valor, (int, float)):
-
-                valor = float(valor)
-
-                # VALIDAR SI VIENE INFLADO
-                # Ejemplo:
-                # 2505233661 -> debe ser 250523.3661
-
-                if valor > 100000000:
-
-                    valor = valor / 10000
-
-                return valor
-
-            # =========================================
-            # SI VIENE TEXTO
-            # =========================================
+            valor_original = valor
 
             valor = str(valor).strip()
 
             valor = valor.replace(" ", "")
 
-            # FORMATO 250.523,3661
+            # =========================================
+            # FORMATO EUROPEO
+            # 21.844,76
+            # =========================================
+
             if "." in valor and "," in valor:
 
                 valor = valor.replace(".", "")
                 valor = valor.replace(",", ".")
 
-            # FORMATO 250523,3661
+            # =========================================
+            # FORMATO SOLO COMA
+            # 21844,76
+            # =========================================
+
             elif "," in valor:
 
                 valor = valor.replace(",", ".")
 
             try:
 
-                valor = float(valor)
+                numero = float(valor)
 
-                # VALIDAR SI QUEDÓ INFLADO
-                if valor > 100000000:
+                # =====================================
+                # DETECTAR NUMEROS INFLADOS
+                # =====================================
 
-                    valor = valor / 10000
+                texto_original = str(valor_original)
 
-                return valor
+                # Si NO tenía coma decimal original
+                # y termina en .0
+                # probablemente Excel destruyó los decimales
+
+                if (
+                    "," not in texto_original
+                    and ".0" in texto_original
+                    and numero > 100000
+                ):
+
+                    numero = numero / 100
+
+                return numero
 
             except:
 
