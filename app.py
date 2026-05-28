@@ -2485,7 +2485,8 @@ Por favor cargue el archivo ORIGINAL del banco.
                         hoja.cell(row=fila_data, column=5).value = row["TASA BCV"]
                         hoja.cell(row=fila_data, column=6).value = row["MONTO USD"]
 
-                        hoja.cell(row=fila_data, column=4).number_format = '#,##0.00'
+                        # FORMATO MODIFICADO: de '#,##0.00' a '0.0000'
+                        hoja.cell(row=fila_data, column=4).number_format = '0.0000'
                         hoja.cell(row=fila_data, column=5).number_format = '#,##0.0000'
                         hoja.cell(row=fila_data, column=6).number_format = '$#,##0.00'
 
@@ -2509,7 +2510,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                         bold=True
                     )
 
-                    # TOTAL BS
+                    # TOTAL BS - FORMATO MODIFICADO: de '#,##0.00' a '0.0000'
                     total_bs_cell = hoja.cell(
                         row=fila_data,
                         column=4
@@ -2519,7 +2520,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                         "MONTO BS"
                     ].sum()
 
-                    total_bs_cell.number_format = '#,##0.00'
+                    total_bs_cell.number_format = '0.0000'
                     total_bs_cell.fill = color_total
 
                     # TOTAL USD
