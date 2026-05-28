@@ -1311,7 +1311,7 @@ def procesar_bancamiga(df):
         ]
 
         # =========================================================
-        # LIMPIAR NUMEROS BANCAMIGA
+        # LIMPIAR NUMEROS BANCAMIGA - VERSIÓN MEJORADA
         # =========================================================
 
         def limpiar_numero_bancamiga(valor):
@@ -1319,14 +1319,24 @@ def procesar_bancamiga(df):
             if pd.isna(valor):
                 return 0
 
+            # Si ya viene numérico desde Excel
+            if isinstance(valor, (int, float)):
+                return float(valor)
+
             valor = str(valor).strip()
 
-            valor = valor.replace(".", "")
-            valor = valor.replace(",", ".")
+            # SOLO limpiar separador de miles si existe coma decimal
+            if "," in valor and "." in valor:
+                valor = valor.replace(".", "")
+                valor = valor.replace(",", ".")
+
+            elif "," in valor:
+                valor = valor.replace(",", ".")
 
             try:
                 return float(valor)
-            except:
+
+            except Exception:
                 return 0
 
         df["CREDITO"] = df["CREDITO"].apply(
@@ -1891,7 +1901,7 @@ if archivo:
                         df_raw = pd.read_excel(
                             archivo,
                             engine="xlrd",
-                            header=0
+                            header=5
                         )
 
                     else:
