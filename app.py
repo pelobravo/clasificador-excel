@@ -193,6 +193,10 @@ def convertir_monto(valor):
         if pd.isna(valor):
             return None
 
+        # =========================================
+        # SI YA ES NUMÉRICO, NO TOCARLO
+        # =========================================
+
         if isinstance(valor, (int, float)):
             return float(valor)
 
@@ -206,10 +210,20 @@ def convertir_monto(valor):
         if valor == "":
             return None
 
+        # =========================================
+        # FORMATO EUROPEO
+        # 1.234,56
+        # =========================================
+
         if "." in valor and "," in valor:
 
             valor = valor.replace(".", "")
             valor = valor.replace(",", ".")
+
+        # =========================================
+        # FORMATO CON COMA DECIMAL
+        # 1234,56
+        # =========================================
 
         elif "," in valor:
 
