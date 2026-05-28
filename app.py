@@ -1333,24 +1333,56 @@ def procesar_bancamiga(df):
             if pd.isna(valor):
                 return 0
 
-            # Si Excel ya lo interpreta como número
+            # =========================================
+            # SI YA ES NUMERO REAL DE EXCEL
+            # =========================================
+
             if isinstance(valor, (int, float)):
-                return float(valor)
+
+                valor = float(valor)
+
+                # VALIDAR SI VIENE INFLADO
+                # Ejemplo:
+                # 2505233661 -> debe ser 250523.3661
+
+                if valor > 100000000:
+
+                    valor = valor / 10000
+
+                return valor
+
+            # =========================================
+            # SI VIENE TEXTO
+            # =========================================
 
             valor = str(valor).strip()
 
-            # SOLO para textos tipo 1.234,56
-            if "," in valor and "." in valor:
+            valor = valor.replace(" ", "")
+
+            # FORMATO 250.523,3661
+            if "." in valor and "," in valor:
+
                 valor = valor.replace(".", "")
                 valor = valor.replace(",", ".")
 
+            # FORMATO 250523,3661
             elif "," in valor:
+
                 valor = valor.replace(",", ".")
 
             try:
-                return float(valor)
 
-            except Exception:
+                valor = float(valor)
+
+                # VALIDAR SI QUEDÓ INFLADO
+                if valor > 100000000:
+
+                    valor = valor / 10000
+
+                return valor
+
+            except:
+
                 return 0
 
         df["CREDITO"] = df["CREDITO"].apply(
@@ -2485,8 +2517,8 @@ Por favor cargue el archivo ORIGINAL del banco.
                         hoja.cell(row=fila_data, column=5).value = row["TASA BCV"]
                         hoja.cell(row=fila_data, column=6).value = row["MONTO USD"]
 
-                        # FORMATO MODIFICADO: de '#,##0.00' a '0.0000'
-                        hoja.cell(row=fila_data, column=4).number_format = '0.0000'
+                        # FORMATO ORIGINAL RESTAURADO
+                        hoja.cell(row=fila_data, column=4).number_format = '#,##0.00'
                         hoja.cell(row=fila_data, column=5).number_format = '#,##0.0000'
                         hoja.cell(row=fila_data, column=6).number_format = '$#,##0.00'
 
@@ -2510,7 +2542,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                         bold=True
                     )
 
-                    # TOTAL BS - FORMATO MODIFICADO: de '#,##0.00' a '0.0000'
+                    # TOTAL BS - FORMATO ORIGINAL RESTAURADO
                     total_bs_cell = hoja.cell(
                         row=fila_data,
                         column=4
@@ -2520,7 +2552,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                         "MONTO BS"
                     ].sum()
 
-                    total_bs_cell.number_format = '0.0000'
+                    total_bs_cell.number_format = '#,##0.00'
                     total_bs_cell.fill = color_total
 
                     # TOTAL USD
