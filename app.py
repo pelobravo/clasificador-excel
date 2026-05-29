@@ -2074,6 +2074,8 @@ if archivo:
                 lineas = contenido.splitlines()
 
                 referencia_actual = ""
+                leyendo_movimiento = False
+                descripcion = ""
 
                 for linea in lineas:
 
@@ -2110,12 +2112,27 @@ if archivo:
                     ):
 
                         descripcion = linea
-
+                        leyendo_movimiento = True
                         continue
 
                     # =========================================
                     # FECHA + MONTO
                     # =========================================
+
+                    if not leyendo_movimiento:
+                        continue
+
+                    # =========================================
+                    # FILTRAR SALDOS
+                    # =========================================
+
+                    texto_upper = linea.upper()
+
+                    if (
+                        "SALDO INICIAL" in texto_upper
+                        or "SALDO FINAL" in texto_upper
+                    ):
+                        continue
 
                     fecha_match = re.search(
                         r"(\d{2}-\d{2}-\d{4})",
@@ -2184,6 +2201,10 @@ if archivo:
                             "MONTO": abs(monto)
 
                         })
+
+                        # Resetear flag para seguir buscando próximos movimientos
+                        leyendo_movimiento = False
+                        descripcion = ""
 
                 df_normalizado = pd.DataFrame(
                     movimientos
