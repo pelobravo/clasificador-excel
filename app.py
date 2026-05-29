@@ -293,12 +293,14 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# DETECTAR COMISIONES
+# DETECTAR COMISIONES - VERSIÓN MEJORADA
 # =========================================================
 
 def es_comision(texto):
 
     texto = str(texto).lower()
+
+    texto = texto.strip()
 
     palabras = [
 
@@ -331,7 +333,24 @@ def es_comision(texto):
         "com pago",
         "com pago otr",
         "com pago otr bcos",
-        "comision pago proveedores"
+        "comision pago proveedores",
+
+        "descuento tarjeta",
+        "descuento de tarjeta",
+        "comision tarjeta",
+        "comisión tarjeta",
+        "cargo tarjeta",
+        "retencion tarjeta",
+        "retención tarjeta",
+        "comision punto de venta",
+        "comisión punto de venta",
+        "punto de venta",
+        "comision pos",
+        "comisión pos",
+        "descuento pos",
+        "cargo por servicio",
+        "cargo por transaccion",
+        "cargo por transacción",
     ]
 
     return any(
@@ -1316,7 +1335,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA - CON LIMPIEZA CORREGIDA DE NÚMEROS
+# PROCESAR BANCAMIGA - CON DETECCIÓN DE ENCABEZADO REAL
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -1324,6 +1343,40 @@ def procesar_bancamiga(df):
     st.info("Procesando Bancamiga...")
 
     try:
+
+        # ============================================
+        # BUSCAR ENCABEZADO REAL
+        # ============================================
+
+        encabezado = None
+
+        for i in range(min(15, len(df))):
+
+            fila = df.iloc[i].fillna("").astype(str)
+
+            texto = " ".join(fila.tolist()).lower()
+
+            if (
+                "fecha" in texto
+                and "referencia" in texto
+                and "concepto" in texto
+            ):
+
+                encabezado = i
+                break
+
+        if encabezado is not None:
+
+            df.columns = df.iloc[encabezado]
+
+            df = df.iloc[
+                encabezado + 1:
+            ].reset_index(drop=True)
+
+            df.columns = [
+                str(c).strip()
+                for c in df.columns
+            ]
 
         # Aplanar columnas multinivel
         if isinstance(df.columns, pd.MultiIndex):
