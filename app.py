@@ -2027,54 +2027,178 @@ if archivo:
                 st.stop()
             
         elif banco == "provincial":
-            # PROVINCIAL: parsear líneas de texto plano CON DETECCIÓN DE TIPO REAL
+
             try:
-                # Leer como texto plano latin-1
-                contenido = archivo.read().decode("latin-1")
-                lineas = contenido.splitlines()
+
                 movimientos = []
+
+                # =====================================================
+                # INTENTO 1 - LEER COMO TEXTO
+                # =====================================================
+
+                archivo.seek(0)
+
+                try:
+
+                    contenido = archivo.read().decode(
+                        "latin-1",
+                        errors="ignore"
+                    )
+
+                except:
+
+                    archivo.seek(0)
+
+                    contenido = archivo.read().decode(
+                        "utf-8",
+                        errors="ignore"
+                    )
+
+                lineas = contenido.splitlines()
+
+                referencia_actual = ""
+
                 for linea in lineas:
+
                     linea = linea.strip()
-                    # Detectar líneas con movimientos
-                    if "CR./" in linea or "TRAE" in linea or "COMIS." in linea:
-                        partes = linea.split()
-                        if len(partes) >= 6:
-                            try:
-                                fecha = partes[0]
-                                referencia = partes[3].replace("'", "")
-                                descripcion = " ".join(partes[4:-2])
-                                monto_raw = partes[-2]
-                                monto = convertir_monto(monto_raw)
-                                if monto is None:
-                                    continue
-                                
-                                # =====================================================
-                                # DETECTAR TIPO REAL PROVINCIAL
-                                # =====================================================
-                                descripcion_upper = descripcion.upper()
-                                
-                                if es_comision(descripcion_upper):
-                                    tipo_mov = "COMISION"
-                                elif "CR./" in linea:
-                                    tipo_mov = "NC"
-                                else:
-                                    tipo_mov = "ND"
-                                
-                                movimientos.append({
-                                    "FECHA": fecha,
-                                    "REFERENCIA": referencia,
-                                    "DESCRIPCION": descripcion,
-                                    "TIPO": tipo_mov,
-                                    "MONTO": abs(monto)
-                                })
-                            except:
-                                continue
-                df_normalizado = pd.DataFrame(movimientos)
-                st.success(f"✓ Provincial: {len(df_normalizado)} movimientos detectados")
-                st.dataframe(df_normalizado.head())
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+
+                    if not linea:
+                        continue
+
+                    # =========================================
+                    # REFERENCIA
+                    # =========================================
+
+                    if re.search(r"'?\d{8,20}", linea):
+
+                        match = re.search(
+                            r"(\d{8,20})",
+                            linea
+                        )
+
+                        if match:
+
+                            referencia_actual = match.group(1)
+
+                    # =========================================
+                    # MOVIMIENTO
+                    # =========================================
+
+                    if (
+                        "TRAV" in linea.upper()
+                        or "CR./" in linea.upper()
+                        or "COMIS" in linea.upper()
+                        or "PAGO" in linea.upper()
+                        or "TRANSFER" in linea.upper()
+                    ):
+
+                        descripcion = linea
+
+                        continue
+
+                    # =========================================
+                    # FECHA + MONTO
+                    # =========================================
+
+                    fecha_match = re.search(
+                        r"(\d{2}-\d{2}-\d{4})",
+                        linea
+                    )
+
+                    monto_match = re.search(
+                        r"([\d\.]+,\d{2})",
+                        linea
+                    )
+
+                    if fecha_match and monto_match:
+
+                        fecha = fecha_match.group(1)
+
+                        monto_txt = monto_match.group(1)
+
+                        monto = convertir_monto(
+                            monto_txt
+                        )
+
+                        if monto is None:
+                            continue
+
+                        descripcion_final = (
+                            descripcion
+                            if 'descripcion' in locals()
+                            else ""
+                        )
+
+                        descripcion_upper = (
+                            descripcion_final.upper()
+                        )
+
+                        # =====================================
+                        # TIPO
+                        # =====================================
+
+                        if es_comision(
+                            descripcion_upper
+                        ):
+
+                            tipo = "COMISION"
+
+                        elif (
+                            "TRAV" in descripcion_upper
+                            or "CR./" in descripcion_upper
+                        ):
+
+                            tipo = "NC"
+
+                        else:
+
+                            tipo = "ND"
+
+                        movimientos.append({
+
+                            "FECHA": fecha,
+
+                            "REFERENCIA": referencia_actual,
+
+                            "DESCRIPCION": descripcion_final,
+
+                            "TIPO": tipo,
+
+                            "MONTO": abs(monto)
+
+                        })
+
+                df_normalizado = pd.DataFrame(
+                    movimientos
+                )
+
+                st.success(
+                    f"✓ Provincial: {len(df_normalizado)} movimientos detectados"
+                )
+
+                st.dataframe(
+                    df_normalizado.head()
+                )
+
+                if df_normalizado.empty:
+
+                    st.error(
+                        "No se detectaron movimientos válidos en Provincial."
+                    )
+
+                    st.stop()
+
+                df_original = convertir_a_formato_mercantil(
+                    df_normalizado,
+                    banco
+                )
+
             except Exception as e:
-                st.error(f"Error leyendo Provincial: {str(e)}")
+
+                st.error(
+                    f"Error leyendo Provincial: {str(e)}"
+                )
+
                 st.stop()
             
         else:
@@ -2118,6 +2242,13 @@ if archivo:
         # ============================================
         # FILTRAR POR FECHAS - CORREGIDO
         # ============================================
+
+        # Verificar que hay datos antes de filtrar
+        if df_original.empty:
+            st.error(
+                "No se detectaron movimientos para procesar."
+            )
+            st.stop()
 
         try:
             if banco == "mercantil":
