@@ -363,7 +363,10 @@ def detectar_banco(nombre_archivo):
     # BANESCO
     # =====================================
 
-    elif "BANESCO" in nombre:
+    elif (
+        "BANESCO" in nombre
+        or re.match(r"^J\d+", nombre_archivo)
+    ):
 
         return "banesco"
 
@@ -693,12 +696,16 @@ def procesar_banesco(df):
     try:
 
         # ============================================
-        # USAR PRIMERA FILA COMO ENCABEZADO
+        # DEFINIR COLUMNAS DIRECTAMENTE (sin usar primera fila como header)
         # ============================================
 
-        df.columns = df.iloc[0]
-
-        df = df.iloc[1:].reset_index(drop=True)
+        df.columns = [
+            "FECHA",
+            "REFERENCIA",
+            "DESCRIPCION",
+            "MONTO_RAW",
+            "BALANCE"
+        ]
 
         # ============================================
         # LIMPIAR COLUMNAS
@@ -1867,7 +1874,17 @@ if archivo:
         # =========================================================
         # DETECTAR BANCO
         # =========================================================
-        banco = detectar_banco(archivo.name)
+        
+        # SOLUCIÓN 2: Detectar por contenido HTML
+        archivo.seek(0)
+        primeros_bytes = archivo.read(100)
+        archivo.seek(0)
+        
+        if b"<table" in primeros_bytes.lower():
+            banco = "banesco"
+        else:
+            banco = detectar_banco(archivo.name)
+        
         # st.info(f"🏦 Banco detectado: **{banco.upper()}**")
         
         # =========================================================
