@@ -2347,9 +2347,9 @@ if archivo:
 
         try:
             if banco == "mercantil":
-                # Mercantil usa formato "ddmmyyyy" (ej: 14052026)
+                # 🔥 CORREGIDO: Aplicar zfill(8) para fechas con 7 dígitos
                 fechas_convertidas = pd.to_datetime(
-                    df_original[3],
+                    df_original[3].astype(str).str.zfill(8),
                     format="%d%m%Y",
                     errors="coerce"
                 )
