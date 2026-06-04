@@ -2301,6 +2301,16 @@ if archivo:
             # Leer sin encabezados para procesar correctamente
             df_raw = leer_excel_sin_encabezados(archivo)
             
+            # ============================================
+            # DEBUG ANTES DE PROCESAR
+            # ============================================
+            st.write("🔍 DEBUG ANTES DE PROCESAR")
+            st.write("Shape:", df_raw.shape)
+            st.write("Columnas:")
+            st.write(list(df_raw.columns))
+            st.write("Primeras filas:")
+            st.dataframe(df_raw.head(10))
+            
             # Procesar con función mejorada
             df_normalizado = procesar_venezuela(df_raw)
             
