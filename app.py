@@ -2302,13 +2302,18 @@ if archivo:
             df_raw = leer_excel_sin_encabezados(archivo)
             
             # ============================================
-            # DEBUG ANTES DE PROCESAR
+            # DEBUG ANTES DE LLAMAR A procesar_venezuela
             # ============================================
-            st.write("🔍 DEBUG ANTES DE PROCESAR")
+            st.write("=== DEBUG ANTES DE PROCESAR VENEZUELA ===")
             st.write("Shape:", df_raw.shape)
-            st.write("Columnas:")
-            st.write(list(df_raw.columns))
-            st.write("Primeras filas:")
+            
+            try:
+                st.write("Columnas:")
+                st.write(list(df_raw.columns))
+            except:
+                pass
+            
+            st.write("Primeras 10 filas:")
             st.dataframe(df_raw.head(10))
             
             # Procesar con función mejorada
