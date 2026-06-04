@@ -444,7 +444,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN MEJORADA CON dayfirst=True
+# PROCESAR VENEZUELA - VERSIÓN MEJORADA CON dayfirst=True Y DEBUG
 # =========================================================
 
 def procesar_venezuela(df):
@@ -663,6 +663,19 @@ def procesar_venezuela(df):
         
         df_resultado = pd.DataFrame(movimientos)
         
+        # ============================================
+        # DEBUG: Mostrar información antes de retornar
+        # ============================================
+        st.write("🔍 DEBUG VENEZUELA:")
+        st.write("Columnas detectadas:", list(df_resultado.columns))
+        st.write("Cantidad de registros:", len(df_resultado))
+        
+        if len(df_resultado) > 0:
+            st.write("Vista previa de los primeros 5 registros:")
+            st.dataframe(df_resultado.head(10))
+        else:
+            st.warning("⚠️ No se encontraron movimientos válidos")
+        
         if df_resultado.empty:
             st.error("❌ No se encontraron movimientos válidos en el archivo.")
             st.info("""
@@ -679,7 +692,6 @@ def procesar_venezuela(df):
             return pd.DataFrame()
         
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
-        st.dataframe(df_resultado.head(10))
         
         return df_resultado
         
