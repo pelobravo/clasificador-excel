@@ -444,70 +444,26 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN MEJORADA CON dayfirst=True Y DEBUG
+# PROCESAR VENEZUELA - VERSIÓN MODIFICADA (CON ENCABEZADOS DIRECTOS)
 # =========================================================
 
 def procesar_venezuela(df):
-    """Procesa archivo del Banco de Venezuela - VERSIÓN MEJORADA"""
+    """Procesa archivo del Banco de Venezuela - VERSIÓN MODIFICADA"""
     
     st.info("Procesando Banco de Venezuela...")
     
     try:
         # ============================================
-        # BUSCAR FILA DE ENCABEZADO REAL
-        # ============================================
-        encabezado = None
-        
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i].fillna("").astype(str)
-            texto = " ".join(fila.tolist()).lower()
-            
-            # Buscar palabras clave que identifican el encabezado
-            if (
-                ("fecha" in texto or "fec" in texto) and
-                ("referencia" in texto or "ref" in texto) and
-                ("descripcion" in texto or "concepto" in texto or "descripción" in texto)
-            ):
-                encabezado = i
-                break
-        
-        # Si no se encuentra, buscar otras palabras clave
-        if encabezado is None:
-            for i in range(min(30, len(df))):
-                fila = df.iloc[i].fillna("").astype(str)
-                texto = " ".join(fila.tolist()).lower()
-                if ("crédito" in texto or "credito" in texto) and ("débito" in texto or "debito" in texto):
-                    encabezado = i
-                    break
-        
-        # Si aún no se encuentra, usar primera fila como header
-        if encabezado is None:
-            encabezado = 0
-            st.warning("No se encontró encabezado claro, usando primera fila como referencia")
-        
-        # ============================================
-        # LIMPIAR Y ASIGNAR COLUMNAS
+        # EL ARCHIVO YA VIENE CON ENCABEZADOS
         # ============================================
         
-        # Obtener encabezados
-        headers = df.iloc[encabezado].fillna("").astype(str).tolist()
-        headers = [h.strip() for h in headers]
+        df.columns = [
+            str(c).strip()
+            for c in df.columns
+        ]
         
-        # Crear headers únicos
-        headers_unicos = []
-        contador = {}
-        
-        for h in headers:
-            if h in contador:
-                contador[h] += 1
-                nuevo = f"{h}_{contador[h]}"
-            else:
-                contador[h] = 0
-                nuevo = h if h != "" else f"COL_{len(headers_unicos)}"
-            headers_unicos.append(nuevo)
-        
-        df.columns = headers_unicos
-        df = df.iloc[encabezado + 1:].reset_index(drop=True)
+        st.write("Columnas originales:")
+        st.write(df.columns.tolist())
         
         # ============================================
         # DETECTAR COLUMNAS POR NOMBRE O CONTENIDO
@@ -543,14 +499,22 @@ def procesar_venezuela(df):
                 if "descrip" in col_lower or "concepto" in col_lower or "detalle" in col_lower:
                     col_desc = col
             
-            # Crédito / Haber
+            # Crédito / Haber (con y sin tilde)
             if col_credito is None:
-                if "credito" in col_lower or "haber" in col_lower or "abono" in col_lower:
+                if (
+                    "credito" in col_lower
+                    or "crédito" in col_lower
+                    or "haber" in col_lower
+                ):
                     col_credito = col
             
-            # Débito / Debe
+            # Débito / Debe (con y sin tilde)
             if col_debito is None:
-                if "debito" in col_lower or "debe" in col_lower or "cargo" in col_lower:
+                if (
+                    "debito" in col_lower
+                    or "débito" in col_lower
+                    or "cargo" in col_lower
+                ):
                     col_debito = col
             
             # Tipo de movimiento
@@ -671,7 +635,7 @@ def procesar_venezuela(df):
         st.write("Cantidad de registros:", len(df_resultado))
         
         if len(df_resultado) > 0:
-            st.write("Vista previa de los primeros 5 registros:")
+            st.write("Vista previa de los primeros registros:")
             st.dataframe(df_resultado.head(10))
         else:
             st.warning("⚠️ No se encontraron movimientos válidos")
