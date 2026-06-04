@@ -444,7 +444,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# PROCESAR VENEZUELA - VERSIÓN MEJORADA
+# PROCESAR VENEZUELA - VERSIÓN MEJORADA CON dayfirst=True
 # =========================================================
 
 def procesar_venezuela(df):
@@ -566,14 +566,12 @@ def procesar_venezuela(df):
         
         for idx, fila in df.iterrows():
             try:
-                # FECHA
+                # FECHA - CORREGIDO CON dayfirst=True
                 fecha_val = None
                 if col_fecha:
                     fecha_raw = fila[col_fecha]
                     if pd.notna(fecha_raw):
                         fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
-                        if pd.isna(fecha_val):
-                            fecha_val = pd.to_datetime(fecha_raw, errors="coerce")
                 
                 if fecha_val is None or pd.isna(fecha_val):
                     continue
@@ -771,6 +769,7 @@ def procesar_banesco(df):
 
         df["FECHA"] = pd.to_datetime(
             df["FECHA"],
+            dayfirst=True,
             errors="coerce"
         )
 
@@ -888,7 +887,7 @@ def procesar_provincial(df):
     df = df.rename(columns=rename_map)
     
     if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
         df = df[df["FECHA"].notna()]
     
     if "MONTO" in df.columns:
@@ -1043,6 +1042,7 @@ def procesar_bnc(df):
 
         df["FECHA"] = pd.to_datetime(
             df["FECHA"],
+            dayfirst=True,
             errors="coerce"
         )
 
@@ -1214,6 +1214,7 @@ def procesar_tesoro(df):
 
         df["FECHA"] = pd.to_datetime(
             df["FECHA"],
+            dayfirst=True,
             errors="coerce"
         )
 
@@ -2341,11 +2342,19 @@ if archivo:
             fecha_inicio_dt = pd.to_datetime(fecha_inicio)
             fecha_fin_dt = pd.to_datetime(fecha_fin)
 
+            # DEBUG: Mostrar información de fechas
+            st.write("DEBUG FECHAS:")
+            st.write("Min fecha archivo:", fechas_convertidas.min())
+            st.write("Max fecha archivo:", fechas_convertidas.max())
+            st.write("Registros antes de filtrar:", len(df_original))
+
             # Filtrar correctamente
             df_original = df_original[
                 (fechas_convertidas >= fecha_inicio_dt) & 
                 (fechas_convertidas <= fecha_fin_dt)
             ]
+
+            st.write("Registros después de filtrar:", len(df_original))
 
             st.success(
                 f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}"
@@ -2415,10 +2424,11 @@ Por favor cargue el archivo ORIGINAL del banco.
 
                     for _, row in df_normalizado.iterrows():
                         # ============================================
-                        # OBTENER FECHA
+                        # OBTENER FECHA - CORREGIDO CON dayfirst=True
                         # ============================================
                         fecha_obj = pd.to_datetime(
                             row["FECHA"],
+                            dayfirst=True,
                             errors="coerce"
                         )
 
