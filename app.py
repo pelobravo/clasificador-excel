@@ -408,6 +408,7 @@ def detectar_banco(nombre_archivo):
         "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
         or "VENEZUELA" in nombre
         or "BANCO DE VENEZUELA" in nombre
+        or "BDV" in nombre
     ):
 
         return "venezuela"
@@ -443,265 +444,249 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# PROCESAR VENEZUELA - PARSER INTELIGENTE (CON PRIORIDAD FECHA)
+# PROCESAR VENEZUELA - VERSIÓN MEJORADA
 # =========================================================
 
 def procesar_venezuela(df):
-
+    """Procesa archivo del Banco de Venezuela - VERSIÓN MEJORADA"""
+    
     st.info("Procesando Banco de Venezuela...")
-
+    
     try:
-
-        # =========================================
-        # LIMPIAR COLUMNAS
-        # =========================================
-
-        columnas_limpias = []
-
-        for c in df.columns:
-
-            c = str(c).strip()
-
-            columnas_limpias.append(c)
-
-        df.columns = columnas_limpias
-
-        st.write("COLUMNAS DETECTADAS:")
-        st.write(df.columns.tolist())
-
-        # =========================================
-        # RENOMBRAR COLUMNAS
-        # =========================================
-
-        rename_map = {}
-
-        for col in df.columns:
-
-            c = str(col).strip().lower()
-
-            # FECHA - SOLO SI ES EXACTAMENTE "fecha"
-            if c == "fecha":
-
-                rename_map[col] = "FECHA"
-
-            # REFERENCIA
-            elif "referencia" in c:
-
-                rename_map[col] = "REFERENCIA"
-
-            # DESCRIPCION
-            elif "descrip" in c:
-
-                rename_map[col] = "DESCRIPCION"
-
-            # TIPO
-            elif "tipo de movimiento" in c:
-
-                rename_map[col] = "TIPO"
-
-            # CREDITO
-            elif (
-                ("crédito" in c or "credito" in c)
-                and "total" not in c
+        # ============================================
+        # BUSCAR FILA DE ENCABEZADO REAL
+        # ============================================
+        encabezado = None
+        
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            
+            # Buscar palabras clave que identifican el encabezado
+            if (
+                ("fecha" in texto or "fec" in texto) and
+                ("referencia" in texto or "ref" in texto) and
+                ("descripcion" in texto or "concepto" in texto or "descripción" in texto)
             ):
-
-                rename_map[col] = "CREDITO"
-
-            # DEBITO
-            elif (
-                ("débito" in c or "debito" in c)
-                and "total" not in c
-                and "todal" not in c
-            ):
-
-                rename_map[col] = "DEBITO"
-
-        # =========================================
-        # SI NO EXISTE FECHA, USAR DIA COMO RESPALDO
-        # =========================================
-
-        if "FECHA" not in rename_map.values():
-
-            for col in df.columns:
-
-                c = str(col).strip().lower()
-
-                if c == "día" or c == "dia":
-
-                    rename_map[col] = "FECHA"
-
+                encabezado = i
+                break
+        
+        # Si no se encuentra, buscar otras palabras clave
+        if encabezado is None:
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i].fillna("").astype(str)
+                texto = " ".join(fila.tolist()).lower()
+                if ("crédito" in texto or "credito" in texto) and ("débito" in texto or "debito" in texto):
+                    encabezado = i
                     break
-
-        df = df.rename(columns=rename_map)
-
-        # =========================================
-        # ELIMINAR DUPLICADAS
-        # =========================================
-
-        df = df.loc[
-            :,
-            ~df.columns.duplicated()
-        ]
-
-        st.write("COLUMNAS FINALES:")
-        st.write(df.columns.tolist())
-
-        # =========================================
-        # VALIDAR FECHA
-        # =========================================
-
-        if "FECHA" not in df.columns:
-
-            st.error(
-                "No se detectó columna FECHA"
-            )
-
-            return pd.DataFrame()
-
-        # =========================================
-        # FECHA - SIN dayfirst, SIN conversiones adicionales
-        # =========================================
-
-        df["FECHA"] = pd.to_datetime(
-            df["FECHA"],
-            errors="coerce"
-        )
-
-        df = df[
-            df["FECHA"].notna()
-        ]
-
-        # =========================================
-        # LIMPIAR TIPO
-        # =========================================
-
-        if "TIPO" not in df.columns:
-
-            df["TIPO"] = ""
-
-        df["TIPO"] = (
-
-            df["TIPO"]
-
-            .astype(str)
-
-            .str.strip()
-
-            .str.upper()
-
-        )
-
-        # =========================================
-        # LIMPIAR NUMEROS
-        # =========================================
-
-        def limpiar_numero(valor):
-
-            valor = str(valor)
-
-            valor = valor.replace(".", "")
-
-            valor = valor.replace(",", ".")
-
-            valor = valor.strip()
-
+        
+        # Si aún no se encuentra, usar primera fila como header
+        if encabezado is None:
+            encabezado = 0
+            st.warning("No se encontró encabezado claro, usando primera fila como referencia")
+        
+        # ============================================
+        # LIMPIAR Y ASIGNAR COLUMNAS
+        # ============================================
+        
+        # Obtener encabezados
+        headers = df.iloc[encabezado].fillna("").astype(str).tolist()
+        headers = [h.strip() for h in headers]
+        
+        # Crear headers únicos
+        headers_unicos = []
+        contador = {}
+        
+        for h in headers:
+            if h in contador:
+                contador[h] += 1
+                nuevo = f"{h}_{contador[h]}"
+            else:
+                contador[h] = 0
+                nuevo = h if h != "" else f"COL_{len(headers_unicos)}"
+            headers_unicos.append(nuevo)
+        
+        df.columns = headers_unicos
+        df = df.iloc[encabezado + 1:].reset_index(drop=True)
+        
+        # ============================================
+        # DETECTAR COLUMNAS POR NOMBRE O CONTENIDO
+        # ============================================
+        
+        col_fecha = None
+        col_ref = None
+        col_desc = None
+        col_credito = None
+        col_debito = None
+        col_tipo = None
+        
+        for col in df.columns:
+            col_lower = str(col).lower()
+            
+            # Fecha
+            if col_fecha is None:
+                if "fecha" in col_lower or "fec" in col_lower or "fech" in col_lower:
+                    col_fecha = col
+                else:
+                    # Buscar por contenido
+                    sample = df[col].dropna().head(3).astype(str)
+                    if sample.str.contains(r'\d{2}[/\-]\d{2}[/\-]\d{4}', regex=True).any():
+                        col_fecha = col
+            
+            # Referencia
+            if col_ref is None:
+                if "referencia" in col_lower or "ref" in col_lower or "nro" in col_lower:
+                    col_ref = col
+            
+            # Descripción
+            if col_desc is None:
+                if "descrip" in col_lower or "concepto" in col_lower or "detalle" in col_lower:
+                    col_desc = col
+            
+            # Crédito / Haber
+            if col_credito is None:
+                if "credito" in col_lower or "haber" in col_lower or "abono" in col_lower:
+                    col_credito = col
+            
+            # Débito / Debe
+            if col_debito is None:
+                if "debito" in col_lower or "debe" in col_lower or "cargo" in col_lower:
+                    col_debito = col
+            
+            # Tipo de movimiento
+            if col_tipo is None:
+                if "tipo" in col_lower and ("mov" in col_lower or "oper" in col_lower):
+                    col_tipo = col
+        
+        # ============================================
+        # CONSTRUIR DATAFRAME NORMALIZADO
+        # ============================================
+        
+        movimientos = []
+        
+        for idx, fila in df.iterrows():
             try:
-
-                return float(valor)
-
-            except:
-
-                return 0
-
-        # =========================================
-        # CREDITO
-        # =========================================
-
-        if "CREDITO" in df.columns:
-
-            df["CREDITO"] = df[
-                "CREDITO"
-            ].apply(limpiar_numero)
-
-        else:
-
-            df["CREDITO"] = 0
-
-        # =========================================
-        # DEBITO
-        # =========================================
-
-        if "DEBITO" in df.columns:
-
-            df["DEBITO"] = df[
-                "DEBITO"
-            ].apply(limpiar_numero)
-
-        else:
-
-            df["DEBITO"] = 0
-
-        # =========================================
-        # MONTO
-        # =========================================
-
-        df["MONTO"] = df.apply(
-
-            lambda row:
-
-                row["CREDITO"]
-
-                if row["CREDITO"] > 0
-
-                else abs(row["DEBITO"]),
-
-            axis=1
-        )
-
-        # =========================================
-        # ELIMINAR CEROS
-        # =========================================
-
-        df = df[
-            df["MONTO"] > 0
-        ]
-
-        # =========================================
-        # COLUMNAS FINALES
-        # =========================================
-
-        columnas_finales = [
-
-            "FECHA",
-            "REFERENCIA",
-            "DESCRIPCION",
-            "TIPO",
-            "MONTO"
-
-        ]
-
-        for c in columnas_finales:
-
-            if c not in df.columns:
-
-                df[c] = ""
-
-        df = df[columnas_finales]
-
-        st.success(
-            f"Venezuela OK: {len(df)} registros"
-        )
-
-        st.dataframe(df.head())
-
-        return df
-
+                # FECHA
+                fecha_val = None
+                if col_fecha:
+                    fecha_raw = fila[col_fecha]
+                    if pd.notna(fecha_raw):
+                        fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
+                        if pd.isna(fecha_val):
+                            fecha_val = pd.to_datetime(fecha_raw, errors="coerce")
+                
+                if fecha_val is None or pd.isna(fecha_val):
+                    continue
+                
+                # REFERENCIA
+                referencia = ""
+                if col_ref and pd.notna(fila[col_ref]):
+                    referencia = str(fila[col_ref]).strip()
+                
+                # DESCRIPCIÓN
+                descripcion = ""
+                if col_desc and pd.notna(fila[col_desc]):
+                    descripcion = str(fila[col_desc]).strip()
+                
+                # MONTO (determinar si es crédito o débito)
+                monto = 0
+                tipo = ""
+                
+                # Intentar obtener monto de columna crédito
+                if col_credito and pd.notna(fila[col_credito]):
+                    try:
+                        val = fila[col_credito]
+                        if isinstance(val, (int, float)):
+                            monto = abs(float(val))
+                        else:
+                            monto = convertir_monto(val) or 0
+                        if monto > 0:
+                            tipo = "NC"
+                    except:
+                        pass
+                
+                # Si no hay crédito, intentar débito
+                if monto == 0 and col_debito and pd.notna(fila[col_debito]):
+                    try:
+                        val = fila[col_debito]
+                        if isinstance(val, (int, float)):
+                            monto = abs(float(val))
+                        else:
+                            monto = convertir_monto(val) or 0
+                        if monto > 0:
+                            tipo = "ND"
+                    except:
+                        pass
+                
+                # Si aún no hay monto, intentar columna genérica de monto
+                if monto == 0:
+                    for col in df.columns:
+                        col_lower = str(col).lower()
+                        if "monto" in col_lower or "importe" in col_lower:
+                            val = fila[col]
+                            if pd.notna(val):
+                                try:
+                                    monto = convertir_monto(val) or 0
+                                    break
+                                except:
+                                    pass
+                
+                # Si se encontró tipo de movimiento explícito
+                if col_tipo and pd.notna(fila[col_tipo]):
+                    tipo_raw = str(fila[col_tipo]).strip().upper()
+                    if "CREDITO" in tipo_raw or "ABONO" in tipo_raw or "NC" in tipo_raw:
+                        tipo = "NC"
+                    elif "DEBITO" in tipo_raw or "DEBE" in tipo_raw or "ND" in tipo_raw:
+                        tipo = "ND"
+                
+                # Si no hay tipo, inferir del contexto
+                if tipo == "":
+                    desc_upper = descripcion.upper()
+                    if any(p in desc_upper for p in ["PAGO", "TRANSFERENCIA ENVIADA", "DEBITO", "COMPRA"]):
+                        tipo = "ND"
+                    elif any(p in desc_upper for p in ["DEPOSITO", "ABONO", "TRANSFERENCIA RECIBIDA", "CREDITO"]):
+                        tipo = "NC"
+                    else:
+                        tipo = "ND" if monto > 0 else "NC"
+                
+                if monto <= 0:
+                    continue
+                
+                movimientos.append({
+                    "FECHA": fecha_val.strftime("%d/%m/%Y"),
+                    "REFERENCIA": referencia,
+                    "DESCRIPCION": descripcion,
+                    "TIPO": tipo,
+                    "MONTO": monto
+                })
+                
+            except Exception as e:
+                continue
+        
+        df_resultado = pd.DataFrame(movimientos)
+        
+        if df_resultado.empty:
+            st.error("❌ No se encontraron movimientos válidos en el archivo.")
+            st.info("""
+            **Posibles causas:**
+            - El archivo no es el original descargado del banco
+            - El archivo fue modificado o re-exportado
+            - El formato del archivo es diferente al esperado
+            
+            **Por favor:**
+            1. Descargue el archivo NUEVAMENTE del Banco de Venezuela
+            2. No lo abra ni modifique antes de cargarlo
+            3. Cargue el archivo original (sin cambios)
+            """)
+            return pd.DataFrame()
+        
+        st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
+        
+        return df_resultado
+        
     except Exception as e:
-
-        st.error(
-            f"Error Venezuela: {str(e)}"
-        )
-
+        st.error(f"Error procesando Venezuela: {str(e)}")
         return pd.DataFrame()
 
 # =========================================================
@@ -2298,40 +2283,29 @@ if archivo:
 
                 st.stop()
             
+        elif banco == "venezuela":
+            # Venezuela: usar el parser mejorado
+            # Leer sin encabezados para procesar correctamente
+            df_raw = leer_excel_sin_encabezados(archivo)
+            
+            # Procesar con función mejorada
+            df_normalizado = procesar_venezuela(df_raw)
+            
+            if df_normalizado.empty:
+                st.stop()
+            
+            # Convertir al formato que espera procesar_archivo
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            
+        elif banco == "bnc":
+            df_raw = leer_excel_con_encabezados(archivo)
+            df_normalizado = procesar_bnc(df_raw)
+            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            
         else:
             # OTROS BANCOS: aplicar parser específico
             df_raw = leer_excel_con_encabezados(archivo)
-            
-            if banco == "venezuela":
-                # Venezuela necesita lectura sin encabezados
-                df_raw = leer_excel_sin_encabezados(archivo)
-
-                # Buscar encabezado real automáticamente
-                encabezado = None
-
-                for i in range(min(20, len(df_raw))):
-                    fila = df_raw.iloc[i].astype(str)
-                    texto = " ".join(fila.tolist()).lower()
-                    if (
-                        "fecha" in texto
-                        and (
-                            "referencia" in texto
-                            or "descripcion" in texto
-                            or "descripción" in texto
-                        )
-                    ):
-                        encabezado = i
-                        break
-
-                if encabezado is not None:
-                    df_raw.columns = df_raw.iloc[encabezado]
-                    df_raw = df_raw.iloc[encabezado + 1:].reset_index(drop=True)
-
-                df_normalizado = procesar_venezuela(df_raw)
-            elif banco == "bnc":
-                df_normalizado = procesar_bnc(df_raw)
-            else:
-                df_normalizado = df_raw
+            df_normalizado = df_raw
             
             # Convertir al formato que espera procesar_archivo
             df_original = convertir_a_formato_mercantil(df_normalizado, banco)
