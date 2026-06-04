@@ -2297,24 +2297,13 @@ if archivo:
                 st.stop()
             
         elif banco == "venezuela":
-            # Venezuela: usar el parser mejorado
-            # Leer sin encabezados para procesar correctamente
-            df_raw = leer_excel_sin_encabezados(archivo)
+            # Venezuela: usar el parser mejorado con encabezados
+            df_raw = leer_excel_con_encabezados(archivo)
             
-            # ============================================
-            # DEBUG ANTES DE LLAMAR A procesar_venezuela
-            # ============================================
-            st.write("=== DEBUG ANTES DE PROCESAR VENEZUELA ===")
-            st.write("Shape:", df_raw.shape)
-            
-            try:
-                st.write("Columnas:")
-                st.write(list(df_raw.columns))
-            except:
-                pass
-            
-            st.write("Primeras 10 filas:")
-            st.dataframe(df_raw.head(10))
+            # PRUEBA VENEZUELA - Mostrar información de depuración
+            st.write("PRUEBA VENEZUELA")
+            st.write(df_raw.columns.tolist())
+            st.dataframe(df_raw.head())
             
             # Procesar con función mejorada
             df_normalizado = procesar_venezuela(df_raw)
