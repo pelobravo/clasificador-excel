@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 import json
 import re
 from datetime import datetime
+import unicodedata  # 🔥 NUEVO - Para normalizar texto
 
 from openpyxl.styles import Font
 from openpyxl.styles import PatternFill
@@ -62,6 +63,20 @@ h1, h2, h3 {
 
 </style>
 """, unsafe_allow_html=True)
+
+# =========================================================
+# 🔥 NUEVA FUNCIÓN PARA NORMALIZAR TEXTO (eliminar acentos)
+# =========================================================
+
+def normalizar_texto(texto):
+    """Normaliza texto eliminando acentos y convirtiendo a minúsculas"""
+    texto = str(texto)
+    texto = (
+        unicodedata.normalize("NFKD", texto)
+        .encode("ascii", "ignore")
+        .decode("utf-8")
+    )
+    return texto.lower()
 
 # =========================================================
 # HEADER
@@ -293,12 +308,13 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# DETECTAR COMISIONES - VERSIÓN MEJORADA
+# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON NORMALIZACIÓN
 # =========================================================
 
 def es_comision(texto):
 
-    texto = str(texto).lower()
+    # 🔥 NORMALIZAR TEXTO (eliminar acentos)
+    texto = normalizar_texto(texto)
 
     texto = texto.strip()
 
@@ -530,7 +546,7 @@ def procesar_venezuela(df):
         
         for idx, fila in df.iterrows():
             try:
-                # FECHA - CORREGIDO CON dayfirst=True
+                # 🔥 FECHA - CORREGIDO CON dayfirst=True (en lugar de format fijo)
                 fecha_val = None
                 if col_fecha:
                     fecha_raw = fila[col_fecha]
@@ -1297,7 +1313,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA - CON DETECCIÓN DE ENCABEZADO REAL
+# 🔥 PROCESAR BANCAMIGA - CON DETECCIÓN DE ENCABEZADO REAL Y FECHA CORREGIDA
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -1366,10 +1382,10 @@ def procesar_bancamiga(df):
 
             return pd.DataFrame()
 
-        # Convertir fecha
+        # 🔥 Convertir fecha - CORREGIDO con dayfirst=True en lugar de format fijo
         df["FECHA"] = pd.to_datetime(
             df["FECHA"],
-            format="%d/%m/%y",
+            dayfirst=True,
             errors="coerce"
         )
 
@@ -1748,7 +1764,7 @@ def procesar_archivo(df, usar_api=False):
             registros_procesados.add(clave)
 
             # =================================================
-            # COMISIONES
+            # 🔥 COMISIONES - AHORA USA LA FUNCIÓN MEJORADA
             # =================================================
 
             if es_comision(descripcion):
@@ -2417,7 +2433,7 @@ Por favor cargue el archivo ORIGINAL del banco.
                         descripcion = str(row["DESCRIPCION"]).strip()
 
                         # ============================================
-                        # COMISIONES
+                        # 🔥 COMISIONES - AHORA USA LA FUNCIÓN MEJORADA
                         # ============================================
                         if es_comision(descripcion):
                             comisiones.append(registro)
