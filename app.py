@@ -1556,6 +1556,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "13/06/2026": 587.4059,
         "14/06/2026": 587.4059,
         "15/06/2026": 587.4059,
+        "16/06/2026": 592.5163,
     }
     
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
