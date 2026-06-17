@@ -288,7 +288,7 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN BLINDADA (DEL PRIMER CÓDIGO)
+# 🔥 PROCESAR VENEZUELA - VERSIÓN BLINDADA
 # =========================================================
 
 def procesar_venezuela(df):
@@ -385,6 +385,125 @@ def procesar_venezuela(df):
     except Exception as e:
         st.error(f"Error procesando Venezuela: {str(e)}")
         return pd.DataFrame()
+
+# =========================================================
+# 🔥 NUEVA FUNCIÓN: CLASIFICAR MOVIMIENTOS DE IPAGO
+# =========================================================
+
+def clasificar_movimiento_ipago(tipo_egreso, descripcion):
+    """
+    Clasifica un movimiento de iPago según su Tipo de Egreso y Descripción.
+    Retorna: 'ingreso', 'egreso', 'comision'
+    """
+    if tipo_egreso is None:
+        tipo_egreso = ""
+    if descripcion is None:
+        descripcion = ""
+    
+    tipo_egreso_str = str(tipo_egreso).strip().upper()
+    descripcion_str = str(descripcion).strip().upper()
+    
+    # ============================================
+    # 1. COMISIONES BANCARIAS
+    # ============================================
+    if "COMISION" in tipo_egreso_str:
+        return "comision"
+    if "COMISION" in descripcion_str:
+        return "comision"
+    if "BANCO DE VENEZUELA" in descripcion_str and "COMISION" in descripcion_str:
+        return "comision"
+    
+    # ============================================
+    # 2. INGRESOS (si hubiera)
+    # ============================================
+    if "INGRESO" in tipo_egreso_str:
+        return "ingreso"
+    if "COBRANZA" in tipo_egreso_str:
+        return "ingreso"
+    if "ABONO" in tipo_egreso_str:
+        return "ingreso"
+    
+    # ============================================
+    # 3. EGRESOS (por defecto)
+    # ============================================
+    # Proveedores, pagos, etc.
+    return "egreso"
+
+
+def procesar_cruce_ipago(df_egresos, df_ipago):
+    """
+    Procesa el cruce con iPago y clasifica cada movimiento.
+    
+    Args:
+        df_egresos: DataFrame con los egresos del banco
+        df_ipago: DataFrame con los movimientos de iPago
+    
+    Returns:
+        tuple: (df_egresos_clasificados, df_ingresos_clasificados, df_comisiones_clasificadas)
+    """
+    if df_ipago is None or df_ipago.empty:
+        return df_egresos, pd.DataFrame(), pd.DataFrame()
+    
+    # Normalizar referencias
+    df_egresos["REFERENCIA"] = df_egresos["REFERENCIA"].astype(str).str.replace(".0", "", regex=False).str.replace(" ", "", regex=False).str.strip()
+    df_egresos["REF_CRUCE"] = df_egresos["REFERENCIA"].str[-6:]
+    
+    df_ipago["Referencia"] = df_ipago["Referencia"].astype(str).str.replace(".0", "", regex=False).str.replace(" ", "", regex=False).str.strip()
+    df_ipago["REF_CRUCE"] = df_ipago["Referencia"].str[-6:]
+    
+    # Hacer el cruce
+    df_cruzado = df_egresos.merge(df_ipago, on="REF_CRUCE", how="left")
+    
+    # ============================================
+    # CLASIFICAR CADA MOVIMIENTO
+    # ============================================
+    df_ingresos_final = []
+    df_egresos_final = []
+    df_comisiones_final = []
+    
+    for _, row in df_cruzado.iterrows():
+        tipo_egreso = row.get("Tipo de Egreso", "")
+        descripcion = row.get("Descripción", "") or row.get("DESCRIPCIÓN", "")
+        proveedor = row.get("Proveedor", "")
+        
+        # Clasificar el movimiento
+        clasificacion = clasificar_movimiento_ipago(tipo_egreso, descripcion)
+        
+        # Copiar el registro
+        registro = row.to_dict()
+        
+        # Inyectar datos de iPago
+        if proveedor:
+            registro["STATUS"] = proveedor
+        if tipo_egreso:
+            registro["OBSERVACIÓN"] = tipo_egreso
+        
+        # Asignar a la lista correspondiente
+        if clasificacion == "comision":
+            df_comisiones_final.append(registro)
+        elif clasificacion == "ingreso":
+            df_ingresos_final.append(registro)
+        else:
+            df_egresos_final.append(registro)
+    
+    # Convertir a DataFrames
+    df_ingresos_final = pd.DataFrame(df_ingresos_final) if df_ingresos_final else pd.DataFrame()
+    df_egresos_final = pd.DataFrame(df_egresos_final) if df_egresos_final else pd.DataFrame()
+    df_comisiones_final = pd.DataFrame(df_comisiones_final) if df_comisiones_final else pd.DataFrame()
+    
+    # 🔥 Si no se encontraron comisiones, buscar por palabras clave en descripción
+    if df_comisiones_final.empty:
+        for _, row in df_cruzado.iterrows():
+            descripcion = str(row.get("DESCRIPCIÓN", "")).upper()
+            proveedor = str(row.get("Proveedor", "")).upper()
+            
+            if "COMISION" in descripcion or "COMISION" in proveedor or "BANCO" in proveedor:
+                registro = row.to_dict()
+                registro["STATUS"] = proveedor
+                registro["OBSERVACIÓN"] = "COMISION BANCARIA"
+                df_comisiones_final = pd.concat([df_comisiones_final, pd.DataFrame([registro])], ignore_index=True)
+    
+    return df_egresos_final, df_ingresos_final, df_comisiones_final
 
 # =========================================================
 # PROCESAR BANESCO
@@ -739,8 +858,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
-# =========================================================
-# CONVERTIR A FORMATO MERCANTIL
+# =========================================================# CONVERTIR A FORMATO MERCANTIL
 # =========================================================
 
 def convertir_a_formato_mercantil(df, banco):
@@ -1046,23 +1164,30 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # 🔥 CRUCE OPERATIVO CON IPAGO - VERSIÓN MEJORADA (DEL PRIMER CÓDIGO)
+            # 🔥 CRUCE OPERATIVO CON IPAGO - VERSIÓN MEJORADA CON CLASIFICACIÓN
             # =========================================================
             if archivo_ipago and not df_egresos.empty:
-                df_egresos["REFERENCIA"] = df_egresos["REFERENCIA"].astype(str).str.replace(".0", "", regex=False).str.replace(" ", "", regex=False).str.strip()
-                df_egresos["REF_CRUCE"] = df_egresos["REFERENCIA"].str[-6:]
+                # Procesar el cruce
+                df_egresos, df_ingresos_extra, df_comisiones_extra = procesar_cruce_ipago(df_egresos, df_ipago)
                 
-                df_egresos = df_egresos.merge(df_ipago, on="REF_CRUCE", how="left")
+                # 🔥 Si se encontraron comisiones en iPago, agregarlas al DataFrame de comisiones
+                if not df_comisiones_extra.empty:
+                    # Asegurar que las comisiones tengan las mismas columnas
+                    for col in df_comisiones.columns:
+                        if col not in df_comisiones_extra.columns:
+                            df_comisiones_extra[col] = ""
+                    df_comisiones = pd.concat([df_comisiones, df_comisiones_extra], ignore_index=True)
+                    st.success(f"💳 Se encontraron {len(df_comisiones_extra)} comisiones en iPago")
                 
-                # Inyección relacional de datos comerciales en las columnas de salida
-                if "Descripción" in df_egresos.columns:
-                    df_egresos["DESCRIPCIÓN"] = df_egresos["Descripción"].fillna(df_egresos["DESCRIPCIÓN"])
-                if "Proveedor" in df_egresos.columns:
-                    df_egresos["STATUS"] = df_egresos["Proveedor"].fillna("")
-                if "Tipo de Egreso" in df_egresos.columns:
-                    df_egresos["OBSERVACIÓN"] = df_egresos["Tipo de Egreso"].fillna("")
-                    
-                st.success("🎯 El cruce relacional con iPago inyectó con éxito Proveedores y Conceptos.")
+                # 🔥 Si se encontraron ingresos en iPago, agregarlos al DataFrame de ingresos
+                if not df_ingresos_extra.empty:
+                    for col in df_ingresos.columns:
+                        if col not in df_ingresos_extra.columns:
+                            df_ingresos_extra[col] = ""
+                    df_ingresos = pd.concat([df_ingresos, df_ingresos_extra], ignore_index=True)
+                    st.success(f"💰 Se encontraron {len(df_ingresos_extra)} ingresos en iPago")
+                
+                st.success("🎯 Cruce con iPago completado con clasificación automática")
 
             # Completar columnas vacías obligatorias para el reporte en openpyxl
             for df_t in [df_ingresos, df_egresos, df_comisiones]:
@@ -1246,6 +1371,7 @@ else:
     ## FUNCIONES
     ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga.
     ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
+    ✅ **NUEVO:** Clasificación automática de movimientos de iPago (EGRESOS, INGRESOS, COMISIONES).
     ✅ Calcula USD con tasa BCV real por fecha.
     ✅ Exporta reporte profesional con: MONTO BS, TASA BCV, MONTO USD, PROVEEDOR, TIPO EGRESO.
     """)
