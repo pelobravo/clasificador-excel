@@ -940,10 +940,18 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# PROCESAMIENTO MERCANTIL ORIGINAL CORE
+# 🔥 PROCESAMIENTO MERCANTIL ORIGINAL CORE (MODIFICADO CON REGLA ESPECIAL)
 # =========================================================
 
-def procesar_archivo(df, usar_api=False):
+def procesar_archivo(df, usar_api=False, banco=""):
+    """
+    Procesa el archivo y clasifica movimientos en ingresos, egresos y comisiones.
+    
+    Args:
+        df: DataFrame con los movimientos en formato Mercantil
+        usar_api: Booleano para usar API BCV
+        banco: Nombre del banco (para aplicar reglas específicas)
+    """
     ingresos = []
     egresos = []
     comisiones = []
@@ -1013,6 +1021,19 @@ def procesar_archivo(df, usar_api=False):
             if clave in registros_procesados:
                 continue
             registros_procesados.add(clave)
+
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA MERCANTIL - COMISIONES POR CRÉDITO DIRECTO
+            # =========================================================
+            # Esta regla se aplica SOLO para el banco Mercantil
+            # Detecta "OP.CRED.DIRT. CLTE-CLTE" o "op cred dirt clte clte" en la descripción
+            # =========================================================
+            if banco == "mercantil":
+                descripcion_upper = descripcion.upper()
+                if ("OP.CRED.DIRT. CLTE-CLTE" in descripcion_upper or 
+                    "OP CRED DIRT CLTE CLTE" in descripcion_upper):
+                    comisiones.append(registro)
+                    continue
 
             # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision (si existe en el registro)
             proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
@@ -1197,76 +1218,12 @@ if archivo:
                         else:
                             egresos.append(registro)
                 else:
-                    ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api)
+                    # 🔥 PASAR EL NOMBRE DEL BANCO A LA FUNCIÓN
+                    ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api, banco=banco)
 
             df_ingresos = pd.DataFrame(ingresos)
             df_egresos = pd.DataFrame(egresos)
             df_comisiones = pd.DataFrame(comisiones)
-
-            # =========================================================
-            # 🔥 MOVER COMISIONES BANCARIAS ESPECÍFICAS DESDE EGRESOS - COMENTADO
-            # =========================================================
-            # if not df_egresos.empty:
-            #     # Buscar EXACTAMENTE estas descripciones de comisiones bancarias
-            #     patron_comisiones = (
-            #         df_egresos["DESCRIPCIÓN"]
-            #         .astype(str)
-            #         .str.upper()
-            #         .str.contains(
-            #             r"COMISION PAGO A PROVEEDORES|COMISION PAGOMOVILBDV|COM PAGO OTRAS CTAS|COMISION X PAGO DE NOMINA",
-            #             na=False,
-            #             regex=True
-            #         )
-            #     )
-            #
-            #     registros_comision = df_egresos[patron_comisiones].copy()
-            #
-            #     if not registros_comision.empty:
-            #         # Mover a COMISIONES
-            #         if not df_comisiones.empty:
-            #             df_comisiones = pd.concat(
-            #                 [df_comisiones, registros_comision],
-            #                 ignore_index=True
-            #             )
-            #         else:
-            #             df_comisiones = registros_comision
-            #
-            #         # Remover de EGRESOS
-            #         df_egresos = df_egresos[~patron_comisiones]
-            #         
-            #         st.success(f"💳 Se movieron {len(registros_comision)} comisiones bancarias desde EGRESOS a COMISIONES")
-
-            # =========================================================
-            # 🔥 MOVER OTRAS COMISIONES DESDE EGRESOS (PATRÓN GENERAL) - COMENTADO
-            # =========================================================
-            # if not df_egresos.empty:
-            #     mascara_comisiones_general = (
-            #         df_egresos["DESCRIPCIÓN"]
-            #         .astype(str)
-            #         .str.upper()
-            #         .str.contains(
-            #             "COMISION POR TRANSFERENCIA|COMISION PAGO MOVIL|COMISIÓN PAGO MOVIL|"
-            #             "COMISION X PAGO DE NOMINA|ITF|CARGO BANCARIO|"
-            #             "MANTENIMIENTO DE CUENTA|IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-            #             na=False,
-            #             regex=True
-            #         )
-            #     )
-            #
-            #     if mascara_comisiones_general.any():
-            #         nuevas_comisiones = df_egresos[mascara_comisiones_general].copy()
-            #
-            #         if not df_comisiones.empty:
-            #             df_comisiones = pd.concat(
-            #                 [df_comisiones, nuevas_comisiones],
-            #                 ignore_index=True
-            #             )
-            #         else:
-            #             df_comisiones = nuevas_comisiones
-            #
-            #         df_egresos = df_egresos[~mascara_comisiones_general]
-            #         
-            #         st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias adicionales desde EGRESOS a COMISIONES")
 
             # =========================================================
             # 🔥 CRUCE CON IPAGO - VERSIÓN ENRIQUECIDA (MANTIENE TODOS LOS EGRESOS)
@@ -1486,6 +1443,7 @@ else:
     ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
     ✅ **NUEVO:** Enriquecimiento de egresos con iPago (mantiene TODOS los registros).
     ✅ **NUEVO:** Separación automática de comisiones desde iPago y desde EGRESOS.
+    ✅ **NUEVO:** Regla especial para Mercantil: detecta "OP.CRED.DIRT. CLTE-CLTE" como comisión.
     ✅ Calcula USD con tasa BCV real por fecha.
     ✅ Exporta reporte profesional con: MONTO BS, TASA BCV, MONTO USD, PROVEEDOR, TIPO EGRESO.
     """)
