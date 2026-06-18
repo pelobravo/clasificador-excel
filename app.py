@@ -1204,10 +1204,43 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # 🔥 MOVER COMISIONES DESDE EGRESOS (DESPUÉS DE CREAR df_egresos)
+            # 🔥 MOVER COMISIONES BANCARIAS ESPECÍFICAS DESDE EGRESOS
             # =========================================================
             if not df_egresos.empty:
-                mascara_comisiones = (
+                # Buscar EXACTAMENTE estas descripciones de comisiones bancarias
+                patron_comisiones = (
+                    df_egresos["DESCRIPCIÓN"]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains(
+                        r"COMISION PAGO A PROVEEDORES|COMISION PAGOMOVILBDV|COM PAGO OTRAS CTAS|COMISION X PAGO DE NOMINA",
+                        na=False,
+                        regex=True
+                    )
+                )
+
+                registros_comision = df_egresos[patron_comisiones].copy()
+
+                if not registros_comision.empty:
+                    # Mover a COMISIONES
+                    if not df_comisiones.empty:
+                        df_comisiones = pd.concat(
+                            [df_comisiones, registros_comision],
+                            ignore_index=True
+                        )
+                    else:
+                        df_comisiones = registros_comision
+
+                    # Remover de EGRESOS
+                    df_egresos = df_egresos[~patron_comisiones]
+                    
+                    st.success(f"💳 Se movieron {len(registros_comision)} comisiones bancarias desde EGRESOS a COMISIONES")
+
+            # =========================================================
+            # 🔥 MOVER OTRAS COMISIONES DESDE EGRESOS (PATRÓN GENERAL)
+            # =========================================================
+            if not df_egresos.empty:
+                mascara_comisiones_general = (
                     df_egresos["DESCRIPCIÓN"]
                     .astype(str)
                     .str.upper()
@@ -1220,8 +1253,8 @@ if archivo:
                     )
                 )
 
-                if mascara_comisiones.any():
-                    nuevas_comisiones = df_egresos[mascara_comisiones].copy()
+                if mascara_comisiones_general.any():
+                    nuevas_comisiones = df_egresos[mascara_comisiones_general].copy()
 
                     if not df_comisiones.empty:
                         df_comisiones = pd.concat(
@@ -1231,9 +1264,9 @@ if archivo:
                     else:
                         df_comisiones = nuevas_comisiones
 
-                    df_egresos = df_egresos[~mascara_comisiones]
+                    df_egresos = df_egresos[~mascara_comisiones_general]
                     
-                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias desde EGRESOS a COMISIONES")
+                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias adicionales desde EGRESOS a COMISIONES")
 
             # =========================================================
             # 🔥 CRUCE CON IPAGO - VERSIÓN ENRIQUECIDA (MANTIENE TODOS LOS EGRESOS)
