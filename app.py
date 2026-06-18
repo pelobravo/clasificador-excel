@@ -1204,69 +1204,69 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # 🔥 MOVER COMISIONES BANCARIAS ESPECÍFICAS DESDE EGRESOS
+            # 🔥 MOVER COMISIONES BANCARIAS ESPECÍFICAS DESDE EGRESOS - COMENTADO
             # =========================================================
-            if not df_egresos.empty:
-                # Buscar EXACTAMENTE estas descripciones de comisiones bancarias
-                patron_comisiones = (
-                    df_egresos["DESCRIPCIÓN"]
-                    .astype(str)
-                    .str.upper()
-                    .str.contains(
-                        r"COMISION PAGO A PROVEEDORES|COMISION PAGOMOVILBDV|COM PAGO OTRAS CTAS|COMISION X PAGO DE NOMINA",
-                        na=False,
-                        regex=True
-                    )
-                )
-
-                registros_comision = df_egresos[patron_comisiones].copy()
-
-                if not registros_comision.empty:
-                    # Mover a COMISIONES
-                    if not df_comisiones.empty:
-                        df_comisiones = pd.concat(
-                            [df_comisiones, registros_comision],
-                            ignore_index=True
-                        )
-                    else:
-                        df_comisiones = registros_comision
-
-                    # Remover de EGRESOS
-                    df_egresos = df_egresos[~patron_comisiones]
-                    
-                    st.success(f"💳 Se movieron {len(registros_comision)} comisiones bancarias desde EGRESOS a COMISIONES")
+            # if not df_egresos.empty:
+            #     # Buscar EXACTAMENTE estas descripciones de comisiones bancarias
+            #     patron_comisiones = (
+            #         df_egresos["DESCRIPCIÓN"]
+            #         .astype(str)
+            #         .str.upper()
+            #         .str.contains(
+            #             r"COMISION PAGO A PROVEEDORES|COMISION PAGOMOVILBDV|COM PAGO OTRAS CTAS|COMISION X PAGO DE NOMINA",
+            #             na=False,
+            #             regex=True
+            #         )
+            #     )
+            #
+            #     registros_comision = df_egresos[patron_comisiones].copy()
+            #
+            #     if not registros_comision.empty:
+            #         # Mover a COMISIONES
+            #         if not df_comisiones.empty:
+            #             df_comisiones = pd.concat(
+            #                 [df_comisiones, registros_comision],
+            #                 ignore_index=True
+            #             )
+            #         else:
+            #             df_comisiones = registros_comision
+            #
+            #         # Remover de EGRESOS
+            #         df_egresos = df_egresos[~patron_comisiones]
+            #         
+            #         st.success(f"💳 Se movieron {len(registros_comision)} comisiones bancarias desde EGRESOS a COMISIONES")
 
             # =========================================================
-            # 🔥 MOVER OTRAS COMISIONES DESDE EGRESOS (PATRÓN GENERAL)
+            # 🔥 MOVER OTRAS COMISIONES DESDE EGRESOS (PATRÓN GENERAL) - COMENTADO
             # =========================================================
-            if not df_egresos.empty:
-                mascara_comisiones_general = (
-                    df_egresos["DESCRIPCIÓN"]
-                    .astype(str)
-                    .str.upper()
-                    .str.contains(
-                        "COMISION POR TRANSFERENCIA|COMISION PAGO MOVIL|COMISIÓN PAGO MOVIL|"
-                        "COMISION X PAGO DE NOMINA|ITF|CARGO BANCARIO|"
-                        "MANTENIMIENTO DE CUENTA|IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                        na=False,
-                        regex=True
-                    )
-                )
-
-                if mascara_comisiones_general.any():
-                    nuevas_comisiones = df_egresos[mascara_comisiones_general].copy()
-
-                    if not df_comisiones.empty:
-                        df_comisiones = pd.concat(
-                            [df_comisiones, nuevas_comisiones],
-                            ignore_index=True
-                        )
-                    else:
-                        df_comisiones = nuevas_comisiones
-
-                    df_egresos = df_egresos[~mascara_comisiones_general]
-                    
-                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias adicionales desde EGRESOS a COMISIONES")
+            # if not df_egresos.empty:
+            #     mascara_comisiones_general = (
+            #         df_egresos["DESCRIPCIÓN"]
+            #         .astype(str)
+            #         .str.upper()
+            #         .str.contains(
+            #             "COMISION POR TRANSFERENCIA|COMISION PAGO MOVIL|COMISIÓN PAGO MOVIL|"
+            #             "COMISION X PAGO DE NOMINA|ITF|CARGO BANCARIO|"
+            #             "MANTENIMIENTO DE CUENTA|IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+            #             na=False,
+            #             regex=True
+            #         )
+            #     )
+            #
+            #     if mascara_comisiones_general.any():
+            #         nuevas_comisiones = df_egresos[mascara_comisiones_general].copy()
+            #
+            #         if not df_comisiones.empty:
+            #             df_comisiones = pd.concat(
+            #                 [df_comisiones, nuevas_comisiones],
+            #                 ignore_index=True
+            #             )
+            #         else:
+            #             df_comisiones = nuevas_comisiones
+            #
+            #         df_egresos = df_egresos[~mascara_comisiones_general]
+            #         
+            #         st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias adicionales desde EGRESOS a COMISIONES")
 
             # =========================================================
             # 🔥 CRUCE CON IPAGO - VERSIÓN ENRIQUECIDA (MANTIENE TODOS LOS EGRESOS)
