@@ -244,11 +244,23 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON NORMALIZACIÓN
+# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON NORMALIZACIÓN Y EXCLUSIONES
 # =========================================================
 
 def es_comision(texto):
     texto = normalizar_texto(texto).strip()
+    
+    # 🔥 NUNCA SON COMISIONES
+    if any(x in texto for x in [
+        "pago a proveedores",
+        "pago de nomina",
+        "nomina",
+        "transf entre ctas",
+        "transferencia a terceros",
+        "pago movil comercial"
+    ]):
+        return False
+    
     palabras = [
         "comision", "comisión", "cargo", "cargo bancario", "fee", "iva", "itf", "impuesto",
         "op.cred", "op cred", "credito directo", "transferencia de fondos",
@@ -408,7 +420,7 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# 🔥 NUEVA FUNCIÓN: ENRIQUECER EGRESOS CON IPAGO
+# 🔥 NUEVA FUNCIÓN: ENRIQUECER EGRESOS CON IPAGO (VERSIÓN MEJORADA)
 # =========================================================
 
 def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
@@ -429,12 +441,22 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
     # Hacer una copia para no modificar el original
     df_resultado = df_egresos.copy()
     
-    # Normalizar referencias
+    # Normalizar referencias - REFERENCIA COMPLETA
     df_resultado["REFERENCIA"] = df_resultado["REFERENCIA"].astype(str).str.replace(".0", "", regex=False).str.replace(" ", "", regex=False).str.strip()
-    df_resultado["REF_CRUCE"] = df_resultado["REFERENCIA"].str[-6:]
+    df_resultado["REF_CRUCE"] = (
+        df_resultado["REFERENCIA"]
+        .astype(str)
+        .str.replace(".0", "", regex=False)
+        .str.strip()
+    )
     
     df_ipago["Referencia"] = df_ipago["Referencia"].astype(str).str.replace(".0", "", regex=False).str.replace(" ", "", regex=False).str.strip()
-    df_ipago["REF_CRUCE"] = df_ipago["Referencia"].str[-6:]
+    df_ipago["REF_CRUCE"] = (
+        df_ipago["Referencia"]
+        .astype(str)
+        .str.replace(".0", "", regex=False)
+        .str.strip()
+    )
     
     # Crear un diccionario para búsqueda rápida por referencia
     ipago_dict = {}
@@ -455,6 +477,11 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
             # Si hay coincidencia, enriquecer con datos de iPago
             df_resultado.at[idx, "STATUS"] = ipago_dict[ref_cruce]["PROVEEDOR"]
             df_resultado.at[idx, "OBSERVACIÓN"] = ipago_dict[ref_cruce]["TIPO_EGRESO"]
+            
+            # 🔥 Reemplazar descripción con la de iPago
+            descripcion_ipago = ipago_dict[ref_cruce]["DESCRIPCION_IPAGO"]
+            if descripcion_ipago:
+                df_resultado.at[idx, "DESCRIPCIÓN"] = descripcion_ipago
             
             # 🔥 Si es comisión, marcarlo como tal
             tipo = str(ipago_dict[ref_cruce]["TIPO_EGRESO"]).upper()
