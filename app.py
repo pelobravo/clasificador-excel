@@ -1160,6 +1160,35 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
+            # 🔥 MOVER COMISIONES DESDE EGRESOS (DESPUÉS DE CREAR df_egresos)
+            # =========================================================
+            if not df_egresos.empty:
+                mascara_comisiones = (
+                    df_egresos["DESCRIPCIÓN"]
+                    .astype(str)
+                    .str.upper()
+                    .str.contains(
+                        "COMISION|COMISIÓN|OP.CRED|OP CRED|CARGO BANCARIO",
+                        na=False
+                    )
+                )
+
+                if mascara_comisiones.any():
+                    nuevas_comisiones = df_egresos[mascara_comisiones].copy()
+
+                    if not df_comisiones.empty:
+                        df_comisiones = pd.concat(
+                            [df_comisiones, nuevas_comisiones],
+                            ignore_index=True
+                        )
+                    else:
+                        df_comisiones = nuevas_comisiones
+
+                    df_egresos = df_egresos[~mascara_comisiones]
+                    
+                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones desde EGRESOS a COMISIONES")
+
+            # =========================================================
             # 🔥 CRUCE CON IPAGO - VERSIÓN ENRIQUECIDA (MANTIENE TODOS LOS EGRESOS)
             # =========================================================
             if archivo_ipago and not df_egresos.empty:
@@ -1169,10 +1198,10 @@ if archivo:
                 # 🔥 Separar comisiones de iPago (si las hay)
                 if "ES_COMISION" in df_egresos.columns:
                     # Identificar comisiones
-                    mascara_comisiones = df_egresos["ES_COMISION"] == True
+                    mascara_comisiones_ipago = df_egresos["ES_COMISION"] == True
                     
-                    if mascara_comisiones.any():
-                        df_comisiones_extra = df_egresos[mascara_comisiones].copy()
+                    if mascara_comisiones_ipago.any():
+                        df_comisiones_extra = df_egresos[mascara_comisiones_ipago].copy()
                         
                         # Remover columnas internas
                         df_comisiones_extra = df_comisiones_extra.drop(columns=["REF_CRUCE", "ES_COMISION"], errors="ignore")
@@ -1184,9 +1213,9 @@ if archivo:
                             df_comisiones = df_comisiones_extra
                         
                         # Remover comisiones de egresos
-                        df_egresos = df_egresos[~mascara_comisiones].copy()
+                        df_egresos = df_egresos[~mascara_comisiones_ipago].copy()
                         
-                        st.success(f"💳 Se movieron {len(df_comisiones_extra)} comisiones a la sección de COMISIONES")
+                        st.success(f"💳 Se movieron {len(df_comisiones_extra)} comisiones desde iPago a la sección de COMISIONES")
                 
                 # Limpiar columnas auxiliares
                 df_egresos = df_egresos.drop(columns=["REF_CRUCE", "ES_COMISION"], errors="ignore")
@@ -1376,7 +1405,7 @@ else:
     ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga.
     ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
     ✅ **NUEVO:** Enriquecimiento de egresos con iPago (mantiene TODOS los registros).
-    ✅ **NUEVO:** Separación automática de comisiones desde iPago.
+    ✅ **NUEVO:** Separación automática de comisiones desde iPago y desde EGRESOS.
     ✅ Calcula USD con tasa BCV real por fecha.
     ✅ Exporta reporte profesional con: MONTO BS, TASA BCV, MONTO USD, PROVEEDOR, TIPO EGRESO.
     """)
