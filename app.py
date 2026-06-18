@@ -244,13 +244,40 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON NORMALIZACIÓN Y EXCLUSIONES
+# 🔥 DETECTAR COMISIONES - VERSIÓN DEFINITIVA CON REGLAS CLARAS
 # =========================================================
 
-def es_comision(texto):
+def es_comision(texto, proveedor=None):
+    """
+    Detecta si un movimiento es una comisión bancaria.
+    
+    REGLAS:
+    - Si tiene proveedor asociado → NO es comisión bancaria (es un pago a terceros)
+    - Si es pago a personal (nómina, comisiones de ventas) → NO es comisión bancaria
+    - Solo son comisiones bancarias: cargos del banco (ITF, mantenimiento, comisión por transferencia, etc.)
+    """
     texto = normalizar_texto(texto).strip()
     
-    # 🔥 NUNCA SON COMISIONES
+    # 🔥 REGLA 1: Si tiene proveedor asociado, NO es comisión bancaria
+    if proveedor and str(proveedor).strip():
+        return False
+    
+    # 🔥 REGLA 2: COMISIONES PAGADAS A PERSONAL = EGRESO (no comisión bancaria)
+    if any(x in texto for x in [
+        "comisiones sobre servicios contratados",
+        "comision gerente comercial",
+        "comision vendedor",
+        "comision asesor",
+        "comision ejecutivo",
+        "comision supervisor",
+        "comision ventas",
+        "comisiones ventas",
+        "comision comercial",
+        "comisiones comerciales"
+    ]):
+        return False
+    
+    # 🔥 REGLA 3: NUNCA SON COMISIONES BANCARIAS
     if any(x in texto for x in [
         "pago a proveedores",
         "pago de nomina",
@@ -261,20 +288,35 @@ def es_comision(texto):
     ]):
         return False
     
-    palabras = [
-        "comision", "comisión", "cargo", "cargo bancario", "fee", "iva", "itf", "impuesto",
-        "op.cred", "op cred", "credito directo", "transferencia de fondos",
-        "comision por transferencia", "comision pago movil", "comisión pago movil",
-        "servicio bancario", "gasto bancario", "mantenimiento de cuenta",
-        "debito automatico bancario", "com ", "com.", "com pago", "com pago otr",
-        "com pago otr bcos", "comision pago proveedores", "descuento tarjeta",
-        "descuento de tarjeta", "comision tarjeta", "comisión tarjeta",
-        "cargo tarjeta", "retencion tarjeta", "retención tarjeta",
-        "comision punto de venta", "comisión punto de venta", "punto de venta",
-        "comision pos", "comisión pos", "descuento pos", "cargo por servicio",
-        "cargo por transaccion", "cargo por transacción",
+    # 🔥 REGLA 4: SOLO SON COMISIONES BANCARIAS si coinciden con estas palabras
+    palabras_comision_bancaria = [
+        "comision por transferencia",
+        "comision pago movil",
+        "comisión pago movil",
+        "comision x pago de nomina",
+        "comision x pago de nominas",
+        "itf",
+        "impuesto a las transacciones financieras",
+        "cargo bancario",
+        "mantenimiento de cuenta",
+        "comision bancaria",
+        "comisión bancaria",
+        "cargo por servicio",
+        "cargo por transaccion",
+        "comision por",
+        "comisión por"
     ]
-    return any(p in texto for p in palabras)
+    
+    # Verificar si coincide con alguna comisión bancaria
+    for patron in palabras_comision_bancaria:
+        if patron in texto:
+            return True
+    
+    # Si contiene "comision" pero no coincide con las reglas anteriores, NO es comisión bancaria
+    if "comision" in texto or "comisión" in texto:
+        return False
+    
+    return False
 
 # =========================================================
 # DETECTOR DE BANCO CORREGIDO
@@ -972,7 +1014,9 @@ def procesar_archivo(df, usar_api=False):
                 continue
             registros_procesados.add(clave)
 
-            if es_comision(descripcion):
+            # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision (si existe en el registro)
+            proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
+            if es_comision(descripcion, proveedor):
                 comisiones.append(registro)
             elif tipo in tipos_ingresos:
                 ingresos.append(registro)
@@ -1146,7 +1190,7 @@ if archivo:
                         tipo = str(row["TIPO"]).strip().upper()
                         descripcion = str(row["DESCRIPCION"]).strip()
 
-                        if es_comision(descripcion):
+                        if es_comision(descripcion, None):
                             comisiones.append(registro)
                         elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
                             ingresos.append(registro)
@@ -1168,8 +1212,11 @@ if archivo:
                     .astype(str)
                     .str.upper()
                     .str.contains(
-                        "COMISION|COMISIÓN|OP.CRED|OP CRED|CARGO BANCARIO",
-                        na=False
+                        "COMISION POR TRANSFERENCIA|COMISION PAGO MOVIL|COMISIÓN PAGO MOVIL|"
+                        "COMISION X PAGO DE NOMINA|ITF|CARGO BANCARIO|"
+                        "MANTENIMIENTO DE CUENTA|IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                        na=False,
+                        regex=True
                     )
                 )
 
@@ -1186,7 +1233,7 @@ if archivo:
 
                     df_egresos = df_egresos[~mascara_comisiones]
                     
-                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones desde EGRESOS a COMISIONES")
+                    st.success(f"💳 Se movieron {len(nuevas_comisiones)} comisiones bancarias desde EGRESOS a COMISIONES")
 
             # =========================================================
             # 🔥 CRUCE CON IPAGO - VERSIÓN ENRIQUECIDA (MANTIENE TODOS LOS EGRESOS)
