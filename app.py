@@ -250,6 +250,11 @@ def calcular_usd(monto_bs, tasa):
 def es_comision(texto, proveedor=None):
     """
     Detecta si un movimiento es una comisión bancaria.
+    
+    REGLAS:
+    - Si tiene proveedor asociado → NO es comisión bancaria (es un pago a terceros)
+    - Si es pago a personal (nómina, comisiones de ventas) → NO es comisión bancaria
+    - Solo son comisiones bancarias: cargos del banco (ITF, mantenimiento, comisión por transferencia, etc.)
     """
     texto = normalizar_texto(texto).strip()
     
@@ -299,15 +304,15 @@ def es_comision(texto, proveedor=None):
         "cargo por servicio",
         "cargo por transaccion",
         "comision por",
-        "comisión por",
-        "op.cred.dirt. clte-clte",
-        "op cred dirt clte clte"
+        "comisión por"
     ]
     
+    # Verificar si coincide con alguna comisión bancaria
     for patron in palabras_comision_bancaria:
         if patron in texto:
             return True
     
+    # Si contiene "comision" pero no coincide con las reglas anteriores, NO es comisión bancaria
     if "comision" in texto or "comisión" in texto:
         return False
     
@@ -330,14 +335,14 @@ def detectar_banco(nombre_archivo):
         return "venezuela"
     elif "PROVINCIAL" in nombre:
         return "provincial"
-    elif "BNC" in font or "BNC" in nombre:
+    elif "BNC" in nombre:
         return "bnc"
     elif "MERCANTIL" in nombre:
         return "mercantil"
     return "mercantil"
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA
+# 🔥 PROCESAR VENEZUELA - VERSIÓN MEJORADA (USA TIPO DE MOVIMIENTO DIRECTAMENTE)
 # =========================================================
 
 def procesar_venezuela(df):
@@ -345,6 +350,7 @@ def procesar_venezuela(df):
     st.info("Procesando Banco de Venezuela (Modo Protegido)...")
     
     try:
+        # Barrido radical de espacios duros de Excel (\xa0) en nombres de columnas
         df.columns = [
             unicodedata.normalize("NFKD", str(c))
             .encode("ascii", "ignore")
@@ -354,6 +360,7 @@ def procesar_venezuela(df):
             for c in df.columns
         ]
         
+        # Mapeo posicional dinámico e independiente
         col_fecha = next((c for c in df.columns if "fecha" in c.lower()), None)
         col_ref = next((c for c in df.columns if "referencia" in c.lower() or "ref" in c.lower()), None)
         col_desc = next((c for c in df.columns if "descrip" in c.lower() or "concepto" in c.lower()), None)
@@ -368,6 +375,7 @@ def procesar_venezuela(df):
                 if not col_fecha or pd.isna(fila[col_fecha]):
                     continue
                 
+                # Saneamiento de cadenas de fecha (corte de horas y unificación de guiones)
                 fecha_raw = str(fila[col_fecha]).strip().replace("\xa0", "")
                 if " " in fecha_raw:
                     fecha_raw = fecha_raw.split(" ")[0]
@@ -377,16 +385,20 @@ def procesar_venezuela(df):
                 if pd.isna(fecha_val):
                     continue
                 
+                # Extracción libre de cadenas ocultas \xa0 en descriptivos
                 referencia = str(fila[col_ref]).strip().replace("\xa0", "") if col_ref and pd.notna(fila[col_ref]) else ""
                 descripcion = str(fila[col_desc]).strip().replace("\xa0", "") if col_desc and pd.notna(fila[col_desc]) else ""
                 
+                # 🔥 Obtener tipo de movimiento directamente de la columna
                 tipo_mov = ""
                 if col_tipo and pd.notna(fila[col_tipo]):
                     tipo_mov = str(fila[col_tipo]).strip().upper()
                 
+                # Omitir metadatos de balances impresos en el cuerpo
                 if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
                     continue
                 
+                # Extracción limpia de montos eliminando basura tipográfica
                 val_credito = 0
                 val_debito = 0
                 
@@ -401,6 +413,7 @@ def procesar_venezuela(df):
                 monto = 0
                 tipo = ""
                 
+                # 🔥 USAR DIRECTAMENTE EL TIPO DE MOVIMIENTO DE LA COLUMNA
                 if tipo_mov == "NC":
                     monto = abs(val_credito)
                     tipo = "NC"
@@ -408,6 +421,7 @@ def procesar_venezuela(df):
                     monto = abs(val_debito)
                     tipo = "ND"
                 else:
+                    # Fallback: si no hay tipo, inferir por el monto
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
@@ -417,6 +431,8 @@ def procesar_venezuela(df):
                     else:
                         continue
                 
+                # 🔥 IMPORTANTE: NO FILTRAR POR TIPO AQUÍ
+                # Permitir que TODOS los movimientos pasen (incluyendo ND de comisiones)
                 if monto <= 0:
                     continue
                 
@@ -446,15 +462,29 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# 🔥 ENRIQUECER EGRESOS CON IPAGO
+# 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (USA REFERENCIA + DESCRIPCIÓN)
 # =========================================================
 
 def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
+    """
+    Enriquece los egresos del banco con datos de iPago.
+    Usa REFERENCIA + DESCRIPCIÓN para hacer el cruce.
+    Mantiene TODOS los egresos y agrega información cuando hay coincidencia.
+    
+    Args:
+        df_egresos: DataFrame con los egresos del banco
+        df_ipago: DataFrame con los movimientos de iPago
+    
+    Returns:
+        DataFrame: egresos enriquecidos con datos de iPago
+    """
     if df_ipago is None or df_ipago.empty:
         return df_egresos
     
+    # Hacer una copia para no modificar el original
     df_resultado = df_egresos.copy()
     
+    # 🔥 NORMALIZAR REFERENCIAS (eliminar puntos y espacios)
     df_resultado["REFERENCIA_NORM"] = (
         df_resultado["REFERENCIA"]
         .astype(str)
@@ -471,6 +501,7 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
         .str.strip()
     )
     
+    # 🔥 NORMALIZAR DESCRIPCIONES (eliminar acentos, mayúsculas, espacios)
     df_resultado["DESCRIPCION_NORM"] = (
         df_resultado["DESCRIPCIÓN"]
         .astype(str)
@@ -487,16 +518,18 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
         .str.strip()
     )
     
+    # 🔥 CREAR CLAVE DE CRUCE: REFERENCIA + PRIMERAS PALABRAS DE DESCRIPCIÓN
     df_resultado["CLAVE_CRUCE"] = (
         df_resultado["REFERENCIA_NORM"] + "|" + 
-        df_resultado["DESCRIPCION_NORM"].str[-6:]
+        df_resultado["DESCRIPCION_NORM"].str[:20]  # Primeros 20 caracteres de la descripción normalizada
     )
     
     df_ipago["CLAVE_CRUCE"] = (
         df_ipago["Referencia_Norm"] + "|" + 
-        df_ipago["Descripción_Norm"].str[-6:]
+        df_ipago["Descripción_Norm"].str[:20]  # Primeros 20 caracteres de la descripción normalizada
     )
     
+    # 🔥 CREAR DICCIONARIO DE IPAGO CON TODOS LOS DATOS
     ipago_dict = {}
     for _, row in df_ipago.iterrows():
         clave = row.get("CLAVE_CRUCE", "")
@@ -512,21 +545,25 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
                 "MONTO_USD": row.get("Monto USD", 0)
             }
     
+    # 🔥 ENRIQUECER CADA EGRESO
     for idx, row in df_resultado.iterrows():
         clave = row.get("CLAVE_CRUCE", "")
         
         if clave in ipago_dict:
+            # Si hay coincidencia, enriquecer con datos de iPago
             datos = ipago_dict[clave]
             df_resultado.at[idx, "STATUS"] = datos["PROVEEDOR"]
             df_resultado.at[idx, "OBSERVACIÓN"] = datos["TIPO_EGRESO"]
             df_resultado.at[idx, "TIPO_PAGO"] = datos["TIPO_PAGO"]
             df_resultado.at[idx, "PROVEEDOR_IPAGO"] = datos["PROVEEDOR"]
             
+            # 🔥 Reemplazar descripción con la de iPago
             descripcion_ipago = datos["DESCRIPCION_IPAGO"]
             if descripcion_ipago:
                 df_resultado.at[idx, "DESCRIPCIÓN"] = descripcion_ipago
                 df_resultado.at[idx, "DESCRIPCION_ORIGINAL"] = row.get("DESCRIPCIÓN", "")
             
+            # 🔥 Si es comisión, marcarlo como tal
             tipo = str(datos["TIPO_EGRESO"]).upper()
             desc = str(datos["DESCRIPCION_IPAGO"]).upper()
             if "COMISION" in tipo or "COMISION" in desc:
@@ -534,6 +571,7 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
             else:
                 df_resultado.at[idx, "ES_COMISION"] = False
         else:
+            # Si no hay coincidencia, mantener los valores actuales
             df_resultado.at[idx, "STATUS"] = "SIN DATOS IPAGO"
             df_resultado.at[idx, "OBSERVACIÓN"] = "SIN CONCORDANCIA"
             df_resultado.at[idx, "TIPO_PAGO"] = ""
@@ -555,10 +593,14 @@ def procesar_banesco(df):
         rename_map = {}
         for col in df.columns:
             c = str(col).lower()
-            if "fecha" in c: rename_map[col] = "FECHA"
-            elif "referencia" in c: rename_map[col] = "REFERENCIA"
-            elif "descrip" in c: rename_map[col] = "DESCRIPCION"
-            elif "monto" in c: rename_map[col] = "MONTO_RAW"
+            if "fecha" in c:
+                rename_map[col] = "FECHA"
+            elif "referencia" in c:
+                rename_map[col] = "REFERENCIA"
+            elif "descrip" in c:
+                rename_map[col] = "DESCRIPCION"
+            elif "monto" in c:
+                rename_map[col] = "MONTO_RAW"
 
         df = df.rename(columns=rename_map)
 
@@ -757,8 +799,10 @@ def procesar_tesoro(df):
 
         def limpiar_numero(valor):
             valor = str(valor).replace(".", "").replace(",", ".")
-            try: return float(valor)
-            except: return 0
+            try:
+                return float(valor)
+            except:
+                return 0
 
         df["CREDITO"] = df.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df.columns else 0
         df["DEBITO"] = df.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df.columns else 0
@@ -936,10 +980,18 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAMIENTO GENERAL DE ARCHIVOS
+# 🔥 PROCESAMIENTO MERCANTIL - CON REGLAS ESPECÍFICAS PARA COMISIONES
 # =========================================================
 
 def procesar_archivo(df, usar_api=False, banco=""):
+    """
+    Procesa el archivo y clasifica movimientos en ingresos, egresos y comisiones.
+    
+    Args:
+        df: DataFrame con los movimientos en formato Mercantil
+        usar_api: Booleano para usar API BCV
+        banco: Nombre del banco (para aplicar reglas específicas)
+    """
     ingresos = []
     egresos = []
     comisiones = []
@@ -1014,13 +1066,14 @@ def procesar_archivo(df, usar_api=False, banco=""):
             registros_procesados.add(clave)
 
             # =========================================================
-            # 🔥 EVALUACIÓN CORRECTA: DETECTAR COMISIÓN PRIMERO (PREVENCION DE LIGUES)
+            # 🔥 REGLA ESPECIAL PARA MERCANTIL - TODAS LAS COMISIONES
             # =========================================================
-            es_comision_bancaria = False
+            es_comision_mercantil = False
             
-            # Evaluación directa para Mercantil
             if banco == "mercantil":
                 descripcion_upper = descripcion.upper()
+                
+                # 🔥 Lista completa de patrones de comisiones de Mercantil
                 patrones_comision_mercantil = [
                     "OP.CRED.DIRT. CLTE-CLTE",
                     "OP CRED DIRT CLTE CLTE",
@@ -1034,16 +1087,20 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "MANTENIMIENTO DE CUENTA",
                     "COMISION POR TRANSFERENCIA"
                 ]
+                
                 for patron in patrones_comision_mercantil:
                     if patron in descripcion_upper:
-                        es_comision_bancaria = True
+                        es_comision_mercantil = True
                         break
-            else:
-                # Evaluación para otros bancos
-                es_comision_bancaria = es_comision(descripcion, None)
+                
+                # Si es comisión de Mercantil, la clasificamos como tal
+                if es_comision_mercantil:
+                    comisiones.append(registro)
+                    continue
 
-            # Clasificación estricta por jerarquía
-            if es_comision_bancaria:
+            # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision
+            proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
+            if es_comision(descripcion, proveedor):
                 comisiones.append(registro)
             elif tipo in tipos_ingresos:
                 ingresos.append(registro)
@@ -1056,8 +1113,10 @@ def procesar_archivo(df, usar_api=False, banco=""):
     return ingresos, egresos, comisiones
 
 # =========================================================
-# PIPELINE CENTRAL
+# INTERFAZ PRINCIPAL
 # =========================================================
+
+df_ipago = None
 
 if archivo:
     st.info(f"📄 Archivo: **{archivo.name}** - {archivo.size/1024:.1f} KB")
@@ -1224,6 +1283,7 @@ if archivo:
                         else:
                             egresos.append(registro)
                 else:
+                    # 🔥 PASAR EL NOMBRE DEL BANCO A LA FUNCIÓN
                     ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api, banco=banco)
 
             df_ingresos = pd.DataFrame(ingresos)
@@ -1231,29 +1291,37 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # CRUCE CON IPAGO
+            # 🔥 CRUCE CON IPAGO - VERSIÓN MEJORADA (REFERENCIA + DESCRIPCIÓN)
             # =========================================================
             if archivo_ipago and not df_egresos.empty:
+                # Enriquecer egresos con datos de iPago
                 df_egresos = enriquecer_egresos_con_ipago(df_egresos, df_ipago)
                 
+                # 🔥 Separar comisiones de iPago (si las hay)
                 if "ES_COMISION" in df_egresos.columns:
                     mascara_comisiones_ipago = df_egresos["ES_COMISION"] == True
                     
                     if mascara_comisiones_ipago.any():
                         df_comisiones_extra = df_egresos[mascara_comisiones_ipago].copy()
+                        
+                        # Remover columnas internas
                         df_comisiones_extra = df_comisiones_extra.drop(
                             columns=["REFERENCIA_NORM", "DESCRIPCION_NORM", "CLAVE_CRUCE", "ES_COMISION"], 
                             errors="ignore"
                         )
                         
+                        # Agregar a comisiones existentes
                         if not df_comisiones.empty:
                             df_comisiones = pd.concat([df_comisiones, df_comisiones_extra], ignore_index=True)
                         else:
                             df_comisiones = df_comisiones_extra
                         
+                        # Remover comisiones de egresos
                         df_egresos = df_egresos[~mascara_comisiones_ipago].copy()
+                        
                         st.success(f"💳 Se movieron {len(df_comisiones_extra)} comisiones desde iPago a la sección de COMISIONES")
                 
+                # Limpiar columnas auxiliares
                 df_egresos = df_egresos.drop(
                     columns=["REFERENCIA_NORM", "DESCRIPCION_NORM", "CLAVE_CRUCE", "ES_COMISION"], 
                     errors="ignore"
@@ -1261,6 +1329,7 @@ if archivo:
                 
                 st.success(f"🎯 Egresos enriquecidos con iPago: {len(df_egresos)} registros")
 
+            # Completar columnas vacías obligatorias para el reporte en openpyxl
             for df_t in [df_ingresos, df_egresos, df_comisiones]:
                 if not df_t.empty:
                     if "STATUS" not in df_t.columns: df_t["STATUS"] = ""
@@ -1332,6 +1401,7 @@ if archivo:
                     titulo_cell.font = blanco
                     titulo_cell.alignment = centro
 
+                    # 🔥 HEADERS MEJORADOS CON DATOS DE IPAGO
                     headers = [
                         "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCIÓN ORIGINAL",
                         "MONTO BS", "TASA BCV", "MONTO USD", 
@@ -1366,7 +1436,7 @@ if archivo:
                         hoja.cell(row=fila_data, column=7).number_format = '$#,##0.00'
 
                         for col in range(1, 11):
-                            hoja.cell(row=fila_data, column=col).border = bórde if 'bórde' in locals() else borde
+                            hoja.cell(row=fila_data, column=col).border = borde
 
                         fila_data += 1
 
@@ -1447,4 +1517,13 @@ if archivo:
 else:
     st.markdown("""
     ### 👋 Clasificador Bancario Inteligente Multi-Banco
+
+    ## FUNCIONES
+    ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga.
+    ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
+    ✅ **NUEVO:** Cruce inteligente con iPago usando REFERENCIA + DESCRIPCIÓN.
+    ✅ **NUEVO:** Exporta con datos completos de iPago: Proveedor, Tipo de Egreso, Tipo de Pago.
+    ✅ **NUEVO:** Conserva la descripción original del banco y la reemplaza con la de iPago cuando hay coincidencia.
+    ✅ Calcula USD con tasa BCV real por fecha.
+    ✅ Exporta reporte profesional con todas las columnas.
     """)
