@@ -288,11 +288,11 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN BLINDADA
+# 🔥 PROCESAR VENEZUELA - VERSIÓN MEJORADA (USA TIPO DE MOVIMIENTO DIRECTAMENTE)
 # =========================================================
 
 def procesar_venezuela(df):
-    """Procesa el archivo del BDV barriendo espacios invisibles, horas ocultas y celdas vacías"""
+    """Procesa el archivo del BDV usando directamente la columna Tipo de Movimiento (NC/ND)"""
     st.info("Procesando Banco de Venezuela (Modo Protegido)...")
     
     try:
@@ -334,7 +334,11 @@ def procesar_venezuela(df):
                 # Extracción libre de cadenas ocultas \xa0 en descriptivos
                 referencia = str(fila[col_ref]).strip().replace("\xa0", "") if col_ref and pd.notna(fila[col_ref]) else ""
                 descripcion = str(fila[col_desc]).strip().replace("\xa0", "") if col_desc and pd.notna(fila[col_desc]) else ""
-                tipo = str(fila[col_tipo]).strip().upper() if col_tipo and pd.notna(fila[col_tipo]) else ""
+                
+                # 🔥 Obtener tipo de movimiento directamente de la columna
+                tipo_mov = ""
+                if col_tipo and pd.notna(fila[col_tipo]):
+                    tipo_mov = str(fila[col_tipo]).strip().upper()
                 
                 # Omitir metadatos de balances impresos en el cuerpo
                 if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
@@ -353,13 +357,29 @@ def procesar_venezuela(df):
                     val_debito = convertir_monto(clean_deb) or 0
                 
                 monto = 0
-                if val_credito and val_credito > 0:
-                    monto = val_credito
+                tipo = ""
+                
+                # 🔥 USAR DIRECTAMENTE EL TIPO DE MOVIMIENTO DE LA COLUMNA
+                if tipo_mov == "NC":
+                    monto = abs(val_credito)
                     tipo = "NC"
-                elif val_debito and val_debito > 0:
-                    monto = val_debito
+                elif tipo_mov == "ND":
+                    monto = abs(val_debito)
                     tipo = "ND"
                 else:
+                    # Fallback: si no hay tipo, inferir por el monto
+                    if abs(val_credito) > 0:
+                        monto = abs(val_credito)
+                        tipo = "NC"
+                    elif abs(val_debito) > 0:
+                        monto = abs(val_debito)
+                        tipo = "ND"
+                    else:
+                        continue
+                
+                # 🔥 IMPORTANTE: NO FILTRAR POR TIPO AQUÍ
+                # Permitir que TODOS los movimientos pasen (incluyendo ND de comisiones)
+                if monto <= 0:
                     continue
                 
                 movimientos.append({
@@ -370,7 +390,7 @@ def procesar_venezuela(df):
                     "MONTO": monto
                 })
                 
-            except Exception:
+            except Exception as e:
                 continue
                 
         df_resultado = pd.DataFrame(movimientos)
@@ -380,6 +400,7 @@ def procesar_venezuela(df):
             return pd.DataFrame()
             
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
         return df_resultado
         
     except Exception as e:
