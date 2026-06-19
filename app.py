@@ -342,126 +342,6 @@ def detectar_banco(nombre_archivo):
     return "mercantil"
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN MEJORADA (USA TIPO DE MOVIMIENTO DIRECTAMENTE)
-# =========================================================
-
-def procesar_venezuela(df):
-    """Procesa el archivo del BDV usando directamente la columna Tipo de Movimiento (NC/ND)"""
-    st.info("Procesando Banco de Venezuela (Modo Protegido)...")
-    
-    try:
-        # Barrido radical de espacios duros de Excel (\xa0) en nombres de columnas
-        df.columns = [
-            unicodedata.normalize("NFKD", str(c))
-            .encode("ascii", "ignore")
-            .decode("utf-8")
-            .strip()
-            .replace("\xa0", "")
-            for c in df.columns
-        ]
-        
-        # Mapeo posicional dinámico e independiente
-        col_fecha = next((c for c in df.columns if "fecha" in c.lower()), None)
-        col_ref = next((c for c in df.columns if "referencia" in c.lower() or "ref" in c.lower()), None)
-        col_desc = next((c for c in df.columns if "descrip" in c.lower() or "concepto" in c.lower()), None)
-        col_tipo = next((c for c in df.columns if "tipo" in c.lower() and "mov" in c.lower()), None)
-        col_credito = next((c for c in df.columns if "credito" in c.lower() or "haber" in c.lower()), None)
-        col_debito = next((c for c in df.columns if "debito" in c.lower() or "debe" in c.lower()), None)
-        
-        movimientos = []
-        
-        for idx, fila in df.iterrows():
-            try:
-                if not col_fecha or pd.isna(fila[col_fecha]):
-                    continue
-                
-                # Saneamiento de cadenas de fecha (corte de horas y unificación de guiones)
-                fecha_raw = str(fila[col_fecha]).strip().replace("\xa0", "")
-                if " " in fecha_raw:
-                    fecha_raw = fecha_raw.split(" ")[0]
-                fecha_raw = fecha_raw.replace("-", "/")
-                
-                fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
-                if pd.isna(fecha_val):
-                    continue
-                
-                # Extracción libre de cadenas ocultas \xa0 en descriptivos
-                referencia = str(fila[col_ref]).strip().replace("\xa0", "") if col_ref and pd.notna(fila[col_ref]) else ""
-                descripcion = str(fila[col_desc]).strip().replace("\xa0", "") if col_desc and pd.notna(fila[col_desc]) else ""
-                
-                # 🔥 Obtener tipo de movimiento directamente de la columna
-                tipo_mov = ""
-                if col_tipo and pd.notna(fila[col_tipo]):
-                    tipo_mov = str(fila[col_tipo]).strip().upper()
-                
-                # Omitir metadatos de balances impresos en el cuerpo
-                if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
-                    continue
-                
-                # Extracción limpia de montos eliminando basura tipográfica
-                val_credito = 0
-                val_debito = 0
-                
-                if col_credito and pd.notna(fila[col_credito]):
-                    clean_cred = str(fila[col_credito]).replace("\xa0", "").strip()
-                    val_credito = convertir_monto(clean_cred) or 0
-                    
-                if col_debito and pd.notna(fila[col_debito]):
-                    clean_deb = str(fila[col_debito]).replace("\xa0", "").strip()
-                    val_debito = convertir_monto(clean_deb) or 0
-                
-                monto = 0
-                tipo = ""
-                
-                # 🔥 USAR DIRECTAMENTE EL TIPO DE MOVIMIENTO DE LA COLUMNA
-                if tipo_mov == "NC":
-                    monto = abs(val_credito)
-                    tipo = "NC"
-                elif tipo_mov == "ND":
-                    monto = abs(val_debito)
-                    tipo = "ND"
-                else:
-                    # Fallback: si no hay tipo, inferir por el monto
-                    if abs(val_credito) > 0:
-                        monto = abs(val_credito)
-                        tipo = "NC"
-                    elif abs(val_debito) > 0:
-                        monto = abs(val_debito)
-                        tipo = "ND"
-                    else:
-                        continue
-                
-                # 🔥 IMPORTANTE: NO FILTRAR POR TIPO AQUÍ
-                # Permitir que TODOS los movimientos pasen (incluyendo ND de comisiones)
-                if monto <= 0:
-                    continue
-                
-                movimientos.append({
-                    "FECHA": fecha_val.strftime("%d/%m/%Y"),
-                    "REFERENCIA": referencia,
-                    "DESCRIPCION": descripcion,
-                    "TIPO": tipo,
-                    "MONTO": monto
-                })
-                
-            except Exception as e:
-                continue
-                
-        df_resultado = pd.DataFrame(movimientos)
-        
-        if df_resultado.empty:
-            st.error("❌ No se encontraron movimientos válidos en el archivo de Venezuela.")
-            return pd.DataFrame()
-            
-        st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
-        st.dataframe(df_resultado.head(10))
-        return df_resultado
-        
-    except Exception as e:
-        st.error(f"Error procesando Venezuela: {str(e)}")
-        return pd.DataFrame()
-
-# =========================================================
 # 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (CRUCE FLEXIBLE)
 # =========================================================
 
@@ -1039,123 +919,116 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN ESPECÍFICA PARA EL FORMATO BDV
+# 🔥 PROCESAR VENEZUELA - VERSIÓN DE DEPURACIÓN
 # =========================================================
 
 def procesar_venezuela_v2(df):
-    """Procesa el archivo del BDV - Versión específica para el formato del archivo"""
-    st.info("Procesando Banco de Venezuela...")
+    """Procesa el archivo del BDV - Versión de depuración"""
+    st.info("🔍 Procesando Banco de Venezuela (MODO DEPURACIÓN)...")
     
     try:
-        # Limpiar nombres de columnas - eliminar espacios y caracteres especiales
+        # 1. MOSTRAR INFORMACIÓN DEL ARCHIVO
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df)}")
+        st.write(f"- Número de columnas: {len(df.columns)}")
+        
+        # 2. MOSTRAR LOS NOMBRES DE LAS COLUMNAS
+        st.write("📋 **Nombres de columnas:**")
+        st.write(list(df.columns))
+        
+        # 3. MOSTRAR LAS PRIMERAS 5 FILAS
+        st.write("👁️ **Primeras 5 filas del archivo:**")
+        st.dataframe(df.head(5))
+        
+        # 4. LIMPIAR NOMBRES DE COLUMNAS
         df.columns = [
             str(c).strip().replace('\n', '').replace('\r', '').replace('\xa0', '')
             for c in df.columns
         ]
         
-        # Identificar columnas por nombre
-        col_fecha = None
-        col_ref = None
-        col_desc = None
-        col_tipo = None
-        col_credito = None
-        col_debito = None
+        st.write("📋 **Columnas después de limpiar:**")
+        st.write(list(df.columns))
         
-        for col in df.columns:
-            col_clean = str(col).strip().lower()
-            if 'fecha' in col_clean:
-                col_fecha = col
-            elif 'referencia' in col_clean:
-                col_ref = col
-            elif 'descripcion' in col_clean or 'descripción' in col_clean:
-                col_desc = col
-            elif 'tipo de movimiento' in col_clean or 'tipo' in col_clean:
-                col_tipo = col
-            elif 'credito' in col_clean or 'crédito' in col_clean:
-                col_credito = col
-            elif 'debito' in col_clean or 'débito' in col_clean:
-                col_debito = col
+        # 5. IDENTIFICAR COLUMNAS POR ÍNDICE (MÁS CONFIABLE)
+        # Estructura esperada: Día | Referencia | Descripción | Fecha | Tipo de Movimiento | Crédito | Débito
+        if len(df.columns) >= 7:
+            col_fecha = df.columns[3]  # Columna 4 (índice 3)
+            col_ref = df.columns[1]    # Columna 2 (índice 1)
+            col_desc = df.columns[2]   # Columna 3 (índice 2)
+            col_tipo = df.columns[4]   # Columna 5 (índice 4)
+            col_credito = df.columns[5] # Columna 6 (índice 5)
+            col_debito = df.columns[6]  # Columna 7 (índice 6)
+            
+            st.write("✅ **Columnas mapeadas por índice:**")
+            st.write(f"- Fecha: '{col_fecha}'")
+            st.write(f"- Referencia: '{col_ref}'")
+            st.write(f"- Descripción: '{col_desc}'")
+            st.write(f"- Tipo: '{col_tipo}'")
+            st.write(f"- Crédito: '{col_credito}'")
+            st.write(f"- Débito: '{col_debito}'")
+        else:
+            st.error(f"❌ El archivo tiene {len(df.columns)} columnas, se esperaban al menos 7")
+            return pd.DataFrame()
         
-        # 🔥 Si no encontró columnas por nombre, usar índices fijos
-        if col_fecha is None:
-            # El archivo tiene estructura fija: Día, Referencia, Descripción, Fecha, Tipo...
-            # Usar índices de columna
-            if len(df.columns) >= 7:
-                col_fecha = df.columns[3]  # Columna D (índice 3)
-                col_ref = df.columns[1]    # Columna B (índice 1)
-                col_desc = df.columns[2]   # Columna C (índice 2)
-                col_tipo = df.columns[4]   # Columna E (índice 4)
-                col_credito = df.columns[5] # Columna F (índice 5)
-                col_debito = df.columns[6]  # Columna G (índice 6)
-            else:
-                st.error("❌ El archivo no tiene la estructura esperada (mínimo 7 columnas)")
-                return pd.DataFrame()
-        
+        # 6. PROCESAR FILAS
         movimientos = []
+        filas_procesadas = 0
+        errores = []
         
         for idx, fila in df.iterrows():
             try:
                 # Verificar que existe fecha
-                if col_fecha is None or pd.isna(fila[col_fecha]):
+                if pd.isna(fila[col_fecha]):
                     continue
                 
-                # 🔥 PROCESAR FECHA
+                # Obtener fecha
                 fecha_raw = str(fila[col_fecha]).strip()
                 
-                # Intentar diferentes formatos
+                # Intentar parsear fecha
                 fecha_val = None
-                formatos = ["%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"]
-                for fmt in formatos:
-                    try:
-                        fecha_val = pd.to_datetime(fecha_raw, format=fmt, errors="coerce")
-                        if pd.notna(fecha_val):
-                            break
-                    except:
-                        continue
+                try:
+                    fecha_val = pd.to_datetime(fecha_raw, format="%d/%m/%Y", errors="coerce")
+                except:
+                    pass
                 
-                # Fallback
                 if pd.isna(fecha_val):
                     try:
                         fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
                     except:
-                        continue
+                        pass
                 
                 if pd.isna(fecha_val):
+                    errores.append(f"Fila {idx}: Fecha inválida '{fecha_raw}'")
                     continue
                 
-                # Obtener referencia y descripción
-                referencia = str(fila[col_ref]).strip() if col_ref and pd.notna(fila[col_ref]) else ""
-                descripcion = str(fila[col_desc]).strip() if col_desc and pd.notna(fila[col_desc]) else ""
-                
-                # Obtener tipo de movimiento
-                tipo_mov = ""
-                if col_tipo and pd.notna(fila[col_tipo]):
-                    tipo_mov = str(fila[col_tipo]).strip().upper()
+                # Obtener datos
+                referencia = str(fila[col_ref]).strip() if pd.notna(fila[col_ref]) else ""
+                descripcion = str(fila[col_desc]).strip() if pd.notna(fila[col_desc]) else ""
+                tipo_mov = str(fila[col_tipo]).strip().upper() if pd.notna(fila[col_tipo]) else ""
                 
                 # Saltar filas de saldos
                 if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
                     continue
                 
-                # 🔥 PROCESAR MONTOS - Limpiar formato venezolano (puntos y comas)
+                # Procesar crédito
                 val_credito = 0
-                val_debito = 0
-                
-                if col_credito and pd.notna(fila[col_credito]):
+                if pd.notna(fila[col_credito]):
                     clean_cred = str(fila[col_credito]).strip()
-                    # Eliminar puntos (separadores de miles) y convertir coma a punto (decimal)
                     clean_cred = clean_cred.replace(".", "").replace(",", ".")
                     try:
                         val_credito = float(clean_cred) if clean_cred else 0
                     except:
-                        val_credito = 0
-                    
-                if col_debito and pd.notna(fila[col_debito]):
+                        pass
+                
+                # Procesar débito
+                val_debito = 0
+                if pd.notna(fila[col_debito]):
                     clean_deb = str(fila[col_debito]).strip()
                     clean_deb = clean_deb.replace(".", "").replace(",", ".")
                     try:
                         val_debito = float(clean_deb) if clean_deb else 0
                     except:
-                        val_debito = 0
+                        pass
                 
                 # Determinar tipo y monto
                 monto = 0
@@ -1168,7 +1041,6 @@ def procesar_venezuela_v2(df):
                     monto = abs(val_debito)
                     tipo = "ND"
                 else:
-                    # Inferir por monto
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
@@ -1181,7 +1053,12 @@ def procesar_venezuela_v2(df):
                 if monto <= 0:
                     continue
                 
-                # Guardar movimiento
+                filas_procesadas += 1
+                
+                # Mostrar primeras 5 filas procesadas
+                if filas_procesadas <= 5:
+                    st.write(f"✅ **Fila {idx} procesada:** Fecha={fecha_val.strftime('%d/%m/%Y')}, Ref={referencia}, Tipo={tipo}, Monto={monto:,.2f}")
+                
                 movimientos.append({
                     "FECHA": fecha_val.strftime("%d/%m/%Y"),
                     "FECHA_OBJ": fecha_val,
@@ -1192,12 +1069,25 @@ def procesar_venezuela_v2(df):
                 })
                 
             except Exception as e:
+                errores.append(f"Fila {idx}: Error - {str(e)}")
                 continue
+        
+        # 7. MOSTRAR RESULTADOS
+        st.write(f"📊 **Filas procesadas exitosamente:** {filas_procesadas}")
+        
+        if errores:
+            st.warning(f"⚠️ {len(errores)} errores encontrados:")
+            for err in errores[:10]:  # Mostrar primeros 10 errores
+                st.write(f"- {err}")
         
         df_resultado = pd.DataFrame(movimientos)
         
         if df_resultado.empty:
             st.error("❌ No se encontraron movimientos válidos en el archivo de Venezuela.")
+            st.write("💡 **Posibles causas:**")
+            st.write("1. El archivo no tiene la estructura esperada")
+            st.write("2. Los datos están en una hoja diferente")
+            st.write("3. El archivo tiene un formato diferente (¿es .xls en lugar de .xlsx?)")
             return pd.DataFrame()
         
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
@@ -1205,7 +1095,7 @@ def procesar_venezuela_v2(df):
         return df_resultado
         
     except Exception as e:
-        st.error(f"Error procesando Venezuela: {str(e)}")
+        st.error(f"❌ Error general en procesar_venezuela_v2: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
         return pd.DataFrame()
@@ -1473,7 +1363,7 @@ if archivo:
         elif banco == "venezuela":
             # 🔥 USAR LAS NUEVAS FUNCIONES PARA VENEZUELA
             df_raw = leer_excel_con_encabezados(archivo)
-            df_normalizado = procesar_venezuela_v2(df_raw)  # Nueva función
+            df_normalizado = procesar_venezuela_v2(df_raw)  # Nueva función de depuración
             if df_normalizado.empty:
                 st.stop()
             df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)  # Nueva función
