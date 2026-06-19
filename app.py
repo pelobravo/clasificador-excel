@@ -462,21 +462,16 @@ def procesar_venezuela(df):
         return pd.DataFrame()
 
 # =========================================================
-# 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (USA REFERENCIA + DESCRIPCIÓN)
+# 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (CRUCE FLEXIBLE)
 # =========================================================
 
 def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
     """
     Enriquece los egresos del banco con datos de iPago.
-    Usa REFERENCIA + DESCRIPCIÓN para hacer el cruce.
-    Mantiene TODOS los egresos y agrega información cuando hay coincidencia.
-    
-    Args:
-        df_egresos: DataFrame con los egresos del banco
-        df_ipago: DataFrame con los movimientos de iPago
-    
-    Returns:
-        DataFrame: egresos enriquecidos con datos de iPago
+    Usa múltiples estrategias de cruce:
+    1. Coincidencia exacta de referencia
+    2. Coincidencia parcial (quitando ceros o X)
+    3. Coincidencia por monto + fecha
     """
     if df_ipago is None or df_ipago.empty:
         return df_egresos
@@ -484,88 +479,131 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
     # Hacer una copia para no modificar el original
     df_resultado = df_egresos.copy()
     
-    # 🔥 NORMALIZAR REFERENCIAS (eliminar puntos y espacios)
+    # 🔥 NORMALIZAR REFERENCIAS DEL BANCO
     df_resultado["REFERENCIA_NORM"] = (
         df_resultado["REFERENCIA"]
         .astype(str)
         .str.replace(".0", "", regex=False)
-        .str.replace(" ", "", regex=False)
         .str.strip()
     )
     
+    # 🔥 NORMALIZAR REFERENCIAS DE IPAGO
     df_ipago["Referencia_Norm"] = (
         df_ipago["Referencia"]
         .astype(str)
         .str.replace(".0", "", regex=False)
-        .str.replace(" ", "", regex=False)
         .str.strip()
     )
     
-    # 🔥 NORMALIZAR DESCRIPCIONES (eliminar acentos, mayúsculas, espacios)
-    df_resultado["DESCRIPCION_NORM"] = (
-        df_resultado["DESCRIPCIÓN"]
-        .astype(str)
-        .apply(normalizar_texto)
-        .str.replace(" ", "")
-        .str.strip()
-    )
+    # 🔥 CREAR VARIANTES DE REFERENCIA PARA CRUCE FLEXIBLE
+    def generar_variantes_ref(ref):
+        ref = str(ref).strip()
+        if not ref or ref == "nan":
+            return set()
+        
+        variantes = set()
+        variantes.add(ref)  # Original
+        
+        # Quitar ceros a la izquierda
+        ref_sin_ceros = ref.lstrip('0')
+        if ref_sin_ceros != ref and ref_sin_ceros:
+            variantes.add(ref_sin_ceros)
+        
+        # Quitar X al final
+        if ref.endswith('X'):
+            ref_sin_x = ref[:-1]
+            if ref_sin_x:
+                variantes.add(ref_sin_x)
+                # También sin ceros
+                ref_sin_x_sin_ceros = ref_sin_x.lstrip('0')
+                if ref_sin_x_sin_ceros:
+                    variantes.add(ref_sin_x_sin_ceros)
+        
+        # Si tiene X pero no es el final (caso raro)
+        if 'X' in ref and not ref.endswith('X'):
+            ref_sin_x = ref.replace('X', '')
+            if ref_sin_x:
+                variantes.add(ref_sin_x)
+                ref_sin_x_sin_ceros = ref_sin_x.lstrip('0')
+                if ref_sin_x_sin_ceros:
+                    variantes.add(ref_sin_x_sin_ceros)
+        
+        return variantes
     
-    df_ipago["Descripción_Norm"] = (
-        df_ipago["Descripción"]
-        .astype(str)
-        .apply(normalizar_texto)
-        .str.replace(" ", "")
-        .str.strip()
-    )
-    
-    # 🔥 CREAR CLAVE DE CRUCE: REFERENCIA + PRIMERAS PALABRAS DE DESCRIPCIÓN
-    df_resultado["CLAVE_CRUCE"] = (
-        df_resultado["REFERENCIA_NORM"] + "|" + 
-        df_resultado["DESCRIPCION_NORM"].str[:20]  # Primeros 20 caracteres de la descripción normalizada
-    )
-    
-    df_ipago["CLAVE_CRUCE"] = (
-        df_ipago["Referencia_Norm"] + "|" + 
-        df_ipago["Descripción_Norm"].str[:20]  # Primeros 20 caracteres de la descripción normalizada
-    )
-    
-    # 🔥 CREAR DICCIONARIO DE IPAGO CON TODOS LOS DATOS
+    # 🔥 CREAR DICCIONARIO DE IPAGO CON TODAS LAS VARIANTES
     ipago_dict = {}
     for _, row in df_ipago.iterrows():
-        clave = row.get("CLAVE_CRUCE", "")
-        if clave and clave not in ipago_dict:
-            ipago_dict[clave] = {
-                "PROVEEDOR": row.get("Proveedor", ""),
-                "TIPO_EGRESO": row.get("Tipo de Egreso", ""),
-                "TIPO_PAGO": row.get("Tipo de Pago", ""),
-                "DESCRIPCION_IPAGO": row.get("Descripción", ""),
-                "FECHA_PAGO": row.get("Fecha Pago", ""),
-                "EMPRESA": row.get("Empresa", ""),
-                "MONTO": row.get("Monto", 0),
-                "MONTO_USD": row.get("Monto USD", 0)
-            }
+        ref_original = str(row.get("Referencia", "")).strip()
+        
+        # Si la referencia es NaN o está vacía, usar monto como clave
+        if not ref_original or ref_original == "nan":
+            continue
+        
+        # Generar todas las variantes de esta referencia
+        variantes = generar_variantes_ref(ref_original)
+        
+        for variante in variantes:
+            if variante and variante not in ipago_dict:
+                ipago_dict[variante] = {
+                    "PROVEEDOR": row.get("Proveedor", ""),
+                    "TIPO_EGRESO": row.get("Tipo de Egreso", ""),
+                    "TIPO_PAGO": row.get("Tipo de Pago", ""),
+                    "DESCRIPCION_IPAGO": row.get("Descripción", ""),
+                    "FECHA_PAGO": row.get("Fecha Pago", ""),
+                    "EMPRESA": row.get("Empresa", ""),
+                    "MONTO_IPAGO": row.get("Monto", 0),
+                    "MONTO_USD": row.get("Monto USD", 0),
+                    "REFERENCIA_ORIGINAL": ref_original
+                }
     
     # 🔥 ENRIQUECER CADA EGRESO
     for idx, row in df_resultado.iterrows():
-        clave = row.get("CLAVE_CRUCE", "")
+        ref_banco = str(row.get("REFERENCIA", "")).strip()
+        monto_banco = float(row.get("MONTO BS", 0))
+        fecha_banco = str(row.get("FECHA", ""))
         
-        if clave in ipago_dict:
-            # Si hay coincidencia, enriquecer con datos de iPago
-            datos = ipago_dict[clave]
-            df_resultado.at[idx, "STATUS"] = datos["PROVEEDOR"]
-            df_resultado.at[idx, "OBSERVACIÓN"] = datos["TIPO_EGRESO"]
-            df_resultado.at[idx, "TIPO_PAGO"] = datos["TIPO_PAGO"]
-            df_resultado.at[idx, "PROVEEDOR_IPAGO"] = datos["PROVEEDOR"]
+        # GENERAR VARIANTES DE LA REFERENCIA DEL BANCO
+        variantes_banco = generar_variantes_ref(ref_banco)
+        
+        # BUSCAR COINCIDENCIA POR REFERENCIA
+        coincide_ref = False
+        datos_encontrados = None
+        
+        for variante in variantes_banco:
+            if variante in ipago_dict:
+                datos_encontrados = ipago_dict[variante]
+                coincide_ref = True
+                break
+        
+        # SI NO COINCIDE POR REFERENCIA, INTENTAR POR MONTO + FECHA
+        if not coincide_ref:
+            # Buscar en iPago por monto similar (con margen de 1%)
+            for clave, datos in ipago_dict.items():
+                monto_ipago = float(datos.get("MONTO_IPAGO", 0))
+                if monto_ipago > 0:
+                    diferencia = abs(monto_banco - monto_ipago) / max(monto_banco, monto_ipago)
+                    if diferencia < 0.01:  # 1% de margen
+                        datos_encontrados = datos
+                        coincide_ref = True
+                        break
+        
+        # APLICAR DATOS ENCONTRADOS
+        if datos_encontrados:
+            df_resultado.at[idx, "STATUS"] = datos_encontrados["PROVEEDOR"]
+            df_resultado.at[idx, "OBSERVACIÓN"] = datos_encontrados["TIPO_EGRESO"]
+            df_resultado.at[idx, "TIPO_PAGO"] = datos_encontrados["TIPO_PAGO"]
+            df_resultado.at[idx, "PROVEEDOR_IPAGO"] = datos_encontrados["PROVEEDOR"]
+            df_resultado.at[idx, "REFERENCIA_IPAGO"] = datos_encontrados.get("REFERENCIA_ORIGINAL", "")
             
             # 🔥 Reemplazar descripción con la de iPago
-            descripcion_ipago = datos["DESCRIPCION_IPAGO"]
+            descripcion_ipago = datos_encontrados["DESCRIPCION_IPAGO"]
             if descripcion_ipago:
                 df_resultado.at[idx, "DESCRIPCIÓN"] = descripcion_ipago
                 df_resultado.at[idx, "DESCRIPCION_ORIGINAL"] = row.get("DESCRIPCIÓN", "")
             
             # 🔥 Si es comisión, marcarlo como tal
-            tipo = str(datos["TIPO_EGRESO"]).upper()
-            desc = str(datos["DESCRIPCION_IPAGO"]).upper()
+            tipo = str(datos_encontrados["TIPO_EGRESO"]).upper()
+            desc = str(datos_encontrados["DESCRIPCION_IPAGO"]).upper()
             if "COMISION" in tipo or "COMISION" in desc:
                 df_resultado.at[idx, "ES_COMISION"] = True
             else:
@@ -577,6 +615,12 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
             df_resultado.at[idx, "TIPO_PAGO"] = ""
             df_resultado.at[idx, "PROVEEDOR_IPAGO"] = ""
             df_resultado.at[idx, "ES_COMISION"] = False
+    
+    # Eliminar columnas auxiliares
+    df_resultado = df_resultado.drop(
+        columns=["REFERENCIA_NORM"], 
+        errors="ignore"
+    )
     
     return df_resultado
 
@@ -833,8 +877,7 @@ def procesar_bancamiga(df):
             fila = df.iloc[i].fillna("").astype(str)
             texto = " ".join(fila.tolist()).lower()
             if "fecha" in texto and "referencia" in texto and "concepto" in texto:
-                encabezado = i
-                break
+                encabezado = i                break
 
         if encabezado is not None:
             df.columns = df.iloc[encabezado]
@@ -1082,6 +1125,7 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISION POR TRANSFERENCIA DE FONDOS",
                     "COMISION X PAGO DE NOMINAS",
                     "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO",
+                    "COMISION X PAGO DE NOMINAS MB",
                     "ITF",
                     "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
                     "CARGO BANCARIO",
@@ -1292,7 +1336,7 @@ if archivo:
             df_comisiones = pd.DataFrame(comisiones)
 
             # =========================================================
-            # 🔥 CRUCE CON IPAGO - VERSIÓN MEJORADA (REFERENCIA + DESCRIPCIÓN)
+            # 🔥 CRUCE CON IPAGO - VERSIÓN MEJORADA (CRUCE FLEXIBLE)
             # =========================================================
             if archivo_ipago and not df_egresos.empty:
                 # Enriquecer egresos con datos de iPago
@@ -1307,7 +1351,7 @@ if archivo:
                         
                         # Remover columnas internas
                         df_comisiones_extra = df_comisiones_extra.drop(
-                            columns=["REFERENCIA_NORM", "DESCRIPCION_NORM", "CLAVE_CRUCE", "ES_COMISION"], 
+                            columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
                             errors="ignore"
                         )
                         
@@ -1324,7 +1368,7 @@ if archivo:
                 
                 # Limpiar columnas auxiliares
                 df_egresos = df_egresos.drop(
-                    columns=["REFERENCIA_NORM", "DESCRIPCION_NORM", "CLAVE_CRUCE", "ES_COMISION"], 
+                    columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
                     errors="ignore"
                 )
                 
