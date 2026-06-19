@@ -528,6 +528,20 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
                 if ref_sin_x_sin_ceros:
                     variantes.add(ref_sin_x_sin_ceros)
         
+        # 🔥 NUEVO PARA VENEZUELA: Si la referencia tiene 11 dígitos y comienza con 0
+        if len(ref) >= 10 and ref.startswith('0'):
+            ref_sin_cero_inicial = ref[1:]
+            if ref_sin_cero_inicial:
+                variantes.add(ref_sin_cero_inicial)
+                variantes.add(ref_sin_cero_inicial.lstrip('0'))
+        
+        # 🔥 NUEVO PARA VENEZUELA: Si la referencia tiene formato numérico con puntos
+        if '.' in ref:
+            ref_sin_puntos = ref.replace('.', '')
+            if ref_sin_puntos:
+                variantes.add(ref_sin_puntos)
+                variantes.add(ref_sin_puntos.lstrip('0'))
+        
         return variantes
     
     # 🔥 CREAR DICCIONARIO DE IPAGO CON TODAS LAS VARIANTES
@@ -1025,6 +1039,214 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
+# 🔥 PROCESAMIENTO VENEZUELA - FUNCIONES INDEPENDIENTES (NO AFECTAN A MERCANTIL)
+# =========================================================
+
+def procesar_venezuela_v2(df):
+    """Procesa el archivo del BDV - Versión mejorada sin afectar a otros bancos"""
+    st.info("Procesando Banco de Venezuela...")
+    
+    try:
+        # Limpiar nombres de columnas
+        df.columns = [
+            unicodedata.normalize("NFKD", str(c))
+            .encode("ascii", "ignore")
+            .decode("utf-8")
+            .strip()
+            .replace("\xa0", "")
+            for c in df.columns
+        ]
+        
+        # Identificar columnas por nombre
+        col_fecha = next((c for c in df.columns if "fecha" in c.lower()), None)
+        col_ref = next((c for c in df.columns if "referencia" in c.lower() or "ref" in c.lower()), None)
+        col_desc = next((c for c in df.columns if "descrip" in c.lower() or "concepto" in c.lower()), None)
+        col_tipo = next((c for c in df.columns if "tipo" in c.lower() and "mov" in c.lower()), None)
+        col_credito = next((c for c in df.columns if "credito" in c.lower() or "haber" in c.lower()), None)
+        col_debito = next((c for c in df.columns if "debito" in c.lower() or "debe" in c.lower()), None)
+        
+        movimientos = []
+        
+        for idx, fila in df.iterrows():
+            try:
+                # Verificar que existe fecha
+                if not col_fecha or pd.isna(fila[col_fecha]):
+                    continue
+                
+                # 🔥 PROCESAR FECHA - MÚLTIPLES FORMATOS
+                fecha_raw = str(fila[col_fecha]).strip().replace("\xa0", "")
+                
+                # Si tiene hora, separar
+                if " " in fecha_raw:
+                    fecha_raw = fecha_raw.split(" ")[0]
+                
+                # Reemplazar guiones por slashes
+                fecha_raw = fecha_raw.replace("-", "/")
+                
+                # Intentar diferentes formatos
+                fecha_val = None
+                formatos = ["%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"]
+                for fmt in formatos:
+                    try:
+                        fecha_val = pd.to_datetime(fecha_raw, format=fmt, errors="coerce")
+                        if pd.notna(fecha_val):
+                            break
+                    except:
+                        continue
+                
+                # Fallback
+                if pd.isna(fecha_val):
+                    try:
+                        fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
+                    except:
+                        continue
+                
+                if pd.isna(fecha_val):
+                    continue
+                
+                # Obtener referencia y descripción
+                referencia = str(fila[col_ref]).strip().replace("\xa0", "") if col_ref and pd.notna(fila[col_ref]) else ""
+                descripcion = str(fila[col_desc]).strip().replace("\xa0", "") if col_desc and pd.notna(fila[col_desc]) else ""
+                
+                # Obtener tipo de movimiento
+                tipo_mov = ""
+                if col_tipo and pd.notna(fila[col_tipo]):
+                    tipo_mov = str(fila[col_tipo]).strip().upper()
+                
+                # Saltar filas de saldos
+                if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
+                    continue
+                
+                # 🔥 PROCESAR MONTOS - Limpiar formato venezolano (puntos y comas)
+                val_credito = 0
+                val_debito = 0
+                
+                if col_credito and pd.notna(fila[col_credito]):
+                    clean_cred = str(fila[col_credito]).replace("\xa0", "").strip()
+                    # Eliminar puntos (separadores de miles) y convertir coma a punto (decimal)
+                    clean_cred = clean_cred.replace(".", "").replace(",", ".")
+                    try:
+                        val_credito = float(clean_cred) if clean_cred else 0
+                    except:
+                        val_credito = 0
+                    
+                if col_debito and pd.notna(fila[col_debito]):
+                    clean_deb = str(fila[col_debito]).replace("\xa0", "").strip()
+                    clean_deb = clean_deb.replace(".", "").replace(",", ".")
+                    try:
+                        val_debito = float(clean_deb) if clean_deb else 0
+                    except:
+                        val_debito = 0
+                
+                # Determinar tipo y monto
+                monto = 0
+                tipo = ""
+                
+                if tipo_mov == "NC":
+                    monto = abs(val_credito)
+                    tipo = "NC"
+                elif tipo_mov == "ND":
+                    monto = abs(val_debito)
+                    tipo = "ND"
+                else:
+                    # Inferir por monto
+                    if abs(val_credito) > 0:
+                        monto = abs(val_credito)
+                        tipo = "NC"
+                    elif abs(val_debito) > 0:
+                        monto = abs(val_debito)
+                        tipo = "ND"
+                    else:
+                        continue
+                
+                if monto <= 0:
+                    continue
+                
+                # Guardar movimiento
+                movimientos.append({
+                    "FECHA": fecha_val.strftime("%d/%m/%Y"),
+                    "FECHA_OBJ": fecha_val,
+                    "REFERENCIA": referencia,
+                    "DESCRIPCION": descripcion,
+                    "TIPO": tipo,
+                    "MONTO": monto
+                })
+                
+            except Exception as e:
+                continue
+        
+        df_resultado = pd.DataFrame(movimientos)
+        
+        if df_resultado.empty:
+            st.error("❌ No se encontraron movimientos válidos en el archivo de Venezuela.")
+            return pd.DataFrame()
+        
+        st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
+        return df_resultado
+        
+    except Exception as e:
+        st.error(f"Error procesando Venezuela: {str(e)}")
+        return pd.DataFrame()
+
+
+def convertir_venezuela_a_formato_mercantil(df):
+    """Convierte DataFrame de Venezuela al formato Mercantil - SIN AFECTAR A MERCANTIL"""
+    datos_convertidos = []
+    
+    for idx, fila in df.iterrows():
+        try:
+            # Obtener fecha
+            fecha = None
+            if "FECHA_OBJ" in fila and pd.notna(fila["FECHA_OBJ"]):
+                fecha = fila["FECHA_OBJ"]
+            elif "FECHA" in fila and pd.notna(fila["FECHA"]):
+                fecha = fila["FECHA"]
+            else:
+                continue
+            
+            if pd.isna(fecha):
+                continue
+            
+            # Convertir a string
+            if isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha_str = fecha.strftime("%d/%m/%Y")
+            else:
+                try:
+                    fecha_dt = pd.to_datetime(fecha, dayfirst=True, errors="coerce")
+                    if pd.notna(fecha_dt):
+                        fecha_str = fecha_dt.strftime("%d/%m/%Y")
+                    else:
+                        fecha_str = str(fecha)
+                except:
+                    fecha_str = str(fecha)
+            
+            tipo = fila.get("TIPO", "") or ""
+            descripcion = fila.get("DESCRIPCION", "") or ""
+            referencia = fila.get("REFERENCIA", "") or ""
+            monto = fila.get("MONTO", 0) or 0
+            
+            fila_convertida = [
+                "",           # col0
+                "",           # col1  
+                "",           # col2
+                fecha_str,    # col3 - FECHA
+                referencia,   # col4 - REFERENCIA
+                tipo,         # col5 - TIPO (NC/ND)
+                descripcion,  # col6 - DESCRIPCION
+                monto,        # col7 - MONTO BS
+                "",           # col8
+                "",           # col9
+            ]
+            datos_convertidos.append(fila_convertida)
+            
+        except Exception as e:
+            continue
+    
+    df_convertido = pd.DataFrame(datos_convertidos)
+    return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
+
+# =========================================================
 # 🔥 PROCESAMIENTO MERCANTIL - CON REGLAS ESPECÍFICAS PARA COMISIONES
 # =========================================================
 
@@ -1228,11 +1450,12 @@ if archivo:
                 st.stop()
             
         elif banco == "venezuela":
+            # 🔥 USAR LAS NUEVAS FUNCIONES PARA VENEZUELA
             df_raw = leer_excel_con_encabezados(archivo)
-            df_normalizado = procesar_venezuela(df_raw)
+            df_normalizado = procesar_venezuela_v2(df_raw)  # Nueva función
             if df_normalizado.empty:
                 st.stop()
-            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
+            df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)  # Nueva función
             
         elif banco == "bnc":
             df_raw = leer_excel_con_encabezados(archivo)
