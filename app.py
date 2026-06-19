@@ -919,64 +919,40 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN DE DEPURACIÓN
+# 🔥 PROCESAR VENEZUELA - VERSIÓN SIMPLIFICADA (SIN ENCABEZADOS)
 # =========================================================
 
-def procesar_venezuela_v2(df):
-    """Procesa el archivo del BDV - Versión de depuración"""
-    st.info("🔍 Procesando Banco de Venezuela (MODO DEPURACIÓN)...")
+def procesar_venezuela_simple(df):
+    """Procesa el archivo del BDV usando índices fijos (sin encabezados)"""
+    st.info("🔍 Procesando Banco de Venezuela (MODO SIMPLE)...")
     
     try:
-        # 1. MOSTRAR INFORMACIÓN DEL ARCHIVO
+        # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
         st.write(f"- Número de filas: {len(df)}")
         st.write(f"- Número de columnas: {len(df.columns)}")
         
-        # 2. MOSTRAR LOS NOMBRES DE LAS COLUMNAS
-        st.write("📋 **Nombres de columnas:**")
-        st.write(list(df.columns))
+        # Mostrar primeras filas
+        st.write("👁️ **Primeras 10 filas del archivo (sin encabezados):**")
+        st.dataframe(df.head(10))
         
-        # 3. MOSTRAR LAS PRIMERAS 5 FILAS
-        st.write("👁️ **Primeras 5 filas del archivo:**")
-        st.dataframe(df.head(5))
+        # Índices fijos para el formato BDV
+        # Columna 0: Día | Columna 1: Referencia | Columna 2: Descripción | Columna 3: Fecha | Columna 4: Tipo | Columna 5: Crédito | Columna 6: Débito
+        col_fecha = 3
+        col_ref = 1
+        col_desc = 2
+        col_tipo = 4
+        col_credito = 5
+        col_debito = 6
         
-        # 4. LIMPIAR NOMBRES DE COLUMNAS
-        df.columns = [
-            str(c).strip().replace('\n', '').replace('\r', '').replace('\xa0', '')
-            for c in df.columns
-        ]
-        
-        st.write("📋 **Columnas después de limpiar:**")
-        st.write(list(df.columns))
-        
-        # 5. IDENTIFICAR COLUMNAS POR ÍNDICE (MÁS CONFIABLE)
-        # Estructura esperada: Día | Referencia | Descripción | Fecha | Tipo de Movimiento | Crédito | Débito
-        if len(df.columns) >= 7:
-            col_fecha = df.columns[3]  # Columna 4 (índice 3)
-            col_ref = df.columns[1]    # Columna 2 (índice 1)
-            col_desc = df.columns[2]   # Columna 3 (índice 2)
-            col_tipo = df.columns[4]   # Columna 5 (índice 4)
-            col_credito = df.columns[5] # Columna 6 (índice 5)
-            col_debito = df.columns[6]  # Columna 7 (índice 6)
-            
-            st.write("✅ **Columnas mapeadas por índice:**")
-            st.write(f"- Fecha: '{col_fecha}'")
-            st.write(f"- Referencia: '{col_ref}'")
-            st.write(f"- Descripción: '{col_desc}'")
-            st.write(f"- Tipo: '{col_tipo}'")
-            st.write(f"- Crédito: '{col_credito}'")
-            st.write(f"- Débito: '{col_debito}'")
-        else:
-            st.error(f"❌ El archivo tiene {len(df.columns)} columnas, se esperaban al menos 7")
-            return pd.DataFrame()
-        
-        # 6. PROCESAR FILAS
         movimientos = []
         filas_procesadas = 0
-        errores = []
         
-        for idx, fila in df.iterrows():
+        # Empezar desde la fila 1 (saltar encabezados)
+        for idx in range(1, len(df)):
             try:
+                fila = df.iloc[idx]
+                
                 # Verificar que existe fecha
                 if pd.isna(fila[col_fecha]):
                     continue
@@ -998,7 +974,6 @@ def procesar_venezuela_v2(df):
                         pass
                 
                 if pd.isna(fecha_val):
-                    errores.append(f"Fila {idx}: Fecha inválida '{fecha_raw}'")
                     continue
                 
                 # Obtener datos
@@ -1069,25 +1044,14 @@ def procesar_venezuela_v2(df):
                 })
                 
             except Exception as e:
-                errores.append(f"Fila {idx}: Error - {str(e)}")
                 continue
         
-        # 7. MOSTRAR RESULTADOS
         st.write(f"📊 **Filas procesadas exitosamente:** {filas_procesadas}")
-        
-        if errores:
-            st.warning(f"⚠️ {len(errores)} errores encontrados:")
-            for err in errores[:10]:  # Mostrar primeros 10 errores
-                st.write(f"- {err}")
         
         df_resultado = pd.DataFrame(movimientos)
         
         if df_resultado.empty:
             st.error("❌ No se encontraron movimientos válidos en el archivo de Venezuela.")
-            st.write("💡 **Posibles causas:**")
-            st.write("1. El archivo no tiene la estructura esperada")
-            st.write("2. Los datos están en una hoja diferente")
-            st.write("3. El archivo tiene un formato diferente (¿es .xls en lugar de .xlsx?)")
             return pd.DataFrame()
         
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
@@ -1095,7 +1059,7 @@ def procesar_venezuela_v2(df):
         return df_resultado
         
     except Exception as e:
-        st.error(f"❌ Error general en procesar_venezuela_v2: {str(e)}")
+        st.error(f"❌ Error general en procesar_venezuela_simple: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
         return pd.DataFrame()
@@ -1361,12 +1325,12 @@ if archivo:
                 st.stop()
             
         elif banco == "venezuela":
-            # 🔥 USAR LAS NUEVAS FUNCIONES PARA VENEZUELA
-            df_raw = leer_excel_con_encabezados(archivo)
-            df_normalizado = procesar_venezuela_v2(df_raw)  # Nueva función de depuración
+            # 🔥 LEER SIN ENCABEZADOS (igual que Mercantil)
+            df_raw = leer_excel_sin_encabezados(archivo)
+            df_normalizado = procesar_venezuela_simple(df_raw)
             if df_normalizado.empty:
                 st.stop()
-            df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)  # Nueva función
+            df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)
             
         elif banco == "bnc":
             df_raw = leer_excel_con_encabezados(archivo)
