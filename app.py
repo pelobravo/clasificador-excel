@@ -866,7 +866,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA
+# PROCESAR BANCAMIGA - CORREGIDO
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -877,7 +877,8 @@ def procesar_bancamiga(df):
             fila = df.iloc[i].fillna("").astype(str)
             texto = " ".join(fila.tolist()).lower()
             if "fecha" in texto and "referencia" in texto and "concepto" in texto:
-                encabezado = i                break
+                encabezado = i
+                break
 
         if encabezado is not None:
             df.columns = df.iloc[encabezado]
