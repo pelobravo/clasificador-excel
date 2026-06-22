@@ -877,8 +877,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
-# =========================================================
-# CONVERTIR A FORMATO MERCANTIL
+# =========================================================# CONVERTIR A FORMATO MERCANTIL
 # =========================================================
 
 def convertir_a_formato_mercantil(df, banco):
@@ -1333,7 +1332,16 @@ if archivo:
             df_normalizado = procesar_venezuela_simple(df_raw)
             if df_normalizado.empty:
                 st.stop()
+            
+            # Venezuela trabaja directamente con el dataframe normalizado
             df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)
+            
+            # Fechas para Venezuela
+            fechas_convertidas = pd.to_datetime(
+                df_normalizado["FECHA"],
+                dayfirst=True,
+                errors="coerce"
+            )
             
         elif banco == "bnc":
             df_raw = leer_excel_con_encabezados(archivo)
@@ -1355,6 +1363,9 @@ if archivo:
                     format="%d%m%Y",
                     errors="coerce"
                 )
+            elif banco == "venezuela":
+                # Ya tenemos fechas_convertidas definidas arriba
+                pass
             else:
                 fechas_convertidas = pd.to_datetime(
                     df_original.iloc[:, 3],
@@ -1365,10 +1376,18 @@ if archivo:
             fecha_inicio_dt = pd.to_datetime(fecha_inicio)
             fecha_fin_dt = pd.to_datetime(fecha_fin)
 
-            df_original = df_original[
-                (fechas_convertidas >= fecha_inicio_dt) & 
-                (fechas_convertidas <= fecha_fin_dt)
-            ]
+            # Aplicar filtro según el banco
+            if banco == "venezuela":
+                # Usar el dataframe original para el filtro
+                mask = (fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)
+                # Filtrar df_original usando la máscara
+                df_original = df_original[mask]
+            else:
+                df_original = df_original[
+                    (fechas_convertidas >= fecha_inicio_dt) & 
+                    (fechas_convertidas <= fecha_fin_dt)
+                ]
+            
             st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
         except Exception as e:
             st.warning(f"Error filtrando fechas: {e}")
