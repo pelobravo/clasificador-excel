@@ -159,10 +159,26 @@ def leer_excel_sin_encabezados(archivo):
         if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
             try:
                 import xlrd
+                # Intentar leer con xlrd
                 return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
-            except ImportError:
-                st.error("❌ Para archivos .xls es necesario instalar xlrd. Ejecuta: pip install xlrd")
-                st.stop()
+            except Exception as e:
+                # Si falla, intentar leer como texto/CSV
+                st.warning(f"⚠️ Error leyendo como Excel, intentando como texto: {str(e)}")
+                archivo.seek(0)
+                # Leer como texto y procesar manualmente
+                contenido = archivo.read().decode('utf-8', errors='ignore')
+                lineas = contenido.split('\n')
+                # Crear DataFrame con las líneas
+                datos = []
+                for linea in lineas:
+                    if linea.strip():
+                        # Dividir por tabuladores o espacios múltiples
+                        partes = linea.split('\t')
+                        if len(partes) == 1:
+                            partes = [p for p in linea.split(' ') if p.strip()]
+                        if len(partes) > 0:
+                            datos.append(partes)
+                return pd.DataFrame(datos)
         else:
             return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
     except Exception as e:
@@ -244,7 +260,7 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON PALABRAS CLAVE BDV
+# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON PALABRAS CLAVE
 # =========================================================
 
 def es_comision(texto, proveedor=None):
@@ -309,7 +325,8 @@ def es_comision(texto, proveedor=None):
         "comision pago movil comercial",
         "comision x pago de nominas mb",
         "com pago otras ctas",
-        "com pago otr bcos"
+        "com pago otr bcos",
+        "comis"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -582,49 +599,141 @@ def procesar_banesco(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR PROVINCIAL
+# PROCESAR PROVINCIAL - VERSIÓN MEJORADA PARA FORMATO ESPECÍFICO
 # =========================================================
 
 def procesar_provincial(df):
-    st.info("Procesando archivo de Provincial...")
-    encabezado = None
-    for i in range(min(20, len(df))):
-        fila = df.iloc[i].astype(str)
-        if fila.str.contains("fecha", case=False).any():
-            encabezado = i
-            break
-
-    if encabezado is not None:
-        df.columns = df.iloc[encabezado]
-        df = df.iloc[encabezado+1:].reset_index(drop=True)
-
-    rename_map = {}
-    for col in df.columns:
-        col_str = str(col).lower()
-        if "fecha" in col_str:
-            rename_map[col] = "FECHA"
-        elif "descrip" in col_str or "concepto" in col_str:
-            rename_map[col] = "DESCRIPCION"
-        elif "monto" in col_str:
-            rename_map[col] = "MONTO"
-
-    df = df.rename(columns=rename_map)
-
-    if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        df = df[df["FECHA"].notna()]
-
-    if "MONTO" in df.columns:
-        monto = df["MONTO"]
-        if isinstance(monto, pd.DataFrame):
-            monto = monto.iloc[:, 0]
-        df["MONTO"] = pd.to_numeric(monto, errors="coerce")
-        df = df[df["MONTO"].notna()]
-
-    if "TIPO" not in df.columns:
-        df["TIPO"] = "ND"
-
-    return df
+    """
+    Procesa archivo de Provincial con formato específico.
+    El archivo tiene un formato de texto con columnas:
+    F. Operación | F. Valor | Código | Nº. Doc. | Concepto | Importe | Oficina
+    """
+    st.info("🔍 Procesando archivo de Provincial (formato especial)...")
+    
+    try:
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df)}")
+        st.write(f"- Número de columnas: {len(df.columns)}")
+        
+        # Mostrar primeras filas para debug
+        st.write("👁️ **Primeras 15 filas del archivo:**")
+        st.dataframe(df.head(15))
+        
+        # Buscar la fila que contiene los encabezados
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i].astype(str)
+            # Buscar columnas que contengan "F. Operación" o "Concepto" o "Importe"
+            texto_fila = " ".join(fila.tolist()).upper()
+            if "F. OPERACIÓN" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+                encabezado_idx = i
+                break
+        
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
+            return pd.DataFrame()
+        
+        st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
+        
+        # Obtener los encabezados
+        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        st.write("📋 **Encabezados detectados:**", headers)
+        
+        # Limpiar y mapear encabezados
+        rename_map = {}
+        for col in headers:
+            col_clean = str(col).strip().upper()
+            if "F. OPERACIÓN" in col_clean or "FECHA" in col_clean:
+                rename_map[col] = "FECHA"
+            elif "F. VALOR" in col_clean:
+                rename_map[col] = "FECHA_VALOR"
+            elif "CÓDIGO" in col_clean or "CODIGO" in col_clean:
+                rename_map[col] = "CODIGO"
+            elif "Nº. DOC" in col_clean or "NRO DOC" in col_clean or "DOC" in col_clean:
+                rename_map[col] = "REFERENCIA"
+            elif "CONCEPTO" in col_clean:
+                rename_map[col] = "DESCRIPCION"
+            elif "IMPORTE" in col_clean:
+                rename_map[col] = "MONTO"
+            elif "OFICINA" in col_clean:
+                rename_map[col] = "OFICINA"
+        
+        st.write("📋 **Mapeo de columnas:**", rename_map)
+        
+        # Asignar encabezados al DataFrame
+        df.columns = headers
+        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        
+        # Renombrar columnas
+        df = df.rename(columns=rename_map)
+        
+        # Verificar columnas necesarias
+        if "FECHA" not in df.columns:
+            # Intentar encontrar fecha en otra columna
+            for col in df.columns:
+                if "FECHA" in str(col).upper():
+                    df = df.rename(columns={col: "FECHA"})
+                    break
+        
+        if "FECHA" in df.columns:
+            # Procesar fechas
+            df["FECHA"] = df["FECHA"].astype(str).str.strip()
+            # Eliminar filas con fechas vacías o que sean encabezados
+            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
+            
+            # Convertir fechas (formato DD-MM-YYYY)
+            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+            df = df[df["FECHA"].notna()]
+        else:
+            st.error("❌ No se encontró columna FECHA en el archivo Provincial.")
+            return pd.DataFrame()
+        
+        # Procesar el monto
+        if "MONTO" in df.columns:
+            # Limpiar el monto (quitar espacios, puntos, comas)
+            df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False)
+            df["MONTO"] = df["MONTO"].str.replace(".", "", regex=False)
+            df["MONTO"] = df["MONTO"].str.replace(",", ".", regex=False)
+            
+            # Convertir a numérico
+            df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+            
+            # Si el monto es negativo, es un ND (débito), si es positivo es NC (crédito)
+            df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+            
+            # Tomar valor absoluto
+            df["MONTO"] = df["MONTO"].abs()
+            
+            # Eliminar filas con monto 0 o NaN
+            df = df[df["MONTO"].notna()]
+            df = df[df["MONTO"] > 0]
+        else:
+            st.error("❌ No se encontró columna MONTO en el archivo Provincial.")
+            return pd.DataFrame()
+        
+        # Asegurar que existe columna REFERENCIA
+        if "REFERENCIA" not in df.columns:
+            df["REFERENCIA"] = ""
+        
+        # Asegurar que existe columna DESCRIPCION
+        if "DESCRIPCION" not in df.columns:
+            df["DESCRIPCION"] = ""
+        
+        # Seleccionar solo las columnas necesarias
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]].copy()
+        
+        # Mostrar resultados
+        st.success(f"✅ Provincial OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
+        
+        return df_resultado
+        
+    except Exception as e:
+        st.error(f"❌ Error procesando Provincial: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return pd.DataFrame()
 
 # =========================================================
 # PROCESAR BNC
@@ -1223,6 +1332,30 @@ def procesar_archivo(df, usar_api=False, banco=""):
             registros_procesados.add(clave)
 
             # =========================================================
+            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - COMISIONES
+            # =========================================================
+            es_comision_provincial = False
+            
+            if banco == "provincial":
+                descripcion_upper = descripcion.upper()
+                referencia_upper = referencia.upper()
+                
+                # 🔥 Las comisiones de Provincial tienen "COMIS." en la descripción
+                if "COMIS" in descripcion_upper:
+                    es_comision_provincial = True
+                # También las que tienen "COM." en la descripción
+                elif "COM." in descripcion_upper and "CR.I" in descripcion_upper:
+                    es_comision_provincial = True
+                # O las que tienen "CR.I" y "COM" en la descripción
+                elif "CR.I" in descripcion_upper and "COM" in descripcion_upper:
+                    es_comision_provincial = True
+                
+                # Si es comisión de Provincial, la clasificamos como tal
+                if es_comision_provincial:
+                    comisiones.append(registro)
+                    continue
+
+            # =========================================================
             # 🔥 REGLA ESPECIAL PARA MERCANTIL - TODAS LAS COMISIONES
             # =========================================================
             es_comision_mercantil = False
@@ -1332,8 +1465,12 @@ if archivo:
             
         elif banco == "provincial":
             try:
+                # Intentar leer con la función mejorada
                 df_raw = leer_excel_sin_encabezados(archivo)
                 df_normalizado = procesar_provincial(df_raw)
+                if df_normalizado.empty:
+                    st.error("No se pudieron procesar los datos de Provincial.")
+                    st.stop()
                 df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             except Exception as e:
                 st.error(f"Error leyendo Provincial: {str(e)}")
