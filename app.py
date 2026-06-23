@@ -737,8 +737,7 @@ def procesar_provincial(df):
         else:
             df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
         
-        # 🔥 DETECTAR COMISIONES DE PROVINCIAL Y MARCADAS
-        # Las comisiones tienen "COMIS." en la descripción
+        # 🔥 DETECTAR COMISIONES DE PROVINCIAL - CREAR COLUMNA ESPECIAL
         df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
         
         # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
@@ -1284,7 +1283,7 @@ def convertir_venezuela_a_formato_mercantil(df):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAMIENTO MERCANTIL - CON REGLAS ESPECÍFICAS PARA COMISIONES
+# 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA PROVINCIAL
 # =========================================================
 
 def procesar_archivo(df, usar_api=False, banco=""):
@@ -1325,14 +1324,6 @@ def procesar_archivo(df, usar_api=False, banco=""):
             tipo = str(fila[5]).strip().upper()
             descripcion = str(fila[6]).strip()
             referencia = str(fila[4]).strip()
-            
-            # 🔥 OBTENER FLAG DE COMISIÓN (columna 9)
-            es_comision_flag = False
-            if len(fila) > 9:
-                try:
-                    es_comision_flag = bool(fila[9]) if pd.notna(fila[9]) else False
-                except:
-                    es_comision_flag = False
 
             monto_bs = convertir_monto(fila[7])
             if monto_bs is None or monto_bs == 0:
@@ -1378,11 +1369,20 @@ def procesar_archivo(df, usar_api=False, banco=""):
             registros_procesados.add(clave)
 
             # =========================================================
-            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - USAR FLAG
+            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - DETECCIÓN DIRECTA
             # =========================================================
-            if banco == "provincial" and es_comision_flag:
-                comisiones.append(registro)
-                continue
+            es_comision_provincial = False
+            
+            if banco == "provincial":
+                descripcion_upper = descripcion.upper()
+                # Detectar comisiones de Provincial por "COMIS" en la descripción
+                if "COMIS" in descripcion_upper:
+                    es_comision_provincial = True
+                    st.write(f"🔍 Comisión detectada: {descripcion} - Monto: {monto_bs}")
+                
+                if es_comision_provincial:
+                    comisiones.append(registro)
+                    continue
 
             # =========================================================
             # 🔥 REGLA ESPECIAL PARA MERCANTIL - TODAS LAS COMISIONES
@@ -1494,7 +1494,6 @@ if archivo:
             
         elif banco == "provincial":
             try:
-                # Intentar leer con la función mejorada
                 df_raw = leer_excel_sin_encabezados(archivo)
                 df_normalizado = procesar_provincial(df_raw)
                 if df_normalizado.empty:
