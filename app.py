@@ -244,7 +244,7 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 # =========================================================
-# 🔥 DETECTAR COMISIONES - VERSIÓN DEFINITIVA CON REGLAS CLARAS
+# 🔥 DETECTAR COMISIONES - VERSIÓN MEJORADA CON PALABRAS CLAVE BDV
 # =========================================================
 
 def es_comision(texto, proveedor=None):
@@ -257,6 +257,7 @@ def es_comision(texto, proveedor=None):
     - Solo son comisiones bancarias: cargos del banco (ITF, mantenimiento, comisión por transferencia, etc.)
     """
     texto = normalizar_texto(texto).strip()
+    texto_upper = texto.upper()
     
     # 🔥 REGLA 1: Si tiene proveedor asociado, NO es comisión bancaria
     if proveedor and str(proveedor).strip():
@@ -304,7 +305,9 @@ def es_comision(texto, proveedor=None):
         "cargo por servicio",
         "cargo por transaccion",
         "comision por",
-        "comisión por"
+        "comisión por",
+        "comision pago movil comercial",
+        "comision x pago de nominas mb"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -1447,9 +1450,40 @@ if archivo:
                         }
 
                         tipo = str(row["TIPO"]).strip().upper()
-                        descripcion = str(row["DESCRIPCION"]).strip()
-
-                        if es_comision(descripcion, None):
+                        descripcion = str(row["DESCRIPCION"]).strip().upper()
+                        
+                        # 🔥 DETECCIÓN MEJORADA DE COMISIONES PARA VENEZUELA
+                        es_comision_venezuela = False
+                        
+                        # Palabras clave para detectar comisiones en BDV
+                        palabras_comision_bdv = [
+                            "COMISION POR TRANSFERENCIA",
+                            "COMISION PAGO MOVIL",
+                            "COMISIÓN PAGO MOVIL",
+                            "COMISION X PAGO DE NOMINA",
+                            "COMISION X PAGO DE NOMINAS",
+                            "ITF",
+                            "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                            "CARGO BANCARIO",
+                            "MANTENIMIENTO DE CUENTA",
+                            "COMISION BANCARIA",
+                            "COMISIÓN BANCARIA",
+                            "CARGO POR SERVICIO",
+                            "CARGO POR TRANSACCION",
+                            "COMISION POR",
+                            "COMISIÓN POR",
+                            "COMISION PAGO MOVIL COMERCIAL",
+                            "COMISION X PAGO DE NOMINAS MB"
+                        ]
+                        
+                        # Verificar si la descripción coincide con alguna comisión
+                        for patron in palabras_comision_bdv:
+                            if patron in descripcion:
+                                es_comision_venezuela = True
+                                break
+                        
+                        # Si es comisión, agregar a la lista de comisiones
+                        if es_comision_venezuela:
                             comisiones.append(registro)
                         elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
                             ingresos.append(registro)
