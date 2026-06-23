@@ -319,7 +319,7 @@ def es_comision(texto, proveedor=None):
     return False
 
 # =========================================================
-# DETECTOR DE BANCO CORREGIDO
+# DETECTOR DE BANCO CORREGIDO - CON EL CAMBIO SOLICITADO
 # =========================================================
 
 def detectar_banco(nombre_archivo):
@@ -331,7 +331,13 @@ def detectar_banco(nombre_archivo):
         return "banesco"
     elif "BANCAMIGA" in nombre or "MOVIMIENTOS_" in nombre:
         return "bancamiga"
-    elif "MOVIMIENTOS EN MONEDA NACIONAL" in nombre or "VENEZUELA" in nombre or "BANCO DE VENEZUELA" in nombre or "BDV" in nombre:
+    elif (
+        "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
+        or "VENEZUELA" in nombre
+        or "BANCO DE VENEZUELA" in nombre
+        or "BDV" in nombre
+        or "VZLA" in nombre
+    ):
         return "venezuela"
     elif "PROVINCIAL" in nombre:
         return "provincial"
