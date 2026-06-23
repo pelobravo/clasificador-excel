@@ -601,7 +601,7 @@ def procesar_banesco(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR PROVINCIAL - VERSIÓN MEJORADA PARA FORMATO ESPECÍFICO
+# PROCESAR PROVINCIAL - VERSIÓN MEJORADA CON LOS CAMBIOS SOLICITADOS
 # =========================================================
 
 def procesar_provincial(df):
@@ -696,7 +696,7 @@ def procesar_provincial(df):
             st.error("❌ No se encontró columna FECHA en el archivo Provincial.")
             return pd.DataFrame()
         
-        # Procesar el monto
+        # 🔥 PROCESAR EL MONTO - CON LOS CAMBIOS SOLICITADOS
         if "MONTO" in df.columns:
             # Limpiar el monto (quitar espacios, puntos, comas) - convertir a string primero
             df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False)
@@ -704,11 +704,11 @@ def procesar_provincial(df):
             df["MONTO"] = df["MONTO"].str.replace(",", ".", regex=False)
             df["MONTO"] = df["MONTO"].str.replace("'", "", regex=False)
             
-            # Eliminar filas con monto vacío o que no sean numéricos
-            df = df[df["MONTO"].str.match(r'^[\d\.]+$', na=False)]
-            
-            # Convertir a numérico
+            # Convertir directamente a numérico (sin filtro regex)
             df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+            
+            # Eliminar filas con monto NaN
+            df = df[df["MONTO"].notna()]
             
             # Si el monto es negativo, es un ND (débito), si es positivo es NC (crédito)
             df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
@@ -716,8 +716,7 @@ def procesar_provincial(df):
             # Tomar valor absoluto
             df["MONTO"] = df["MONTO"].abs()
             
-            # Eliminar filas con monto 0 o NaN
-            df = df[df["MONTO"].notna()]
+            # Eliminar filas con monto 0
             df = df[df["MONTO"] > 0]
         else:
             st.error("❌ No se encontró columna MONTO en el archivo Provincial.")
@@ -737,7 +736,7 @@ def procesar_provincial(df):
         else:
             df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
         
-        # 🔥 DETECTAR COMISIONES DE PROVINCIAL - CREAR COLUMNA ESPECIAL
+        # 🔥 DETECTAR COMISIONES DE PROVINCIAL
         df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
         
         # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
