@@ -326,7 +326,8 @@ def es_comision(texto, proveedor=None):
         "comision x pago de nominas mb",
         "com pago otras ctas",
         "com pago otr bcos",
-        "comis"
+        "comis",
+        "comis. cr.i"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -726,6 +727,8 @@ def procesar_provincial(df):
             df["REFERENCIA"] = ""
         else:
             df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip()
+            # Limpiar referencias (quitar comillas simples)
+            df["REFERENCIA"] = df["REFERENCIA"].str.replace("'", "", regex=False)
         
         # Asegurar que existe columna DESCRIPCION
         if "DESCRIPCION" not in df.columns:
@@ -733,8 +736,12 @@ def procesar_provincial(df):
         else:
             df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
         
+        # 🔥 DETECTAR COMISIONES DE PROVINCIAL Y MARCADAS
+        # Las comisiones tienen "COMIS." en la descripción
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
+        
         # Seleccionar solo las columnas necesarias
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]].copy()
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         
         # Mostrar resultados
         st.success(f"✅ Provincial OK: {len(df_resultado)} movimientos detectados")
@@ -1011,7 +1018,8 @@ def obtener_tasa_bcv_fecha(fecha_obj):
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
-# =========================================================# CONVERTIR A FORMATO MERCANTIL
+# =========================================================
+# CONVERTIR A FORMATO MERCANTIL - INCLUYE FLAG DE COMISIONES
 # =========================================================
 
 def convertir_a_formato_mercantil(df, banco):
@@ -1033,6 +1041,7 @@ def convertir_a_formato_mercantil(df, banco):
             descripcion = fila.get("DESCRIPCION", "") or ""
             referencia = fila.get("REFERENCIA", "") or ""
             monto = fila.get("MONTO", 0) or 0
+            es_comision = fila.get("ES_COMISION", False) or False
             
             fila_convertida = [
                 "",           # col0
@@ -1044,7 +1053,7 @@ def convertir_a_formato_mercantil(df, banco):
                 descripcion,  # col6 - DESCRIPCION
                 monto,        # col7 - MONTO BS
                 "",           # col8
-                "",           # col9
+                es_comision,  # col9 - ES_COMISION (flag para identificar comisiones)
             ]
             datos_convertidos.append(fila_convertida)
             
@@ -1248,7 +1257,7 @@ def convertir_venezuela_a_formato_mercantil(df):
                 descripcion,  # col6 - DESCRIPCION
                 monto,        # col7 - MONTO BS
                 "",           # col8
-                "",           # col9
+                False,        # col9 - ES_COMISION (siempre False para Venezuela)
             ]
             datos_convertidos.append(fila_convertida)
             
@@ -1300,6 +1309,11 @@ def procesar_archivo(df, usar_api=False, banco=""):
             tipo = str(fila[5]).strip().upper()
             descripcion = str(fila[6]).strip()
             referencia = str(fila[4]).strip()
+            
+            # 🔥 OBTENER FLAG DE COMISIÓN (si existe)
+            es_comision_flag = False
+            if len(fila) > 9:
+                es_comision_flag = fila[9] if pd.notna(fila[9]) else False
 
             monto_bs = convertir_monto(fila[7])
             if monto_bs is None or monto_bs == 0:
@@ -1345,28 +1359,11 @@ def procesar_archivo(df, usar_api=False, banco=""):
             registros_procesados.add(clave)
 
             # =========================================================
-            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - COMISIONES
+            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - USAR FLAG
             # =========================================================
-            es_comision_provincial = False
-            
-            if banco == "provincial":
-                descripcion_upper = descripcion.upper()
-                referencia_upper = referencia.upper()
-                
-                # 🔥 Las comisiones de Provincial tienen "COMIS." en la descripción
-                if "COMIS" in descripcion_upper:
-                    es_comision_provincial = True
-                # También las que tienen "COM." en la descripción
-                elif "COM." in descripcion_upper and "CR.I" in descripcion_upper:
-                    es_comision_provincial = True
-                # O las que tienen "CR.I" y "COM" en la descripción
-                elif "CR.I" in descripcion_upper and "COM" in descripcion_upper:
-                    es_comision_provincial = True
-                
-                # Si es comisión de Provincial, la clasificamos como tal
-                if es_comision_provincial:
-                    comisiones.append(registro)
-                    continue
+            if banco == "provincial" and es_comision_flag:
+                comisiones.append(registro)
+                continue
 
             # =========================================================
             # 🔥 REGLA ESPECIAL PARA MERCANTIL - TODAS LAS COMISIONES
