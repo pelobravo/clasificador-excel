@@ -623,9 +623,12 @@ def procesar_provincial(df):
         # Buscar la fila que contiene los encabezados
         encabezado_idx = None
         for i in range(min(30, len(df))):
-            fila = df.iloc[i].astype(str)
+            fila = df.iloc[i]
+            # Convertir TODOS los valores a string para evitar errores
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            
             # Buscar columnas que contengan "F. Operación" o "Concepto" o "Importe"
-            texto_fila = " ".join(fila.tolist()).upper()
             if "F. OPERACIÓN" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
                 encabezado_idx = i
                 break
@@ -677,10 +680,12 @@ def procesar_provincial(df):
                     break
         
         if "FECHA" in df.columns:
-            # Procesar fechas
+            # Procesar fechas - convertir a string primero
             df["FECHA"] = df["FECHA"].astype(str).str.strip()
             # Eliminar filas con fechas vacías o que sean encabezados
             df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
+            # Eliminar filas con fechas que sean números o NaN
+            df = df[df["FECHA"].str.match(r'^\d{2}-\d{2}-\d{4}$', na=False)]
             
             # Convertir fechas (formato DD-MM-YYYY)
             df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
@@ -691,10 +696,14 @@ def procesar_provincial(df):
         
         # Procesar el monto
         if "MONTO" in df.columns:
-            # Limpiar el monto (quitar espacios, puntos, comas)
+            # Limpiar el monto (quitar espacios, puntos, comas) - convertir a string primero
             df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False)
             df["MONTO"] = df["MONTO"].str.replace(".", "", regex=False)
             df["MONTO"] = df["MONTO"].str.replace(",", ".", regex=False)
+            df["MONTO"] = df["MONTO"].str.replace("'", "", regex=False)
+            
+            # Eliminar filas con monto vacío o que no sean numéricos
+            df = df[df["MONTO"].str.match(r'^[\d\.]+$', na=False)]
             
             # Convertir a numérico
             df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
@@ -715,10 +724,14 @@ def procesar_provincial(df):
         # Asegurar que existe columna REFERENCIA
         if "REFERENCIA" not in df.columns:
             df["REFERENCIA"] = ""
+        else:
+            df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip()
         
         # Asegurar que existe columna DESCRIPCION
         if "DESCRIPCION" not in df.columns:
             df["DESCRIPCION"] = ""
+        else:
+            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
         
         # Seleccionar solo las columnas necesarias
         df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]].copy()
