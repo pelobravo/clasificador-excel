@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from io import BytesIO
 from datetime import date
 import requests
@@ -740,6 +741,15 @@ def procesar_provincial(df):
         # Las comisiones tienen "COMIS." en la descripción
         df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
         
+        # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
+        num_comisiones = df["ES_COMISION"].sum()
+        st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo Provincial")
+        
+        # Mostrar las comisiones detectadas
+        if num_comisiones > 0:
+            st.write("📋 **Comisiones detectadas:**")
+            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+        
         # Seleccionar solo las columnas necesarias
         df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         
@@ -1041,7 +1051,13 @@ def convertir_a_formato_mercantil(df, banco):
             descripcion = fila.get("DESCRIPCION", "") or ""
             referencia = fila.get("REFERENCIA", "") or ""
             monto = fila.get("MONTO", 0) or 0
-            es_comision = fila.get("ES_COMISION", False) or False
+            
+            # 🔥 OBTENER FLAG DE COMISIÓN
+            es_comision = fila.get("ES_COMISION", False)
+            if isinstance(es_comision, (bool, np.bool_)):
+                es_comision = bool(es_comision)
+            else:
+                es_comision = False
             
             fila_convertida = [
                 "",           # col0
@@ -1310,10 +1326,13 @@ def procesar_archivo(df, usar_api=False, banco=""):
             descripcion = str(fila[6]).strip()
             referencia = str(fila[4]).strip()
             
-            # 🔥 OBTENER FLAG DE COMISIÓN (si existe)
+            # 🔥 OBTENER FLAG DE COMISIÓN (columna 9)
             es_comision_flag = False
             if len(fila) > 9:
-                es_comision_flag = fila[9] if pd.notna(fila[9]) else False
+                try:
+                    es_comision_flag = bool(fila[9]) if pd.notna(fila[9]) else False
+                except:
+                    es_comision_flag = False
 
             monto_bs = convertir_monto(fila[7])
             if monto_bs is None or monto_bs == 0:
