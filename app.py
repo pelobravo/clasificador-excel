@@ -307,7 +307,9 @@ def es_comision(texto, proveedor=None):
         "comision por",
         "comisión por",
         "comision pago movil comercial",
-        "comision x pago de nominas mb"
+        "comision x pago de nominas mb",
+        "com pago otras ctas",
+        "com pago otr bcos"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -931,7 +933,7 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAR VENEZUELA - VERSIÓN SIMPLIFICADA (SIN ENCABEZADOS)
+# 🔥 PROCESAR VENEZUELA - VERSIÓN MEJORADA (SIN FILTROS EXCESIVOS)
 # =========================================================
 
 def procesar_venezuela_simple(df):
@@ -949,7 +951,6 @@ def procesar_venezuela_simple(df):
         st.dataframe(df.head(10))
         
         # Índices fijos para el formato BDV
-        # Columna 0: Día | Columna 1: Referencia | Columna 2: Descripción | Columna 3: Fecha | Columna 4: Tipo | Columna 5: Crédito | Columna 6: Débito
         col_fecha = 3
         col_ref = 1
         col_desc = 2
@@ -993,8 +994,9 @@ def procesar_venezuela_simple(df):
                 descripcion = str(fila[col_desc]).strip() if pd.notna(fila[col_desc]) else ""
                 tipo_mov = str(fila[col_tipo]).strip().upper() if pd.notna(fila[col_tipo]) else ""
                 
-                # Saltar filas de saldos
-                if any(p in descripcion.upper() for p in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]):
+                # 🔥 SOLO FILTRAR POR SALDO INICIAL/FINAL EXPLÍCITO
+                desc_upper = descripcion.upper()
+                if desc_upper in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]:
                     continue
                 
                 # Procesar crédito
@@ -1028,6 +1030,7 @@ def procesar_venezuela_simple(df):
                     monto = abs(val_debito)
                     tipo = "ND"
                 else:
+                    # Si no tiene tipo definido, determinar por crédito/débito
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
@@ -1044,7 +1047,7 @@ def procesar_venezuela_simple(df):
                 
                 # Mostrar primeras 5 filas procesadas
                 if filas_procesadas <= 5:
-                    st.write(f"✅ **Fila {idx} procesada:** Fecha={fecha_val.strftime('%d/%m/%Y')}, Ref={referencia}, Tipo={tipo}, Monto={monto:,.2f}")
+                    st.write(f"✅ **Fila {idx} procesada:** Fecha={fecha_val.strftime('%d/%m/%Y')}, Ref={referencia}, Tipo={tipo}, Monto={monto:,.2f}, Desc={descripcion[:50]}")
                 
                 movimientos.append({
                     "FECHA": fecha_val.strftime("%d/%m/%Y"),
@@ -1451,12 +1454,18 @@ if archivo:
 
                         tipo = str(row["TIPO"]).strip().upper()
                         descripcion = str(row["DESCRIPCION"]).strip().upper()
+                        referencia = str(row["REFERENCIA"]).strip()
                         
                         # 🔥 DETECCIÓN MEJORADA DE COMISIONES PARA VENEZUELA
                         es_comision_venezuela = False
                         
-                        # Palabras clave para detectar comisiones en BDV
+                        # 🔥 REGLA 1: Detectar por descripción
                         palabras_comision_bdv = [
+                            "COM PAGO OTRAS CTAS",
+                            "COMISION PAGO A PROVEEDORES",
+                            "COM PAGO OTR BCOS",
+                            "COM PAGO OTRAS CTAS JUR NAT",
+                            "COM PAGO OTRAS CTAS JUR JUR",
                             "COMISION POR TRANSFERENCIA",
                             "COMISION PAGO MOVIL",
                             "COMISIÓN PAGO MOVIL",
@@ -1470,8 +1479,6 @@ if archivo:
                             "COMISIÓN BANCARIA",
                             "CARGO POR SERVICIO",
                             "CARGO POR TRANSACCION",
-                            "COMISION POR",
-                            "COMISIÓN POR",
                             "COMISION PAGO MOVIL COMERCIAL",
                             "COMISION X PAGO DE NOMINAS MB"
                         ]
@@ -1481,6 +1488,25 @@ if archivo:
                             if patron in descripcion:
                                 es_comision_venezuela = True
                                 break
+                        
+                        # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
+                        if not es_comision_venezuela:
+                            # Las comisiones de BDV suelen tener referencias que comienzan con 970 o 972 o 067
+                            if referencia.startswith(("970", "972", "067")):
+                                # Verificar si la descripción contiene palabras clave de comisión
+                                if any(palabra in descripcion for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
+                                    es_comision_venezuela = True
+                        
+                        # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
+                        if not es_comision_venezuela and tipo == "ND":
+                            if "COM" in descripcion or "PAGO OTR" in descripcion:
+                                es_comision_venezuela = True
+                        
+                        # 🔥 REGLA 4: Comisiones específicas de BDV por el monto exacto (189.50, 36.44, etc)
+                        if not es_comision_venezuela and tipo == "ND":
+                            # Montos típicos de comisiones de BDV (montos pequeños)
+                            if monto_bs < 1000 and ("COM" in descripcion or "PAGO OTR" in descripcion):
+                                es_comision_venezuela = True
                         
                         # Si es comisión, agregar a la lista de comisiones
                         if es_comision_venezuela:
