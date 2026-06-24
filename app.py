@@ -343,7 +343,7 @@ def es_comision(texto, proveedor=None):
     return False
 
 # =========================================================
-# DETECTOR DE BANCO CORREGIDO - MEJORADO PARA BANCAMIGA
+# DETECTOR DE BANCO CORREGIDO - BANCAMIGA PRIMERO
 # =========================================================
 
 def detectar_banco(nombre_archivo):
@@ -351,10 +351,10 @@ def detectar_banco(nombre_archivo):
 
     if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
+    elif "BANCAMIGA" in nombre:  # 🔥 PRIMERO Bancamiga para evitar confusión con Banesco
+        return "bancamiga"
     elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
         return "banesco"
-    elif "BANCAMIGA" in nombre:
-        return "bancamiga"
     elif (
         "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
         or "VENEZUELA" in nombre
