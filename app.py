@@ -343,7 +343,7 @@ def es_comision(texto, proveedor=None):
     return False
 
 # =========================================================
-# DETECTOR DE BANCO CORREGIDO - CON EL CAMBIO SOLICITADO
+# DETECTOR DE BANCO CORREGIDO - MEJORADO PARA BANCAMIGA
 # =========================================================
 
 def detectar_banco(nombre_archivo):
@@ -353,7 +353,7 @@ def detectar_banco(nombre_archivo):
         return "tesoro"
     elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
         return "banesco"
-    elif "BANCAMIGA" in nombre or "MOVIMIENTOS_" in nombre:
+    elif "BANCAMIGA" in nombre:
         return "bancamiga"
     elif (
         "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
@@ -601,7 +601,7 @@ def procesar_banesco(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR PROVINCIAL - VERSIÓN MEJORADA CON LOS CAMBIOS SOLICITADOS
+# PROCESAR PROVINCIAL - VERSIÓN MEJORADA PARA FORMATO ESPECÍFICO
 # =========================================================
 
 def procesar_provincial(df):
@@ -696,7 +696,7 @@ def procesar_provincial(df):
             st.error("❌ No se encontró columna FECHA en el archivo Provincial.")
             return pd.DataFrame()
         
-        # 🔥 PROCESAR EL MONTO - CON LOS CAMBIOS SOLICITADOS
+        # Procesar el monto
         if "MONTO" in df.columns:
             # Limpiar el monto (quitar espacios, puntos, comas) - convertir a string primero
             df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False)
@@ -908,85 +908,158 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA - CORREGIDO
+# PROCESAR BANCAMIGA - VERSIÓN MEJORADA PARA FORMATO ESPECÍFICO
 # =========================================================
 
 def procesar_bancamiga(df):
-    st.info("Procesando Bancamiga...")
+    """
+    Procesa archivo de Bancamiga con formato específico.
+    El archivo tiene columnas: Nro. | Fecha | Referencia | Concepto | Débito | Crédito | Saldo
+    """
+    st.info("🔍 Procesando archivo de Bancamiga...")
+    
     try:
-        encabezado = None
-        for i in range(min(15, len(df))):
-            fila = df.iloc[i].fillna("").astype(str)
-            texto = " ".join(fila.tolist()).lower()
-            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
-                encabezado = i
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df)}")
+        st.write(f"- Número de columnas: {len(df.columns)}")
+        
+        # Mostrar primeras filas para debug
+        st.write("👁️ **Primeras 15 filas del archivo:**")
+        st.dataframe(df.head(15))
+        
+        # Buscar la fila que contiene los encabezados
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i]
+            # Convertir TODOS los valores a string para evitar errores
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            
+            # Buscar columnas que contengan "NRO" o "FECHA" o "REFERENCIA" o "CONCEPTO"
+            if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
+                encabezado_idx = i
                 break
-
-        if encabezado is not None:
-            df.columns = df.iloc[encabezado]
-            df = df.iloc[encabezado + 1:].reset_index(drop=True)
-            df.columns = [str(c).strip() for c in df.columns]
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[-1] for col in df.columns]
-
-        df = df.rename(columns={
-            "Fecha": "FECHA",
-            "Referencia": "REFERENCIA",
-            "Concepto": "DESCRIPCION",
-            "Débito": "DEBITO",
-            "Crédito": "CREDITO"
-        })
-
-        if "FECHA" not in df.columns:
-            st.error("No se encontró columna FECHA")
+        
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Bancamiga.")
             return pd.DataFrame()
-
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        
+        st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
+        
+        # Obtener los encabezados
+        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        st.write("📋 **Encabezados detectados:**", headers)
+        
+        # Limpiar y mapear encabezados
+        rename_map = {}
+        for col in headers:
+            col_clean = str(col).strip().upper()
+            if "NRO" in col_clean or "Nº" in col_clean:
+                rename_map[col] = "NRO"
+            elif "FECHA" in col_clean:
+                rename_map[col] = "FECHA"
+            elif "REFERENCIA" in col_clean:
+                rename_map[col] = "REFERENCIA"
+            elif "CONCEPTO" in col_clean:
+                rename_map[col] = "DESCRIPCION"
+            elif "DÉBITO" in col_clean or "DEBITO" in col_clean:
+                rename_map[col] = "DEBITO"
+            elif "CRÉDITO" in col_clean or "CREDITO" in col_clean:
+                rename_map[col] = "CREDITO"
+            elif "SALDO" in col_clean:
+                rename_map[col] = "SALDO"
+        
+        st.write("📋 **Mapeo de columnas:**", rename_map)
+        
+        # Asignar encabezados al DataFrame
+        df.columns = headers
+        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        
+        # Renombrar columnas
+        df = df.rename(columns=rename_map)
+        
+        # Verificar columnas necesarias
+        if "FECHA" not in df.columns:
+            st.error("❌ No se encontró columna FECHA en el archivo Bancamiga.")
+            return pd.DataFrame()
+        
+        # Procesar fechas
+        df["FECHA"] = df["FECHA"].astype(str).str.strip()
+        # Eliminar filas con fechas vacías o que sean encabezados
+        df = df[~df["FECHA"].str.contains("FECHA|SALDO|Total|Creditos|Debito", case=False, na=False)]
+        # Eliminar filas con fechas que no tengan formato válido
+        df = df[df["FECHA"].str.match(r'^\d{4}-\d{2}-\d{2}$', na=False)]
+        
+        # Convertir fechas (formato YYYY-MM-DD)
+        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
         df = df[df["FECHA"].notna()]
-
-        def limpiar_numero_bancamiga(valor):
-            if pd.isna(valor):
-                return 0
-            try:
-                if isinstance(valor, (int, float)):
-                    numero = float(valor)
-                    if isinstance(valor, int) and numero >= 100000:
-                        numero = numero / 100
-                    return numero
-
-                valor_original = str(valor).strip()
-                valor = valor_original.replace(" ", "").replace("$", "").replace("Bs", "").replace("€", "")
-                if valor == "":
-                    return 0
-
-                if "." in valor and "," in valor:
-                    valor = valor.replace(".", "").replace(",", ".")
-                elif "," in valor:
-                    valor = valor.replace(",", ".")
-
-                numero = float(valor)
-                if "." not in valor_original and "," not in valor_original and numero >= 100000:
-                    numero = numero / 100
-                return numero
-            except:
-                return 0
-
-        df["CREDITO"] = df["CREDITO"].apply(limpiar_numero_bancamiga)
-        df["DEBITO"] = df["DEBITO"].apply(limpiar_numero_bancamiga)
-
+        
+        # Procesar débito y crédito
+        if "DEBITO" in df.columns:
+            df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False)
+            df["DEBITO"] = df["DEBITO"].str.replace(".", "", regex=False)
+            df["DEBITO"] = df["DEBITO"].str.replace(",", ".", regex=False)
+            df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
+        else:
+            df["DEBITO"] = 0
+        
+        if "CREDITO" in df.columns:
+            df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False)
+            df["CREDITO"] = df["CREDITO"].str.replace(".", "", regex=False)
+            df["CREDITO"] = df["CREDITO"].str.replace(",", ".", regex=False)
+            df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+        else:
+            df["CREDITO"] = 0
+        
+        # Determinar tipo y monto
         df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
         df["MONTO"] = df["MONTO"].abs()
+        
+        # Eliminar filas con monto 0
         df = df[df["MONTO"] > 0]
-
-        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
-        st.success(f"Bancamiga OK: {len(df)} registros")
-        st.dataframe(df.head())
-        return df
-
+        
+        # Asegurar que existe columna REFERENCIA
+        if "REFERENCIA" not in df.columns:
+            df["REFERENCIA"] = ""
+        else:
+            df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip()
+            # Limpiar referencias (quitar comillas simples)
+            df["REFERENCIA"] = df["REFERENCIA"].str.replace("'", "", regex=False)
+        
+        # Asegurar que existe columna DESCRIPCION
+        if "DESCRIPCION" not in df.columns:
+            df["DESCRIPCION"] = ""
+        else:
+            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        
+        # 🔥 DETECTAR COMISIONES DE BANCAMIGA
+        # Las comisiones tienen "Comisión" en la descripción
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        
+        # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
+        num_comisiones = df["ES_COMISION"].sum()
+        st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo Bancamiga")
+        
+        # Mostrar las comisiones detectadas
+        if num_comisiones > 0:
+            st.write("📋 **Comisiones detectadas:**")
+            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+        
+        # Seleccionar solo las columnas necesarias
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        
+        # Mostrar resultados
+        st.success(f"✅ Bancamiga OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
+        
+        return df_resultado
+        
     except Exception as e:
-        st.error(f"Error Bancamiga: {str(e)}")
+        st.error(f"❌ Error procesando Bancamiga: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return pd.DataFrame()
 
 # =========================================================
@@ -1282,7 +1355,7 @@ def convertir_venezuela_a_formato_mercantil(df):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA PROVINCIAL
+# 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA PROVINCIAL Y BANCAMIGA
 # =========================================================
 
 def procesar_archivo(df, usar_api=False, banco=""):
@@ -1377,9 +1450,25 @@ def procesar_archivo(df, usar_api=False, banco=""):
                 # Detectar comisiones de Provincial por "COMIS" en la descripción
                 if "COMIS" in descripcion_upper:
                     es_comision_provincial = True
-                    st.write(f"🔍 Comisión detectada: {descripcion} - Monto: {monto_bs}")
+                    st.write(f"🔍 Comisión Provincial detectada: {descripcion} - Monto: {monto_bs}")
                 
                 if es_comision_provincial:
+                    comisiones.append(registro)
+                    continue
+
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA BANCAMIGA - DETECCIÓN DIRECTA
+            # =========================================================
+            es_comision_bancamiga = False
+            
+            if banco == "bancamiga":
+                descripcion_upper = descripcion.upper()
+                # Detectar comisiones de Bancamiga por "COMISI" en la descripción
+                if "COMISI" in descripcion_upper:
+                    es_comision_bancamiga = True
+                    st.write(f"🔍 Comisión Bancamiga detectada: {descripcion} - Monto: {monto_bs}")
+                
+                if es_comision_bancamiga:
                     comisiones.append(registro)
                     continue
 
@@ -1477,15 +1566,12 @@ if archivo:
             
         elif banco == "bancamiga":
             try:
-                try:
-                    df_raw = pd.read_html(archivo)[0]
-                except:
-                    archivo.seek(0)
-                    if archivo.name.lower().endswith(".xls"):
-                        df_raw = pd.read_excel(archivo, engine="xlrd", header=5)
-                    else:
-                        df_raw = pd.read_excel(archivo, engine="openpyxl", header=0)
+                # Leer el archivo sin encabezados
+                df_raw = leer_excel_sin_encabezados(archivo)
                 df_normalizado = procesar_bancamiga(df_raw)
+                if df_normalizado.empty:
+                    st.error("No se pudieron procesar los datos de Bancamiga.")
+                    st.stop()
                 df_original = convertir_a_formato_mercantil(df_normalizado, banco)
             except Exception as e:
                 st.error(f"Error leyendo Bancamiga: {str(e)}")
