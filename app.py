@@ -208,6 +208,84 @@ def leer_excel_con_encabezados(archivo):
             st.stop()
 
 # =========================================================
+# 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
+# =========================================================
+
+def detectar_banco_por_contenido(archivo):
+    """
+    Detecta el banco leyendo el contenido del archivo, no solo el nombre.
+    """
+    try:
+        # Guardar la posición actual
+        pos = archivo.tell()
+        archivo.seek(0)
+        
+        # Leer las primeras líneas para detectar el banco
+        try:
+            # Intentar leer con pandas
+            df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
+            # Convertir todo a string para buscar
+            texto = " ".join(df_temp.astype(str).values.flatten()).upper()
+            
+            # Detectar por contenido
+            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto:
+                archivo.seek(pos)
+                return "bancamiga"
+            elif "BANESCO" in texto:
+                archivo.seek(pos)
+                return "banesco"
+            elif "PROVINCIAL" in texto:
+                archivo.seek(pos)
+                return "provincial"
+            elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
+                archivo.seek(pos)
+                return "venezuela"
+            elif "BNC" in texto:
+                archivo.seek(pos)
+                return "bnc"
+            elif "MERCANTIL" in texto:
+                archivo.seek(pos)
+                return "mercantil"
+            elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
+                archivo.seek(pos)
+                return "tesoro"
+        except Exception as e:
+            pass
+        
+        # Si no se detectó por contenido, usar el nombre como fallback
+        archivo.seek(pos)
+        return None
+        
+    except Exception as e:
+        return None
+
+def detectar_banco_por_nombre(nombre_archivo):
+    """Detecta el banco por el nombre del archivo (fallback)"""
+    nombre = nombre_archivo.upper()
+
+    if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
+        return "tesoro"
+    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre:
+        return "bancamiga"
+    elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
+        return "banesco"
+    elif (
+        "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
+        or "VENEZUELA" in nombre
+        or "BANCO DE VENEZUELA" in nombre
+        or "BDV" in nombre
+        or "VZLA" in nombre
+    ):
+        return "venezuela"
+    elif "PROVINCIAL" in nombre:
+        return "provincial"
+    elif "BNC" in nombre:
+        return "bnc"
+    elif "MERCANTIL" in nombre:
+        return "mercantil"
+    return "mercantil"
+
+# =========================================================
 # FUNCIONES ORIGINALES (NO MODIFICADAS)
 # =========================================================
 
@@ -341,35 +419,6 @@ def es_comision(texto, proveedor=None):
         return False
     
     return False
-
-# =========================================================
-# DETECTOR DE BANCO CORREGIDO - BANCAMIGA PRIMERO
-# =========================================================
-
-def detectar_banco(nombre_archivo):
-    nombre = nombre_archivo.upper()
-
-    if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
-        return "tesoro"
-    elif "BANCAMIGA" in nombre:  # 🔥 PRIMERO Bancamiga para evitar confusión con Banesco
-        return "bancamiga"
-    elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
-        return "banesco"
-    elif (
-        "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
-        or "VENEZUELA" in nombre
-        or "BANCO DE VENEZUELA" in nombre
-        or "BDV" in nombre
-        or "VZLA" in nombre
-    ):
-        return "venezuela"
-    elif "PROVINCIAL" in nombre:
-        return "provincial"
-    elif "BNC" in nombre:
-        return "bnc"
-    elif "MERCANTIL" in nombre:
-        return "mercantil"
-    return "mercantil"
 
 # =========================================================
 # 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (CRUCE FLEXIBLE)
@@ -1537,7 +1586,13 @@ if archivo:
         if b"<table" in primeros_bytes.lower():
             banco = "banesco"
         else:
-            banco = detectar_banco(archivo.name)
+            # 🔥 PRIMERO DETECTAR POR CONTENIDO
+            banco = detectar_banco_por_contenido(archivo)
+            # Si no se detectó por contenido, usar el nombre
+            if banco is None:
+                banco = detectar_banco_por_nombre(archivo.name)
+        
+        st.success(f"🏦 **Banco detectado:** {banco.upper()}")
         
         if banco == "mercantil":
             df_original = leer_excel_sin_encabezados(archivo)
