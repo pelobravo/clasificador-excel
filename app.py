@@ -957,7 +957,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA - VERSIÓN MEJORADA CON NUEVO PROCESAMIENTO DE FECHAS
+# PROCESAR BANCAMIGA - VERSIÓN MEJORADA CON DETECCIÓN DE ENCABEZADOS
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -977,56 +977,82 @@ def procesar_bancamiga(df):
         st.write("👁️ **Primeras 15 filas del archivo:**")
         st.dataframe(df.head(15))
         
-        # Buscar la fila que contiene los encabezados
-        encabezado_idx = None
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i]
-            # Convertir TODOS los valores a string para evitar errores
-            fila_str = [str(val) for val in fila.tolist()]
-            texto_fila = " ".join(fila_str).upper()
+        # 🔥 VERIFICAR SI YA TIENE ENCABEZADOS
+        columnas = [str(c).strip().upper() for c in df.columns]
+        
+        if "FECHA" in columnas and "REFERENCIA" in columnas:
+            st.success("✅ Encabezados ya presentes.")
             
-            # Buscar columnas que contengan "NRO" o "FECHA" o "REFERENCIA" o "CONCEPTO"
-            if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
-                encabezado_idx = i
-                break
-        
-        if encabezado_idx is None:
-            st.error("❌ No se encontró la fila de encabezados en el archivo Bancamiga.")
-            return pd.DataFrame()
-        
-        st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
-        
-        # Obtener los encabezados
-        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
-        st.write("📋 **Encabezados detectados:**", headers)
-        
-        # Limpiar y mapear encabezados
-        rename_map = {}
-        for col in headers:
-            col_clean = str(col).strip().upper()
-            if "NRO" in col_clean or "Nº" in col_clean:
-                rename_map[col] = "NRO"
-            elif "FECHA" in col_clean:
-                rename_map[col] = "FECHA"
-            elif "REFERENCIA" in col_clean:
-                rename_map[col] = "REFERENCIA"
-            elif "CONCEPTO" in col_clean:
-                rename_map[col] = "DESCRIPCION"
-            elif "DÉBITO" in col_clean or "DEBITO" in col_clean:
-                rename_map[col] = "DEBITO"
-            elif "CRÉDITO" in col_clean or "CREDITO" in col_clean:
-                rename_map[col] = "CREDITO"
-            elif "SALDO" in col_clean:
-                rename_map[col] = "SALDO"
-        
-        st.write("📋 **Mapeo de columnas:**", rename_map)
-        
-        # Asignar encabezados al DataFrame
-        df.columns = headers
-        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
-        
-        # Renombrar columnas
-        df = df.rename(columns=rename_map)
+            # Mapeo de columnas
+            rename_map = {
+                "NRO.": "NRO",
+                "NRO": "NRO",
+                "FECHA": "FECHA",
+                "REFERENCIA": "REFERENCIA",
+                "CONCEPTO": "DESCRIPCION",
+                "DÉBITO": "DEBITO",
+                "DEBITO": "DEBITO",
+                "CRÉDITO": "CREDITO",
+                "CREDITO": "CREDITO",
+                "SALDO": "SALDO"
+            }
+            
+            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper())
+                          for c in df.columns]
+            
+        else:
+            st.info("🔍 Buscando fila de encabezados...")
+            
+            # Buscar la fila que contiene los encabezados
+            encabezado_idx = None
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                # Convertir TODOS los valores a string para evitar errores
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                
+                # Buscar columnas que contengan "NRO" o "FECHA" o "REFERENCIA" o "CONCEPTO"
+                if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
+                    encabezado_idx = i
+                    break
+            
+            if encabezado_idx is None:
+                st.error("❌ No se encontró la fila de encabezados en el archivo Bancamiga.")
+                return pd.DataFrame()
+            
+            st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
+            
+            # Obtener los encabezados
+            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            st.write("📋 **Encabezados detectados:**", headers)
+            
+            # Limpiar y mapear encabezados
+            rename_map = {}
+            for col in headers:
+                col_clean = str(col).strip().upper()
+                if "NRO" in col_clean or "Nº" in col_clean:
+                    rename_map[col] = "NRO"
+                elif "FECHA" in col_clean:
+                    rename_map[col] = "FECHA"
+                elif "REFERENCIA" in col_clean:
+                    rename_map[col] = "REFERENCIA"
+                elif "CONCEPTO" in col_clean:
+                    rename_map[col] = "DESCRIPCION"
+                elif "DÉBITO" in col_clean or "DEBITO" in col_clean:
+                    rename_map[col] = "DEBITO"
+                elif "CRÉDITO" in col_clean or "CREDITO" in col_clean:
+                    rename_map[col] = "CREDITO"
+                elif "SALDO" in col_clean:
+                    rename_map[col] = "SALDO"
+            
+            st.write("📋 **Mapeo de columnas:**", rename_map)
+            
+            # Asignar encabezados al DataFrame
+            df.columns = headers
+            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            
+            # Renombrar columnas
+            df = df.rename(columns=rename_map)
         
         # Verificar columnas necesarias
         if "FECHA" not in df.columns:
@@ -1160,6 +1186,8 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "21/06/2026": 612.4332,
         "22/06/2026": 612.4332,
         "23/06/2026": 617.6388,
+        "24/06/2026": 621.5299,
+        "25/06/2026": 621.5299,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
@@ -1640,7 +1668,7 @@ if archivo:
             
         elif banco == "bancamiga":
             try:
-                # 🔥 CARGA DE BANCAMIGA - NUEVO BLOQUE
+                # 🔥 CARGA DE BANCAMIGA
                 nombre = archivo.name.lower()
                 
                 if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
