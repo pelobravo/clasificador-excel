@@ -957,7 +957,7 @@ def procesar_tesoro(df):
         return pd.DataFrame()
 
 # =========================================================
-# PROCESAR BANCAMIGA - VERSIÓN MEJORADA PARA FORMATO ESPECÍFICO
+# PROCESAR BANCAMIGA - VERSIÓN MEJORADA CON NUEVO PROCESAMIENTO DE FECHAS
 # =========================================================
 
 def procesar_bancamiga(df):
@@ -1033,15 +1033,34 @@ def procesar_bancamiga(df):
             st.error("❌ No se encontró columna FECHA en el archivo Bancamiga.")
             return pd.DataFrame()
         
-        # Procesar fechas
+        # 🔥 PROCESAR FECHAS DE BANCAMIGA (22/6/2026 o 22/06/2026)
         df["FECHA"] = df["FECHA"].astype(str).str.strip()
-        # Eliminar filas con fechas vacías o que sean encabezados
-        df = df[~df["FECHA"].str.contains("FECHA|SALDO|Total|Creditos|Debito", case=False, na=False)]
-        # Eliminar filas con fechas que no tengan formato válido
-        df = df[df["FECHA"].str.match(r'^\d{4}-\d{2}-\d{2}$', na=False)]
         
-        # Convertir fechas (formato YYYY-MM-DD)
-        df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
+        # Quitar filas que no son movimientos
+        df = df[
+            ~df["FECHA"].str.contains(
+                "FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO",
+                case=False,
+                na=False
+            )
+        ]
+        
+        # Convertir fechas DD/MM/YYYY
+        df["FECHA"] = pd.to_datetime(
+            df["FECHA"],
+            format="%d/%m/%Y",
+            errors="coerce"
+        )
+        
+        # Si alguna viene sin cero (22/6/2026), intentar conversión automática
+        mask = df["FECHA"].isna()
+        if mask.any():
+            df.loc[mask, "FECHA"] = pd.to_datetime(
+                df.loc[mask, "FECHA"].astype(str),
+                dayfirst=True,
+                errors="coerce"
+            )
+        
         df = df[df["FECHA"].notna()]
         
         # Procesar débito y crédito
@@ -1141,8 +1160,6 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "21/06/2026": 612.4332,
         "22/06/2026": 612.4332,
         "23/06/2026": 617.6388,
-        "24/06/2026": 621.5299,
-        "25/06/2026": 621.5299,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
