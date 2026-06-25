@@ -163,22 +163,42 @@ def leer_excel_sin_encabezados(archivo):
                 # Intentar leer con xlrd
                 return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
             except Exception as e:
-                # Si falla, intentar leer como texto/CSV
-                st.warning(f"⚠️ Error leyendo como Excel, intentando como texto: {str(e)}")
+                # Si falla, intentar leer como HTML o texto
+                st.warning(f"⚠️ Error leyendo como Excel, intentando como HTML: {str(e)}")
+                
                 archivo.seek(0)
-                # Leer como texto y procesar manualmente
-                contenido = archivo.read().decode('utf-8', errors='ignore')
-                lineas = contenido.split('\n')
-                # Crear DataFrame con las líneas
+                
+                try:
+                    tablas = pd.read_html(archivo)
+                    
+                    if len(tablas) > 0:
+                        return tablas[0]
+                    
+                except Exception:
+                    pass
+                
+                archivo.seek(0)
+                
+                contenido = archivo.read().decode("utf-8", errors="ignore")
+                
+                lineas = contenido.split("\n")
+                
                 datos = []
+                
                 for linea in lineas:
+                    
                     if linea.strip():
-                        # Dividir por tabuladores o espacios múltiples
-                        partes = linea.split('\t')
+                        
+                        partes = linea.split("\t")
+                        
                         if len(partes) == 1:
-                            partes = [p for p in linea.split(' ') if p.strip()]
+                            
+                            partes = [p for p in linea.split(" ") if p.strip()]
+                        
                         if len(partes) > 0:
+                            
                             datos.append(partes)
+                
                 return pd.DataFrame(datos)
         else:
             return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
@@ -1186,8 +1206,6 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "21/06/2026": 612.4332,
         "22/06/2026": 612.4332,
         "23/06/2026": 617.6388,
-        "24/06/2026": 621.5299,
-        "25/06/2026": 621.5299,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
