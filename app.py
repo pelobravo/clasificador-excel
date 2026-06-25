@@ -1579,18 +1579,18 @@ if archivo:
     st.info(f"📄 Archivo: **{archivo.name}** - {archivo.size/1024:.1f} KB")
 
     try:
-        archivo.seek(0)
-        primeros_bytes = archivo.read(100)
-        archivo.seek(0)
+        # =========================================================
+        # 🔥 DETECCIÓN DE BANCO - NUEVO ORDEN
+        # =========================================================
         
-        if b"<table" in primeros_bytes.lower():
-            banco = "banesco"
-        else:
-            # 🔥 PRIMERO DETECTAR POR CONTENIDO
-            banco = detectar_banco_por_contenido(archivo)
-            # Si no se detectó por contenido, usar el nombre
-            if banco is None:
-                banco = detectar_banco_por_nombre(archivo.name)
+        # 1. Detectar SIEMPRE por el nombre primero
+        banco = detectar_banco_por_nombre(archivo.name)
+        
+        # 2. Solo si no se reconoce (queda como "mercantil"), intentar por contenido
+        if banco == "mercantil":
+            banco_contenido = detectar_banco_por_contenido(archivo)
+            if banco_contenido:
+                banco = banco_contenido
         
         st.success(f"🏦 **Banco detectado:** {banco.upper()}")
         
