@@ -1640,8 +1640,20 @@ if archivo:
             
         elif banco == "bancamiga":
             try:
-                # Leer el archivo sin encabezados
-                df_raw = leer_excel_sin_encabezados(archivo)
+                # 🔥 CARGA DE BANCAMIGA - NUEVO BLOQUE
+                nombre = archivo.name.lower()
+                
+                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+                    df_raw = pd.read_excel(archivo, engine="openpyxl", header=None)
+                else:
+                    try:
+                        # Intentar leer como Excel .xls real
+                        df_raw = pd.read_excel(archivo, header=None)
+                    except Exception:
+                        # Si realmente es HTML disfrazado de .xls
+                        archivo.seek(0)
+                        df_raw = pd.read_html(archivo)[0]
+                
                 df_normalizado = procesar_bancamiga(df_raw)
                 if df_normalizado.empty:
                     st.error("No se pudieron procesar los datos de Bancamiga.")
