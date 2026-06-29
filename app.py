@@ -1209,6 +1209,9 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "24/06/2026": 621.5299,
         "25/06/2026": 621.5299,
         "26/06/2026": 622.2135,
+        "27/06/2026": 623.0223,
+        "28/06/2026": 623.0223,
+        "29/06/2026": 623.0223,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
