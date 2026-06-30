@@ -326,6 +326,19 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     else:
         return buscar_saldo_en_texto(df_raw)
 
+def calcular_saldo_movimientos(df_convertido):
+    """Suma los ingresos (NC) y resta los egresos (ND) de un DataFrame en formato unificado"""
+    if df_convertido is None or df_convertido.empty:
+        return 0.0
+    try:
+        tipo_col = "TIPO" if "TIPO" in df_convertido.columns else df_convertido.columns[5]
+        monto_col = "MONTO BS" if "MONTO BS" in df_convertido.columns else df_convertido.columns[7]
+        ingresado = df_convertido[df_convertido[tipo_col] == "NC"][monto_col].sum()
+        egresado = df_convertido[df_convertido[tipo_col] == "ND"][monto_col].sum()
+        return ingresado - egresado
+    except:
+        return 0.0
+
 # =========================================================
 # 🔥 FUNCIÓN PARA NORMALIZAR TEXTO (eliminar acentos)
 # =========================================================
@@ -1378,14 +1391,16 @@ if archivo_banesco:
                 df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
             else:
                 df_raw = pd.read_html(arch)[0]
-            saldo_arch = obtener_saldo_banco(df_raw, "banesco")
+            
+            df_normalizado = procesar_banesco(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_banesco += saldo_arch
             
             nombre_banco = f"Banesco - Cuenta {idx}" if len(archivo_banesco) > 1 else "Banesco"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_banesco(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Banesco" not in bancos_procesados:
@@ -1401,21 +1416,15 @@ if archivo_bnc:
     for idx, arch in enumerate(archivo_bnc, 1):
         try:
             df_raw = leer_excel_con_encabezados(arch)
-            encabezado = None
-            for i in range(min(30, len(df_raw))):
-                fila = df_raw.iloc[i].fillna("").astype(str)
-                texto = " ".join(fila.tolist()).lower()
-                if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
-                    encabezado = i
-                    break
-            saldo_arch = obtener_saldo_banco(df_raw, "bnc", encabezado)
+            df_normalizado = procesar_bnc(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_bnc += saldo_arch
             
             nombre_banco = f"BNC - Cuenta {idx}" if len(archivo_bnc) > 1 else "BNC"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_bnc(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "BNC" not in bancos_procesados:
@@ -1431,13 +1440,14 @@ if archivo_mercantil:
     for idx, arch in enumerate(archivo_mercantil, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
-            saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
+            df_convertido = df_raw
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_mercantil += saldo_arch
             
             nombre_banco = f"Mercantil - Cuenta {idx}" if len(archivo_mercantil) > 1 else "Mercantil"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_convertido = df_raw
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Mercantil" not in bancos_procesados:
@@ -1453,14 +1463,15 @@ if archivo_venezuela:
     for idx, arch in enumerate(archivo_venezuela, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
-            saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
+            df_normalizado = procesar_venezuela_simple(df_raw)
+            df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_venezuela += saldo_arch
             
             nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_venezuela_simple(df_raw)
-            df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Venezuela" not in bancos_procesados:
@@ -1476,14 +1487,15 @@ if archivo_provincial:
     for idx, arch in enumerate(archivo_provincial, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
-            saldo_arch = obtener_saldo_banco(df_raw, "provincial")
+            df_normalizado = procesar_provincial(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_provincial += saldo_arch
             
             nombre_banco = f"Provincial - Cuenta {idx}" if len(archivo_provincial) > 1 else "Provincial"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_provincial(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Provincial" not in bancos_procesados:
@@ -1507,14 +1519,16 @@ if archivo_bancamiga:
                 except Exception:
                     arch.seek(0)
                     df_raw = pd.read_html(arch)[0]
-            saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
+            
+            df_normalizado = procesar_bancamiga(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
+            
+            saldo_arch = calcular_saldo_movimientos(df_convertido)
             st.session_state.saldo_bancamiga += saldo_arch
             
             nombre_banco = f"Bancamiga - Cuenta {idx}" if len(archivo_bancamiga) > 1 else "Bancamiga"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_bancamiga(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Bancamiga" not in bancos_procesados:
@@ -1530,14 +1544,17 @@ if archivo_tesoro:
     for idx, arch in enumerate(archivo_tesoro, 1):
         try:
             df_raw = pd.read_excel(arch, engine="openpyxl")
+            df_normalizado = procesar_tesoro(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "tesoro")
+            
+            # Nota: para Banco del Tesoro, como es posible que no tenga columna saldo final o inicial,
+            # usamos obtener_saldo_banco que busca el saldo inicial o aplica el neto
             saldo_arch = obtener_saldo_banco(df_raw, "tesoro")
             st.session_state.saldo_tesoro += saldo_arch
             
             nombre_banco = f"Banco del Tesoro - Cuenta {idx}" if len(archivo_tesoro) > 1 else "Banco del Tesoro"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_normalizado = procesar_tesoro(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "tesoro")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Tesoro" not in bancos_procesados:
@@ -1605,12 +1622,14 @@ if list_df_convertidos:
                 total_ingresos = df_ingresos["MONTO USD"].sum() if not df_ingresos.empty else 0
                 total_egresos = df_egresos["MONTO USD"].sum() if not df_egresos.empty else 0
                 total_comisiones = df_comisiones["MONTO USD"].sum() if not df_comisiones.empty else 0
+                neto_procesado = total_ingresos - total_egresos - total_comisiones
 
                 # Mostrar métricas
-                col1_m, col2_m, col3_m = st.columns(3)
+                col1_m, col2_m, col3_m, col4_m = st.columns(4)
                 with col1_m: st.metric("💰 TOTAL INGRESOS PROCESADOS", len(df_ingresos), f"${total_ingresos:,.2f}")
                 with col2_m: st.metric("💸 TOTAL EGRESOS PROCESADOS", len(df_egresos), f"${total_egresos:,.2f}")
                 with col3_m: st.metric("💳 TOTAL COMISIONES PROCESADAS", len(df_comisiones), f"${total_comisiones:,.2f}")
+                with col4_m: st.metric("⚖️ NETO PROCESADO (ING - EGR - COM)", "", f"${neto_procesado:,.2f}")
 
                 st.subheader("📊 Detalle de Transacciones Conciliadas")
                 tab1, tab2, tab3 = st.tabs(["📈 INGRESOS", "📉 EGRESOS", "💳 COMISIONES"])
