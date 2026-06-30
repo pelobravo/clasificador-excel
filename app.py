@@ -27,6 +27,14 @@ st.set_page_config(
     layout="wide"
 )
 
+# Inicialización de Estados para Evitar NameError y Permitir Acumulación
+if "saldo_banesco" not in st.session_state:
+    st.session_state.saldo_banesco = 0.0
+if "saldo_bnc" not in st.session_state:
+    st.session_state.saldo_bnc = 0.0
+if "saldo_otros" not in st.session_state:
+    st.session_state.saldo_otros = 0.0
+
 # =========================================================
 # ESTILOS
 # =========================================================
@@ -62,8 +70,105 @@ h1, h2, h3 {
     font-size: 14px;
 }
 
+/* KPIs Styles */
+.kpi-container {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+.kpi-card {
+    background: linear-gradient(135deg, #1e3a5f 0%, #122540 100%);
+    color: white;
+    padding: 20px 24px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(30, 58, 95, 0.1);
+    flex: 1;
+    min-width: 280px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: transform 0.2s ease;
+}
+.kpi-card:hover {
+    transform: translateY(-2px);
+}
+.kpi-title {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #cbd5e0;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+.kpi-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: #ffffff;
+}
+.kpi-subtitle {
+    font-size: 12px;
+    color: #a0aec0;
+    margin-top: 4px;
+}
+
 </style>
 """, unsafe_allow_html=True)
+
+# =========================================================
+# 🔥 NUEVAS FUNCIONES PARA CONCILIACIÓN MULTIBANCO
+# =========================================================
+
+def formato_venezolano(valor):
+    """Formatea un número al estilo de moneda venezolana (miles con punto, decimales con coma)"""
+    if valor is None:
+        return "0,00"
+    try:
+        parts = f"{float(valor):,.2f}".split(".")
+        parts[0] = parts[0].replace(",", ".")
+        return ",".join(parts)
+    except:
+        return "0,00"
+
+def obtener_tasa_bcv():
+    """Obtiene la tasa del día de forma segura"""
+    tasa = obtener_tasa_por_fecha(date.today())
+    if tasa is None:
+        # Intentar obtener la tasa más reciente disponible en nuestro diccionario local
+        tasa = 623.0223  # Fallback tasa del 30/06/2026
+    return tasa
+
+def obtener_saldo_final_banesco(df_raw):
+    """Extrae el saldo final de la columna BALANCE del archivo de Banesco"""
+    try:
+        df_temp = df_raw.copy()
+        if df_temp.shape[1] >= 5:
+            balances = df_temp.iloc[:, 4].dropna()
+            for val in reversed(balances.values):
+                val_clean = convertir_monto(val)
+                if val_clean is not None:
+                    return val_clean
+    except Exception as e:
+        st.warning(f"No se pudo extraer el saldo final de Banesco: {e}")
+    return 0.0
+
+def obtener_saldo_final_bnc(df_raw, encabezado_idx):
+    """Busca la columna de saldo en el reporte de BNC y extrae el último valor numérico"""
+    try:
+        df_temp = df_raw.iloc[encabezado_idx + 1:].copy()
+        headers = df_raw.iloc[encabezado_idx].fillna("").astype(str).str.lower().tolist()
+        saldo_col_idx = None
+        for idx, h in enumerate(headers):
+            if "saldo" in h or "balance" in h:
+                saldo_col_idx = idx
+                break
+        if saldo_col_idx is not None:
+            balances = df_temp.iloc[:, saldo_col_idx].dropna()
+            for val in reversed(balances.values):
+                val_clean = convertir_monto(val)
+                if val_clean is not None:
+                    return val_clean
+    except Exception as e:
+        st.warning(f"No se pudo extraer el saldo final de BNC: {e}")
+    return 0.0
 
 # =========================================================
 # 🔥 FUNCIÓN PARA NORMALIZAR TEXTO (eliminar acentos)
@@ -110,16 +215,35 @@ with st.sidebar:
         width=100
     )
     st.markdown("---")
+    st.markdown("### 📂 Cargar Archivos")
 
-    archivo = st.file_uploader(
-        "📂 Cargar archivo Excel",
-        type=["xlsx", "xls", "xlsm"]
-    )
+    with st.expander("📊 iPago (Archivo Maestro)", expanded=True):
+        archivo_ipago = st.file_uploader(
+            "Cargar archivo iPago",
+            type=["xlsx", "xls", "xlsm"],
+            key="uploader_ipago"
+        )
 
-    archivo_ipago = st.file_uploader(
-        "📂 Cargar archivo iPago",
-        type=["xlsx", "xls", "xlsm"]
-    )
+    with st.expander("🏦 Banesco", expanded=True):
+        archivo_banesco = st.file_uploader(
+            "Cargar Banesco",
+            type=["xlsx", "xls", "xlsm"],
+            key="uploader_banesco"
+        )
+
+    with st.expander("🏦 BNC", expanded=True):
+        archivo_bnc = st.file_uploader(
+            "Cargar BNC",
+            type=["xlsx", "xls", "xlsm"],
+            key="uploader_bnc"
+        )
+
+    with st.expander("🏦 Otros Bancos (Opcional)", expanded=False):
+        archivo_otros = st.file_uploader(
+            "Cargar otro banco",
+            type=["xlsx", "xls", "xlsm"],
+            key="uploader_otros"
+        )
 
     st.markdown("---")
 
@@ -1626,7 +1750,6 @@ def procesar_archivo(df, usar_api=False, banco=""):
                 if es_comision_mercantil:
                     comisiones.append(registro)
                     continue
-
             # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision
             proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
             if es_comision(descripcion, proveedor):
@@ -1645,507 +1768,453 @@ def procesar_archivo(df, usar_api=False, banco=""):
 # INTERFAZ PRINCIPAL
 # =========================================================
 
+# Inicializar session_state
+if 'saldo_banesco' not in st.session_state: st.session_state.saldo_banesco = 0.0
+if 'saldo_bnc' not in st.session_state: st.session_state.saldo_bnc = 0.0
+if 'saldo_otros' not in st.session_state: st.session_state.saldo_otros = 0.0
+
+# Reset balances if uploaders are empty (to ensure dynamic updating)
+if not archivo_banesco:
+    st.session_state.saldo_banesco = 0.0
+if not archivo_bnc:
+    st.session_state.saldo_bnc = 0.0
+if not archivo_otros:
+    st.session_state.saldo_otros = 0.0
+
+# =========================================================
+# RENDERIZADO DE KPIS SUPERIORES (Cierre del Día)
+# =========================================================
+tasa_dia = obtener_tasa_bcv()
+total_ves = st.session_state.saldo_banesco + st.session_state.saldo_bnc + st.session_state.saldo_otros
+total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
+
+st.markdown(f"""
+<div class="kpi-container">
+    <div class="kpi-card">
+        <div class="kpi-title">Total Saldos Bancos (VES)</div>
+        <div class="kpi-value">Bs. {formato_venezolano(total_ves)}</div>
+        <div class="kpi-subtitle">Banesco: Bs. {formato_venezolano(st.session_state.saldo_banesco)} | BNC: Bs. {formato_venezolano(st.session_state.saldo_bnc)} | Otros: Bs. {formato_venezolano(st.session_state.saldo_otros)}</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Tasa Oficial BCV del Día</div>
+        <div class="kpi-value">{tasa_dia:.4f} VES/USD</div>
+        <div class="kpi-subtitle">Tasa del Banco Central de Venezuela</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Total Equivalente en Dólares (USD)</div>
+        <div class="kpi-value">${total_usd:,.2f}</div>
+        <div class="kpi-subtitle">Convertido al tipo de cambio oficial</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# =========================================================
+# LEER ARCHIVOS CARGADOS
+# =========================================================
 df_ipago = None
-
-if archivo:
-    st.info(f"📄 Archivo: **{archivo.name}** - {archivo.size/1024:.1f} KB")
-
+if archivo_ipago:
     try:
-        # =========================================================
-        # 🔥 DETECCIÓN DE BANCO - NUEVO ORDEN
-        # =========================================================
-        
-        # 1. Detectar SIEMPRE por el nombre primero
-        banco = detectar_banco_por_nombre(archivo.name)
-        
-        # 2. Solo si no se reconoce (queda como "mercantil"), intentar por contenido
-        if banco == "mercantil":
-            banco_contenido = detectar_banco_por_contenido(archivo)
-            if banco_contenido:
-                banco = banco_contenido
-        
-        st.success(f"🏦 **Banco detectado:** {banco.upper()}")
-        
-        if banco == "mercantil":
-            df_original = leer_excel_sin_encabezados(archivo)
-            
-        elif banco == "banesco":
-            try:
-                nombre = archivo.name.lower()
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(archivo, engine="openpyxl", header=None)
-                else:
-                    df_raw = pd.read_html(archivo)[0]
-                df_normalizado = procesar_banesco(df_raw)
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            except Exception as e:
-                st.error(f"Error leyendo Banesco: {str(e)}")
-                st.stop()
-            
-        elif banco == "tesoro":
-            try:
-                df_raw = pd.read_excel(archivo, engine="openpyxl")
-                df_normalizado = procesar_tesoro(df_raw)
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            except Exception as e:
-                st.error(f"Error leyendo Tesoro: {str(e)}")
-                st.stop()
-            
-        elif banco == "bancamiga":
-            try:
-                # 🔥 CARGA DE BANCAMIGA
-                nombre = archivo.name.lower()
-                
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(archivo, engine="openpyxl", header=None)
-                else:
-                    try:
-                        # Intentar leer como Excel .xls real
-                        df_raw = pd.read_excel(archivo, header=None)
-                    except Exception:
-                        # Si realmente es HTML disfrazado de .xls
-                        archivo.seek(0)
-                        df_raw = pd.read_html(archivo)[0]
-                
-                df_normalizado = procesar_bancamiga(df_raw)
-                if df_normalizado.empty:
-                    st.error("No se pudieron procesar los datos de Bancamiga.")
-                    st.stop()
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            except Exception as e:
-                st.error(f"Error leyendo Bancamiga: {str(e)}")
-                st.stop()
-            
-        elif banco == "provincial":
-            try:
-                df_raw = leer_excel_sin_encabezados(archivo)
-                df_normalizado = procesar_provincial(df_raw)
-                if df_normalizado.empty:
-                    st.error("No se pudieron procesar los datos de Provincial.")
-                    st.stop()
-                df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            except Exception as e:
-                st.error(f"Error leyendo Provincial: {str(e)}")
-                st.stop()
-            
-        elif banco == "venezuela":
-            # 🔥 LEER SIN ENCABEZADOS (igual que Mercantil)
-            df_raw = leer_excel_sin_encabezados(archivo)
-            df_normalizado = procesar_venezuela_simple(df_raw)
-            if df_normalizado.empty:
-                st.stop()
-            
-            # Venezuela trabaja directamente con el dataframe normalizado
-            df_original = convertir_venezuela_a_formato_mercantil(df_normalizado)
-            
-            # Fechas para Venezuela
-            fechas_convertidas = pd.to_datetime(
-                df_normalizado["FECHA"],
-                dayfirst=True,
-                errors="coerce"
-            )
-            
-        elif banco == "bnc":
-            df_raw = leer_excel_con_encabezados(archivo)
-            df_normalizado = procesar_bnc(df_raw)
-            df_original = convertir_a_formato_mercantil(df_normalizado, banco)
-            
+        df_ipago = pd.read_excel(archivo_ipago, engine="openpyxl")
+        df_ipago.columns = [str(c).strip() for c in df_ipago.columns]
+        st.success(f"✅ Archivo iPago cargado: {len(df_ipago)} registros")
+    except Exception as e:
+        st.error(f"❌ Error leyendo archivo iPago: {e}")
+
+list_df_convertidos = []
+bancos_procesados = []
+
+# 1. Banesco
+if archivo_banesco:
+    try:
+        nombre = archivo_banesco.name.lower()
+        if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+            df_raw = pd.read_excel(archivo_banesco, engine="openpyxl", header=None)
         else:
-            df_raw = leer_excel_con_encabezados(archivo)
-            df_original = convertir_a_formato_mercantil(df_raw, banco)
-            
-        if df_original.empty:
-            st.error("No se detectaron movimientos para procesar.")
-            st.stop()
+            df_raw = pd.read_html(archivo_banesco)[0]
+        
+        # Actualizar saldo en session_state
+        st.session_state.saldo_banesco = obtener_saldo_final_banesco(df_raw)
+        
+        df_normalizado = procesar_banesco(df_raw)
+        df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
+        if not df_convertido.empty:
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("Banesco")
+    except Exception as e:
+        st.error(f"❌ Error leyendo Banesco: {str(e)}")
 
-        try:
-            if banco == "mercantil":
-                fechas_convertidas = pd.to_datetime(
-                    df_original[3].astype(str).str.zfill(8),
-                    format="%d%m%Y",
-                    errors="coerce"
-                )
-            elif banco == "venezuela":
-                # Ya tenemos fechas_convertidas definidas arriba
+# 2. BNC
+if archivo_bnc:
+    try:
+        df_raw = leer_excel_con_encabezados(archivo_bnc)
+        
+        # Buscar encabezado para el saldo
+        encabezado = None
+        for i in range(min(30, len(df_raw))):
+            fila = df_raw.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+                encabezado = i
+                break
+        
+        if encabezado is not None:
+            st.session_state.saldo_bnc = obtener_saldo_final_bnc(df_raw, encabezado)
+        
+        df_normalizado = procesar_bnc(df_raw)
+        df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
+        if not df_convertido.empty:
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("BNC")
+    except Exception as e:
+        st.error(f"❌ Error leyendo BNC: {str(e)}")
+
+# 3. Otros Bancos
+if archivo_otros:
+    try:
+        banco_otro = detectar_banco_por_nombre(archivo_otros.name)
+        if banco_otro == "mercantil":
+            banco_contenido = detectar_banco_por_contenido(archivo_otros)
+            if banco_contenido:
+                banco_otro = banco_contenido
+        
+        st.info(f"🏦 Otro banco detectado: {banco_otro.upper()}")
+        
+        # Procesar según corresponda
+        if banco_otro == "mercantil":
+            df_raw = leer_excel_sin_encabezados(archivo_otros)
+            # Intentar estimar un saldo
+            try:
+                if df_raw.shape[1] >= 9:
+                    # Buscar la columna de saldo
+                    balances = df_raw.iloc[:, 8].dropna()
+                    for val in reversed(balances.values):
+                        val_clean = convertir_monto(val)
+                        if val_clean is not None:
+                            st.session_state.saldo_otros = val_clean
+                            break
+            except:
                 pass
-            else:
-                fechas_convertidas = pd.to_datetime(
-                    df_original.iloc[:, 3],
-                    errors="coerce",
-                    dayfirst=True
-                )
-
-            fecha_inicio_dt = pd.to_datetime(fecha_inicio)
-            fecha_fin_dt = pd.to_datetime(fecha_fin)
-
-            # Aplicar filtro según el banco
-            if banco == "venezuela":
-                # Usar el dataframe original para el filtro
-                mask = (fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)
-                # Filtrar df_original usando la máscara
-                df_original = df_original[mask]
-            else:
-                df_original = df_original[
-                    (fechas_convertidas >= fecha_inicio_dt) & 
-                    (fechas_convertidas <= fecha_fin_dt)
-                ]
+            df_convertido = df_raw
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append(f"Mercantil (Otros)")
             
-            st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
-        except Exception as e:
-            st.warning(f"Error filtrando fechas: {e}")
+        elif banco_otro == "banesco":
+            df_raw = pd.read_excel(archivo_otros, engine="openpyxl", header=None)
+            st.session_state.saldo_otros = obtener_saldo_final_banesco(df_raw)
+            df_normalizado = procesar_banesco(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("Banesco (Otros)")
             
-        if df_original.empty or len(df_original) == 0:
-            st.error("❌ No se encontraron movimientos válidos en el rango de fechas.")
-            st.stop()
+        elif banco_otro == "tesoro":
+            df_raw = pd.read_excel(archivo_otros, engine="openpyxl")
+            df_normalizado = procesar_tesoro(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "tesoro")
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("Tesoro (Otros)")
+            
+        elif banco_otro == "bancamiga":
+            nombre = archivo_otros.name.lower()
+            if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+                df_raw = pd.read_excel(archivo_otros, engine="openpyxl", header=None)
+            else:
+                try:
+                    df_raw = pd.read_excel(archivo_otros, header=None)
+                except Exception:
+                    archivo_otros.seek(0)
+                    df_raw = pd.read_html(archivo_otros)[0]
+            
+            # Intentar obtener saldo de Bancamiga
+            try:
+                df_normalizado = procesar_bancamiga(df_raw)
+                df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
+                list_df_convertidos.append(df_convertido)
+                bancos_procesados.append("Bancamiga (Otros)")
+                # Saldo de Bancamiga suele estar en la columna SALDO
+                if "SALDO" in df_raw.columns:
+                    st.session_state.saldo_otros = convertir_monto(df_raw["SALDO"].dropna().iloc[-1])
+            except:
+                pass
+                
+        elif banco_otro == "provincial":
+            df_raw = leer_excel_sin_encabezados(archivo_otros)
+            df_normalizado = procesar_provincial(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("Provincial (Otros)")
+            
+        elif banco_otro == "venezuela":
+            df_raw = leer_excel_sin_encabezados(archivo_otros)
+            df_normalizado = procesar_venezuela_simple(df_raw)
+            df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("Venezuela (Otros)")
+            
+        elif banco_otro == "bnc":
+            df_raw = leer_excel_con_encabezados(archivo_otros)
+            encabezado = None
+            for i in range(min(30, len(df_raw))):
+                fila = df_raw.iloc[i].fillna("").astype(str)
+                texto = " ".join(fila.tolist()).lower()
+                if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+                    encabezado = i
+                    break
+            if encabezado is not None:
+                st.session_state.saldo_otros = obtener_saldo_final_bnc(df_raw, encabezado)
+            df_normalizado = procesar_bnc(df_raw)
+            df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
+            list_df_convertidos.append(df_convertido)
+            bancos_procesados.append("BNC (Otros)")
+    except Exception as e:
+        st.error(f"❌ Error leyendo otro banco: {str(e)}")
 
-        with st.expander("👁️ Vista previa archivo original"):
+# Recalcular el total con los saldos actualizados tras el procesamiento
+total_ves = st.session_state.saldo_banesco + st.session_state.saldo_bnc + st.session_state.saldo_otros
+total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
+
+# =========================================================
+# PROCESAR Y CONSOLIDAR MOVIMIENTOS
+# =========================================================
+if list_df_convertidos:
+    df_original = pd.concat(list_df_convertidos, ignore_index=True)
+    
+    # Filtrar por fechas de forma unificada
+    try:
+        fechas_convertidas = pd.to_datetime(
+            df_original.iloc[:, 3],
+            format="%d/%m/%Y",
+            errors="coerce"
+        )
+        fecha_inicio_dt = pd.to_datetime(fecha_inicio)
+        fecha_fin_dt = pd.to_datetime(fecha_fin)
+
+        df_original = df_original[
+            (fechas_convertidas >= fecha_inicio_dt) & 
+            (fechas_convertidas <= fecha_fin_dt)
+        ]
+        
+        st.success(f"📅 Movimientos consolidados de {', '.join(bancos_procesados)} filtrados del {fecha_inicio} al {fecha_fin} ({len(df_original)} registros)")
+    except Exception as e:
+        st.warning(f"⚠️ Error filtrando fechas consolidadas: {e}")
+
+    if df_original.empty:
+        st.warning("⚠️ No se encontraron movimientos en el rango de fechas para los bancos seleccionados.")
+    else:
+        with st.expander("👁️ Vista previa de movimientos consolidados (Formato Unificado)"):
             st.dataframe(df_original.head(20), use_container_width=True)
 
-        # =========================================================
-        # LEER ARCHIVO IPAGO
-        # =========================================================
-        if archivo_ipago:
-            try:
-                df_ipago = pd.read_excel(archivo_ipago, engine="openpyxl")
-                df_ipago.columns = [str(c).strip() for c in df_ipago.columns]
-                st.success(f"Archivo iPago cargado: {len(df_ipago)} registros")
-                st.dataframe(df_ipago.head())
-            except Exception as e:
-                st.error(f"Error leyendo archivo iPago: {e}")
-
         if procesar:
-            with st.spinner("Procesando archivo con tasas BCV..."):
-                if banco == "venezuela":
-                    ingresos = []
-                    egresos = []
-                    comisiones = []
+            with st.spinner("🚀 Conciliando y cruzando transacciones con iPago..."):
+                # Procesar movimientos consolidados
+                ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api, banco="multibanco")
 
-                    for _, row in df_normalizado.iterrows():
-                        fecha_obj = pd.to_datetime(row["FECHA"], dayfirst=True, errors="coerce")
-                        tasa = obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
+                df_ingresos = pd.DataFrame(ingresos)
+                df_egresos = pd.DataFrame(egresos)
+                df_comisiones = pd.DataFrame(comisiones)
 
-                        monto_bs = float(row["MONTO"])
-                        monto_usd = calcular_usd(monto_bs, tasa)
-
-                        registro = {
-                            "FECHA": row["FECHA"],
-                            "REFERENCIA": row["REFERENCIA"],
-                            "DESCRIPCIÓN": row["DESCRIPCION"],
-                            "MONTO BS": monto_bs,
-                            "TASA BCV": tasa,
-                            "MONTO USD": monto_usd,
-                            "STATUS": "",
-                            "OBSERVACIÓN": "",
-                            "TIPO_PAGO": "",
-                            "PROVEEDOR_IPAGO": "",
-                            "DESCRIPCION_ORIGINAL": ""
-                        }
-
-                        tipo = str(row["TIPO"]).strip().upper()
-                        descripcion = str(row["DESCRIPCION"]).strip().upper()
-                        referencia = str(row["REFERENCIA"]).strip()
-                        
-                        # 🔥 DETECCIÓN MEJORADA DE COMISIONES PARA VENEZUELA
-                        es_comision_venezuela = False
-                        
-                        # 🔥 REGLA 1: Detectar por descripción
-                        palabras_comision_bdv = [
-                            "COM PAGO OTRAS CTAS",
-                            "COMISION PAGO A PROVEEDORES",
-                            "COM PAGO OTR BCOS",
-                            "COM PAGO OTRAS CTAS JUR NAT",
-                            "COM PAGO OTRAS CTAS JUR JUR",
-                            "COMISION POR TRANSFERENCIA",
-                            "COMISION PAGO MOVIL",
-                            "COMISIÓN PAGO MOVIL",
-                            "COMISION X PAGO DE NOMINA",
-                            "COMISION X PAGO DE NOMINAS",
-                            "ITF",
-                            "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                            "CARGO BANCARIO",
-                            "MANTENIMIENTO DE CUENTA",
-                            "COMISION BANCARIA",
-                            "COMISIÓN BANCARIA",
-                            "CARGO POR SERVICIO",
-                            "CARGO POR TRANSACCION",
-                            "COMISION PAGO MOVIL COMERCIAL",
-                            "COMISION X PAGO DE NOMINAS MB"
-                        ]
-                        
-                        # Verificar si la descripción coincide con alguna comisión
-                        for patron in palabras_comision_bdv:
-                            if patron in descripcion:
-                                es_comision_venezuela = True
-                                break
-                        
-                        # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
-                        if not es_comision_venezuela:
-                            # Las comisiones de BDV suelen tener referencias que comienzan con 970 o 972 o 067
-                            if referencia.startswith(("970", "972", "067")):
-                                # Verificar si la descripción contiene palabras clave de comisión
-                                if any(palabra in descripcion for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
-                                    es_comision_venezuela = True
-                        
-                        # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
-                        if not es_comision_venezuela and tipo == "ND":
-                            if "COM" in descripcion or "PAGO OTR" in descripcion:
-                                es_comision_venezuela = True
-                        
-                        # 🔥 REGLA 4: Comisiones específicas de BDV por el monto exacto (189.50, 36.44, etc)
-                        if not es_comision_venezuela and tipo == "ND":
-                            # Montos típicos de comisiones de BDV (montos pequeños)
-                            if monto_bs < 1000 and ("COM" in descripcion or "PAGO OTR" in descripcion):
-                                es_comision_venezuela = True
-                        
-                        # Si es comisión, agregar a la lista de comisiones
-                        if es_comision_venezuela:
-                            comisiones.append(registro)
-                        elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
-                            ingresos.append(registro)
-                        else:
-                            egresos.append(registro)
-                else:
-                    # 🔥 PASAR EL NOMBRE DEL BANCO A LA FUNCIÓN
-                    ingresos, egresos, comisiones = procesar_archivo(df_original, usar_api, banco=banco)
-
-            df_ingresos = pd.DataFrame(ingresos)
-            df_egresos = pd.DataFrame(egresos)
-            df_comisiones = pd.DataFrame(comisiones)
-
-            # =========================================================
-            # 🔥 CRUCE CON IPAGO - VERSIÓN MEJORADA (CRUCE FLEXIBLE)
-            # =========================================================
-            if archivo_ipago and not df_egresos.empty:
-                # Enriquecer egresos con datos de iPago
-                df_egresos = enriquecer_egresos_con_ipago(df_egresos, df_ipago)
-                
-                # 🔥 Separar comisiones de iPago (si las hay)
-                if "ES_COMISION" in df_egresos.columns:
-                    mascara_comisiones_ipago = df_egresos["ES_COMISION"] == True
+                # Cruce con iPago
+                if df_ipago is not None and not df_egresos.empty:
+                    df_egresos = enriquecer_egresos_con_ipago(df_egresos, df_ipago)
                     
-                    if mascara_comisiones_ipago.any():
-                        df_comisiones_extra = df_egresos[mascara_comisiones_ipago].copy()
-                        
-                        # Remover columnas internas
-                        df_comisiones_extra = df_comisiones_extra.drop(
-                            columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
-                            errors="ignore"
-                        )
-                        
-                        # Agregar a comisiones existentes
-                        if not df_comisiones.empty:
-                            df_comisiones = pd.concat([df_comisiones, df_comisiones_extra], ignore_index=True)
-                        else:
-                            df_comisiones = df_comisiones_extra
-                        
-                        # Remover comisiones de egresos
-                        df_egresos = df_egresos[~mascara_comisiones_ipago].copy()
-                        
-                        st.success(f"💳 Se movieron {len(df_comisiones_extra)} comisiones desde iPago a la sección de COMISIONES")
-                
-                # Limpiar columnas auxiliares
-                df_egresos = df_egresos.drop(
-                    columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
-                    errors="ignore"
+                    # Separar comisiones detectadas en iPago
+                    if "ES_COMISION" in df_egresos.columns:
+                        mascara_comisiones_ipago = df_egresos["ES_COMISION"] == True
+                        if mascara_comisiones_ipago.any():
+                            df_comisiones_extra = df_egresos[mascara_comisiones_ipago].copy()
+                            df_comisiones_extra = df_comisiones_extra.drop(
+                                columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
+                                errors="ignore"
+                            )
+                            if not df_comisiones.empty:
+                                df_comisiones = pd.concat([df_comisiones, df_comisiones_extra], ignore_index=True)
+                            else:
+                                df_comisiones = df_comisiones_extra
+                            df_egresos = df_egresos[~mascara_comisiones_ipago].copy()
+                            st.success(f"💳 Se identificaron {len(df_comisiones_extra)} comisiones adicionales vía iPago.")
+
+                    # Limpiar columnas auxiliares
+                    df_egresos = df_egresos.drop(
+                        columns=["ES_COMISION", "REFERENCIA_IPAGO"], 
+                        errors="ignore"
+                    )
+                    st.success(f"🎯 Cruce completado. Egresos conciliados con iPago: {len(df_egresos)} registros.")
+
+                # Completar columnas vacías obligatorias para el reporte en openpyxl
+                for df_t in [df_ingresos, df_egresos, df_comisiones]:
+                    if not df_t.empty:
+                        for col_col in ["STATUS", "OBSERVACIÓN", "TIPO_PAGO", "PROVEEDOR_IPAGO", "DESCRIPCION_ORIGINAL"]:
+                            if col_col not in df_t.columns:
+                                df_t[col_col] = ""
+
+                total_ingresos = df_ingresos["MONTO USD"].sum() if not df_ingresos.empty else 0
+                total_egresos = df_egresos["MONTO USD"].sum() if not df_egresos.empty else 0
+                total_comisiones = df_comisiones["MONTO USD"].sum() if not df_comisiones.empty else 0
+
+                # Mostrar métricas del procesamiento
+                col1_m, col2_m, col3_m = st.columns(3)
+                with col1_m:
+                    st.metric("💰 TOTAL INGRESOS PROCESADOS", len(df_ingresos), f"${total_ingresos:,.2f}")
+                with col2_m:
+                    st.metric("💸 TOTAL EGRESOS PROCESADOS", len(df_egresos), f"${total_egresos:,.2f}")
+                with col3_m:
+                    st.metric("💳 TOTAL COMISIONES PROCESADAS", len(df_comisiones), f"${total_comisiones:,.2f}")
+
+                st.subheader("📊 Detalle de Transacciones Conciliadas")
+                tab1, tab2, tab3 = st.tabs(["📈 INGRESOS", "📉 EGRESOS", "💳 COMISIONES"])
+                with tab1: st.dataframe(df_ingresos, use_container_width=True)
+                with tab2: st.dataframe(df_egresos, use_container_width=True)
+                with tab3: st.dataframe(df_comisiones, use_container_width=True)
+
+                # =========================================================
+                # MOTOR DE REPORTES EXCEL OPENPYXL COMPLETO
+                # =========================================================
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    workbook = writer.book
+                    hoja = workbook.create_sheet(title="REPORTE")
+
+                    if "Sheet" in workbook.sheetnames:
+                        workbook.remove(workbook["Sheet"])
+
+                    rojo = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+                    verde = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+                    amarillo = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                    blanco = Font(color="FFFFFF", bold=True)
+                    borde = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+                    centro = Alignment(horizontal="center", vertical="center")
+
+                    try:
+                        logo = Image("LOGO.jpeg")
+                        logo.width = 130
+                        logo.height = 130
+                        hoja.add_image(logo, "A1")
+                    except:
+                        pass
+
+                    hoja.merge_cells("C7:H7")
+                    hoja["C7"] = "REPORTE CONSOLIDADO DE CONCILIACIÓN MULTIBANCO"
+                    hoja["C7"].font = Font(bold=True, size=14)
+                    hoja["C7"].alignment = centro
+
+                    def crear_tabla(titulo, dataframe, fila_inicio, color_total):
+                        hoja.merge_cells(start_row=fila_inicio, start_column=1, end_row=fila_inicio, end_column=10)
+                        titulo_cell = hoja.cell(row=fila_inicio, column=1)
+                        titulo_cell.value = titulo
+                        titulo_cell.fill = rojo
+                        titulo_cell.font = blanco
+                        titulo_cell.alignment = centro
+
+                        headers = [
+                            "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCIÓN ORIGINAL",
+                            "MONTO BS", "TASA BCV", "MONTO USD", 
+                            "PROVEEDOR (iPago)", "TIPO EGRESO (iPago)", "TIPO PAGO (iPago)"
+                        ]
+                        fila_header = fila_inicio + 1
+
+                        for col_num, header in enumerate(headers, 1):
+                            cell = hoja.cell(row=fila_header, column=col_num)
+                            cell.value = header
+                            cell.fill = rojo
+                            cell.font = blanco
+                            cell.border = borde
+                            cell.alignment = centro
+
+                        fila_data = fila_header + 1
+
+                        for _, row in dataframe.iterrows():
+                            hoja.cell(row=fila_data, column=1).value = row.get("FECHA", "")
+                            hoja.cell(row=fila_data, column=2).value = row.get("REFERENCIA", "")
+                            hoja.cell(row=fila_data, column=3).value = row.get("DESCRIPCIÓN", "")
+                            hoja.cell(row=fila_data, column=4).value = row.get("DESCRIPCION_ORIGINAL", "")
+                            hoja.cell(row=fila_data, column=5).value = row.get("MONTO BS", 0)
+                            hoja.cell(row=fila_data, column=6).value = row.get("TASA BCV", 0)
+                            hoja.cell(row=fila_data, column=7).value = row.get("MONTO USD", 0)
+                            hoja.cell(row=fila_data, column=8).value = row.get("PROVEEDOR_IPAGO", row.get("STATUS", ""))
+                            hoja.cell(row=fila_data, column=9).value = row.get("OBSERVACIÓN", "")
+                            hoja.cell(row=fila_data, column=10).value = row.get("TIPO_PAGO", "")
+
+                            hoja.cell(row=fila_data, column=5).number_format = '#,##0.00'
+                            hoja.cell(row=fila_data, column=6).number_format = '#,##0.0000'
+                            hoja.cell(row=fila_data, column=7).number_format = '$#,##0.00'
+
+                            for col in range(1, 11):
+                                 hoja.cell(row=fila_data, column=col).border = borde
+
+                            fila_data += 1
+
+                        total_cell = hoja.cell(row=fila_data, column=4)
+                        total_cell.value = f"TOTAL {titulo}"
+                        total_cell.font = Font(bold=True)
+
+                        total_bs_cell = hoja.cell(row=fila_data, column=5)
+                        total_bs_cell.value = dataframe["MONTO BS"].sum() if not dataframe.empty else 0
+                        total_bs_cell.number_format = '#,##0.00'
+                        total_bs_cell.fill = color_total
+
+                        monto_total = hoja.cell(row=fila_data, column=7)
+                        monto_total.value = dataframe["MONTO USD"].sum() if not dataframe.empty else 0
+                        monto_total.number_format = '$#,##0.00'
+                        monto_total.fill = color_total
+
+                        return fila_data + 4
+
+                    fila_actual = 10
+                    if not df_ingresos.empty:
+                        fila_actual = crear_tabla("INGRESOS", df_ingresos, fila_actual, verde)
+                    if not df_egresos.empty:
+                        fila_actual = crear_tabla("EGRESOS", df_egresos, fila_actual, amarillo)
+                    if not df_comisiones.empty:
+                        fila_actual = crear_tabla("COMISIONES", df_comisiones, fila_actual, amarillo)
+
+                    for columna in hoja.columns:
+                        max_length = 0
+                        try:
+                            columna_letra = columna[0].column_letter
+                        except:
+                            continue
+                        for cell in columna:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 5, 50)
+                        hoja.column_dimensions[columna_letra].width = adjusted_width
+
+                output.seek(0)
+
+                st.download_button(
+                    label="📥 Descargar Excel Clasificado Consolidado (BCV + iPago)",
+                    data=output.getvalue(),
+                    file_name=f"cierre_consolidado_{fecha_inicio}_{fecha_fin}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
                 
-                st.success(f"🎯 Egresos enriquecidos con iPago: {len(df_egresos)} registros")
-
-            # Completar columnas vacías obligatorias para el reporte en openpyxl
-            for df_t in [df_ingresos, df_egresos, df_comisiones]:
-                if not df_t.empty:
-                    if "STATUS" not in df_t.columns: df_t["STATUS"] = ""
-                    if "OBSERVACIÓN" not in df_t.columns: df_t["OBSERVACIÓN"] = ""
-                    if "TIPO_PAGO" not in df_t.columns: df_t["TIPO_PAGO"] = ""
-                    if "PROVEEDOR_IPAGO" not in df_t.columns: df_t["PROVEEDOR_IPAGO"] = ""
-                    if "DESCRIPCION_ORIGINAL" not in df_t.columns: df_t["DESCRIPCION_ORIGINAL"] = ""
-
-            total_ingresos = df_ingresos["MONTO USD"].sum() if not df_ingresos.empty else 0
-            total_egresos = df_egresos["MONTO USD"].sum() if not df_egresos.empty else 0
-            total_comisiones = df_comisiones["MONTO USD"].sum() if not df_comisiones.empty else 0
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric("💰 INGRESOS", len(df_ingresos), f"${total_ingresos:,.2f}")
-            with col2:
-                st.metric("💸 EGRESOS", len(df_egresos), f"${total_egresos:,.2f}")
-            with col3:
-                st.metric("💳 COMISIONES", len(df_comisiones), f"${total_comisiones:,.2f}")
-
-            st.subheader("📊 Resultados")
-
-            tab1, tab2, tab3 = st.tabs(["📈 INGRESOS", "📉 EGRESOS", "💳 COMISIONES"])
-
-            with tab1: st.dataframe(df_ingresos, use_container_width=True)
-            with tab2: st.dataframe(df_egresos, use_container_width=True)
-            with tab3: st.dataframe(df_comisiones, use_container_width=True)
-
-            # =========================================================
-            # MOTOR DE REPORTES EXCEL OPENPYXL COMPLETO
-            # =========================================================
-            output = BytesIO()
-
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                workbook = writer.book
-                hoja = workbook.create_sheet(title="REPORTE")
-
-                if "Sheet" in workbook.sheetnames:
-                    hoja_vacia = workbook["Sheet"]
-                    workbook.remove(hoja_vacia)
-
-                rojo = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
-                verde = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-                amarillo = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-                blanco = Font(color="FFFFFF", bold=True)
-                borde = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-                centro = Alignment(horizontal="center", vertical="center")
-
-                try:
-                    logo = Image("LOGO.jpeg")
-                    logo.width = 130
-                    logo.height = 130
-                    hoja.add_image(logo, "A1")
-                except:
-                    pass
-
-                hoja.merge_cells("C7:H7")
-                banco_nombre = banco.upper()
-                hoja["C7"] = f"{banco_nombre} - REPORTE DE CONCILIACIÓN"
-                hoja["C7"].font = Font(bold=True, size=14)
-                hoja["C7"].alignment = centro
-
-                def crear_tabla(titulo, dataframe, fila_inicio, color_total):
-                    hoja.merge_cells(start_row=fila_inicio, start_column=1, end_row=fila_inicio, end_column=10)
-                    titulo_cell = hoja.cell(row=fila_inicio, column=1)
-                    titulo_cell.value = titulo
-                    titulo_cell.fill = rojo
-                    titulo_cell.font = blanco
-                    titulo_cell.alignment = centro
-
-                    # 🔥 HEADERS MEJORADOS CON DATOS DE IPAGO
-                    headers = [
-                        "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCIÓN ORIGINAL",
-                        "MONTO BS", "TASA BCV", "MONTO USD", 
-                        "PROVEEDOR (iPago)", "TIPO EGRESO (iPago)", "TIPO PAGO (iPago)"
-                    ]
-                    fila_header = fila_inicio + 1
-
-                    for col_num, header in enumerate(headers, 1):
-                        cell = hoja.cell(row=fila_header, column=col_num)
-                        cell.value = header
-                        cell.fill = rojo
-                        cell.font = blanco
-                        cell.border = borde
-                        cell.alignment = centro
-
-                    fila_data = fila_header + 1
-
-                    for _, row in dataframe.iterrows():
-                        hoja.cell(row=fila_data, column=1).value = row.get("FECHA", "")
-                        hoja.cell(row=fila_data, column=2).value = row.get("REFERENCIA", "")
-                        hoja.cell(row=fila_data, column=3).value = row.get("DESCRIPCIÓN", "")
-                        hoja.cell(row=fila_data, column=4).value = row.get("DESCRIPCION_ORIGINAL", "")
-                        hoja.cell(row=fila_data, column=5).value = row.get("MONTO BS", 0)
-                        hoja.cell(row=fila_data, column=6).value = row.get("TASA BCV", 0)
-                        hoja.cell(row=fila_data, column=7).value = row.get("MONTO USD", 0)
-                        hoja.cell(row=fila_data, column=8).value = row.get("PROVEEDOR_IPAGO", row.get("STATUS", ""))
-                        hoja.cell(row=fila_data, column=9).value = row.get("OBSERVACIÓN", "")
-                        hoja.cell(row=fila_data, column=10).value = row.get("TIPO_PAGO", "")
-
-                        hoja.cell(row=fila_data, column=5).number_format = '#,##0.00'
-                        hoja.cell(row=fila_data, column=6).number_format = '#,##0.0000'
-                        hoja.cell(row=fila_data, column=7).number_format = '$#,##0.00'
-
-                        for col in range(1, 11):
-                            hoja.cell(row=fila_data, column=col).border = borde
-
-                        fila_data += 1
-
-                    total_cell = hoja.cell(row=fila_data, column=4)
-                    total_cell.value = f"TOTAL {titulo}"
-                    total_cell.font = Font(bold=True)
-
-                    total_bs_cell = hoja.cell(row=fila_data, column=5)
-                    total_bs_cell.value = dataframe["MONTO BS"].sum() if not dataframe.empty else 0
-                    total_bs_cell.number_format = '#,##0.00'
-                    total_bs_cell.fill = color_total
-
-                    monto_total = hoja.cell(row=fila_data, column=7)
-                    monto_total.value = dataframe["MONTO USD"].sum() if not dataframe.empty else 0
-                    monto_total.number_format = '$#,##0.00'
-                    monto_total.fill = color_total
-
-                    return fila_data + 4
-
-                fila_actual = 10
-
-                if not df_ingresos.empty:
-                    fila_actual = crear_tabla("INGRESOS", df_ingresos, fila_actual, verde)
-
-                if not df_egresos.empty:
-                    fila_actual = crear_tabla("EGRESOS", df_egresos, fila_actual, amarillo)
-
-                if not df_comisiones.empty:
-                    fila_actual = crear_tabla("COMISIONES", df_comisiones, fila_actual, amarillo)
-
-                for columna in hoja.columns:
-                    max_length = 0
-                    try:
-                        columna_letra = columna[0].column_letter
-                    except:
-                        continue
-
-                    for cell in columna:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-
-                    adjusted_width = min(max_length + 5, 50)
-                    hoja.column_dimensions[columna_letra].width = adjusted_width
-
-            output.seek(0)
-
-            st.download_button(
-                label="📥 Descargar Excel Clasificado (con Tasas BCV e iPago)",
-                data=output.getvalue(),
-                file_name=f"balance_{banco}_{fecha_inicio}_{fecha_fin}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            with st.expander("📊 Tasas BCV utilizadas"):
-                todas_tasas = {}
-                for registro in ingresos + egresos + comisiones:
-                    fecha = registro["FECHA"]
-                    tasa = registro["TASA BCV"]
-                    if fecha not in todas_tasas:
-                        todas_tasas[fecha] = tasa
-                
-                if todas_tasas:
-                    df_tasas = pd.DataFrame([
-                        {"FECHA": f, "TASA BCV": t} 
-                        for f, t in todas_tasas.items()
-                    ]).sort_values("FECHA")
-                    st.dataframe(df_tasas, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"❌ Error general: {str(e)}")
-        st.error("Detalles del error para depuración:")
-        st.code(str(e))
+                # Mostrar las tasas utilizadas
+                with st.expander("📊 Tasas BCV utilizadas en el proceso"):
+                    todas_tasas = {}
+                    for registro in ingresos + egresos + comisiones:
+                        fecha_r = registro["FECHA"]
+                        tasa_r = registro["TASA BCV"]
+                        if fecha_r not in todas_tasas:
+                            todas_tasas[fecha_r] = tasa_r
+                    if todas_tasas:
+                        df_tasas = pd.DataFrame([
+                            {"FECHA": f, "TASA BCV": t} 
+                            for f, t in todas_tasas.items()
+                        ]).sort_values("FECHA")
+                        st.dataframe(df_tasas, use_container_width=True)
 
 else:
     st.markdown("""
-    ### 👋 Clasificador Bancario Inteligente Multi-Banco
-
-    ## FUNCIONES
-    ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga.
-    ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
-    ✅ **NUEVO:** Cruce inteligente con iPago usando REFERENCIA + DESCRIPCIÓN.
-    ✅ **NUEVO:** Exporta con datos completos de iPago: Proveedor, Tipo de Egreso, Tipo de Pago.
-    ✅ **NUEVO:** Conserva la descripción original del banco y la reemplaza con la de iPago cuando hay coincidencia.
-    ✅ Calcula USD con tasa BCV real por fecha.
-    ✅ Exporta reporte profesional con todas las columnas.
+    ### 👋 Conciliador Bancario Inteligente Multibanco
+    
+    Carga los archivos de tus cuentas bancarias y el archivo maestro de iPago en el menú de la izquierda para comenzar el proceso de conciliación automatizado.
+    
+    **Características:**
+    - Soporte simultáneo para múltiples cuentas (Banesco, BNC y otros).
+    - Cálculo automático de saldo consolidado en Bolívares (VES) y Dólares (USD).
+    - Cruce inteligente y trazabilidad con iPago.
+    - Generación de reportes de cierre en formato Excel profesional.
     """)
