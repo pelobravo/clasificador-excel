@@ -1266,6 +1266,18 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# =========================================================
+# LEER ARCHIVOS CARGADOS
+# =========================================================
+df_ipago = None
+if archivo_ipago:
+    try:
+        df_ipago = pd.read_excel(archivo_ipago, engine="openpyxl")
+        df_ipago.columns = [str(c).strip() for c in df_ipago.columns]
+        st.success(f"✅ Archivo iPago cargado: {len(df_ipago)} registros")
+    except Exception as e:
+        st.error(f"❌ Error leyendo archivo iPago: {e}")
+
 list_df_convertidos = []
 bancos_procesados = []
 
