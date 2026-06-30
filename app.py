@@ -43,72 +43,91 @@ if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
 st.markdown("""
 <style>
 
+/* Main Background and Fonts */
 .stApp {
-    background-color: #ffffff;
+    background-color: #fafbfc;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* Centered Titles and Headers */
+h1, h2, h3, h4, h5, h6 {
+    text-align: center;
+    color: #1e3a5f;
+    font-weight: 700;
+}
+
+/* Custom premium buttons with hover animations */
 .stButton > button {
-    background-color: #1e3a5f;
+    background: linear-gradient(135deg, #1e3a5f 0%, #00a8cc 100%);
     color: white;
     border-radius: 8px;
-    padding: 10px 24px;
+    padding: 12px 28px;
     font-weight: bold;
     border: none;
+    box-shadow: 0 4px 15px rgba(0, 168, 204, 0.2);
+    transition: all 0.3s ease;
+    width: 100%;
 }
 
 .stButton > button:hover {
-    background-color: #2c5282;
-}
-
-h1, h2, h3 {
-    color: #1e3a5f;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 168, 204, 0.4);
+    background: linear-gradient(135deg, #2c5282 0%, #00b5d8 100%);
 }
 
 .footer {
     text-align: center;
-    color: #666;
-    padding: 20px;
+    color: #a0aec0;
+    padding: 24px;
     font-size: 14px;
+    border-top: 1px solid #e2e8f0;
+    margin-top: 40px;
 }
 
-/* KPIs Styles */
+/* Premium KPIs Styles (Vivid Navy to Teal Gradient, Centered) */
 .kpi-container {
     display: flex;
-    gap: 20px;
-    margin-bottom: 30px;
+    gap: 24px;
+    margin-bottom: 35px;
     flex-wrap: wrap;
+    justify-content: center;
 }
 .kpi-card {
-    background: linear-gradient(135deg, #1e3a5f 0%, #122540 100%);
+    background: linear-gradient(135deg, #1e3a5f 0%, #00b5d8 100%);
     color: white;
-    padding: 20px 24px;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(30, 58, 95, 0.1);
+    padding: 24px;
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 181, 216, 0.15);
     flex: 1;
-    min-width: 280px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: transform 0.2s ease;
+    min-width: 290px;
+    max-width: 380px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    text-align: center;
 }
 .kpi-card:hover {
-    transform: translateY(-2px);
+    transform: translateY(-5px);
+    box-shadow: 0 15px 35px rgba(0, 181, 216, 0.3);
 }
 .kpi-title {
-    font-size: 14px;
+    font-size: 13px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #cbd5e0;
-    margin-bottom: 6px;
+    letter-spacing: 1px;
+    color: #e2e8f0;
+    margin-bottom: 8px;
     font-weight: 600;
 }
 .kpi-value {
-    font-size: 26px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 800;
     color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 .kpi-subtitle {
     font-size: 12px;
-    color: #a0aec0;
-    margin-top: 4px;
+    color: #cbd5e0;
+    margin-top: 6px;
+    font-style: italic;
 }
 
 </style>
@@ -239,21 +258,19 @@ def normalizar_texto(texto):
 # HEADER
 # =========================================================
 
-col_logo, col_titulo = st.columns([1, 5])
+col_l, col_c, col_r = st.columns([2, 1, 2])
 
-with col_logo:
+with col_c:
     try:
-        st.image("LOGO.jpeg", width=80)
+        st.image("LOGO.jpeg", width=145)
     except Exception:
         st.image(
             "https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg",
-            width=80
+            width=145
         )
 
-with col_titulo:
-    st.title("Clasificador Bancario")
-    st.markdown("### Grupo Bodeguita Oriente")
-
+st.markdown("<h1 style='text-align: center; color: #1e3a5f; margin-top: 15px; margin-bottom: 5px;'>Clasificador Bancario</h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: center; color: #00a8cc; margin-top: 0px; margin-bottom: 20px; font-weight: 600;'>Grupo Bodeguita Oriente</h3>", unsafe_allow_html=True)
 st.markdown("---")
 
 # =========================================================
@@ -1448,28 +1465,35 @@ if list_df_convertidos:
                     alineacion_derecha = Alignment(horizontal="right", vertical="center")
                     alineacion_izquierda = Alignment(horizontal="left", vertical="center")
 
-                    # Cabecera Resumen
-                    hoja_resumen.merge_cells("C2:F2")
-                    hoja_resumen["C2"] = "GRUPO BODEGUITA ORIENTE"
-                    hoja_resumen["C2"].font = Font(bold=True, size=16, color="1E3A5F")
-                    hoja_resumen["C2"].alignment = alineacion_izquierda
+                    # Cabecera Resumen (A la izquierda)
+                    hoja_resumen["B2"] = "GRUPO BODEGUITA ORIENTE"
+                    hoja_resumen["B2"].font = Font(bold=True, size=14, color="1E3A5F")
+                    hoja_resumen["B2"].alignment = alineacion_izquierda
 
-                    hoja_resumen.merge_cells("C3:F3")
-                    hoja_resumen["C3"] = "CONCILIACIÓN BANCARIA - RESUMEN DE SALDOS"
-                    hoja_resumen["C3"].font = Font(bold=True, size=12, color="555555")
-                    hoja_resumen["C3"].alignment = alineacion_izquierda
+                    hoja_resumen["B3"] = "CONCILIACIÓN BANCARIA - RESUMEN DE SALDOS"
+                    hoja_resumen["B3"].font = Font(bold=True, size=11, color="555555")
+                    hoja_resumen["B3"].alignment = alineacion_izquierda
 
-                    hoja_resumen["C5"] = "Fecha de Reporte:"
-                    hoja_resumen["C5"].font = Font(bold=True)
-                    hoja_resumen["D5"] = date.today().strftime("%d/%m/%Y")
+                    # Datos de la Empresa / Reporte (A la derecha superior)
+                    hoja_resumen["E2"] = "Fecha de Cierre:"
+                    hoja_resumen["E2"].font = Font(bold=True, size=11, color="1E3A5F")
+                    hoja_resumen["E2"].alignment = alineacion_derecha
                     
-                    hoja_resumen["C6"] = "Tasa Oficial BCV:"
-                    hoja_resumen["C6"].font = Font(bold=True)
-                    hoja_resumen["D6"] = tasa_dia
-                    hoja_resumen["D6"].number_format = '#,##0.0000'
+                    hoja_resumen["F2"] = date.today().strftime("%d/%m/%Y")
+                    hoja_resumen["F2"].font = Font(bold=False, size=11)
+                    hoja_resumen["F2"].alignment = alineacion_izquierda
 
-                    # Cabeceras tabla
-                    headers_r = ["ENTIDAD BANCARIA", "SALDO DISPONIBLE (VES)", "TASA DE CAMBIO (BCV)", "EQUIVALENTE (USD)"]
+                    hoja_resumen["E3"] = "Tasa BCV del Día:"
+                    hoja_resumen["E3"].font = Font(bold=True, size=11, color="1E3A5F")
+                    hoja_resumen["E3"].alignment = alineacion_derecha
+                    
+                    hoja_resumen["F3"] = tasa_dia
+                    hoja_resumen["F3"].font = Font(bold=False, size=11)
+                    hoja_resumen["F3"].number_format = '#,##0.0000'
+                    hoja_resumen["F3"].alignment = alineacion_izquierda
+
+                    # Cabeceras tabla (3 columnas: BANCOS, TOTAL (VES), CONVERSIÓN (USD))
+                    headers_r = ["BANCOS", "TOTAL (VES)", "CONVERSIÓN (USD)"]
                     for col_num, header in enumerate(headers_r, 2):
                         cell = hoja_resumen.cell(row=8, column=col_num)
                         cell.value = header
@@ -1500,19 +1524,14 @@ if list_df_convertidos:
                         cell_s.number_format = '#,##0.00'
                         cell_s.alignment = alineacion_derecha
                         
-                        cell_t = hoja_resumen.cell(row=fila_r, column=4, value=tasa_dia)
-                        cell_t.border = borde_fino
-                        cell_t.number_format = '#,##0.0000'
-                        cell_t.alignment = alineacion_derecha
-                        
                         usd_v = saldo_v / tasa_dia if tasa_dia > 0 else 0.0
-                        cell_u = hoja_resumen.cell(row=fila_r, column=5, value=usd_v)
+                        cell_u = hoja_resumen.cell(row=fila_r, column=4, value=usd_v)
                         cell_u.border = borde_fino
                         cell_u.number_format = '$#,##0.00'
                         cell_u.alignment = alineacion_derecha
                         
                         if fila_r % 2 == 0:
-                            for col in range(2, 6):
+                            for col in range(2, 5):
                                 hoja_resumen.cell(row=fila_r, column=col).fill = gris_claro
                         fila_r += 1
 
@@ -1529,11 +1548,7 @@ if list_df_convertidos:
                     cell_total_ves.fill = verde_claro
                     cell_total_ves.alignment = alineacion_derecha
                     
-                    cell_total_tasa = hoja_resumen.cell(row=fila_r, column=4, value="")
-                    cell_total_tasa.border = borde_fino
-                    cell_total_tasa.fill = verde_claro
-                    
-                    cell_total_usd = hoja_resumen.cell(row=fila_r, column=5, value=total_usd)
+                    cell_total_usd = hoja_resumen.cell(row=fila_r, column=4, value=total_usd)
                     cell_total_usd.font = negro_bold
                     cell_total_usd.border = borde_fino
                     cell_total_usd.number_format = '$#,##0.00'
@@ -1695,4 +1710,3 @@ else:
     - Cruce inteligente y trazabilidad con iPago.
     - Generación de reportes de cierre en formato Excel profesional.
     """)
-
