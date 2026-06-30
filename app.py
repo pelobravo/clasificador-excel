@@ -205,19 +205,28 @@ def obtener_saldo_final_mercantil(df_raw):
     return 0.0
 
 def buscar_saldo_en_texto(df_raw):
-    """Escanea todo el reporte en busca de celdas con la palabra 'SALDO' y obtiene el número adyacente"""
+    """Escanea todo el reporte en busca de celdas con la palabra 'SALDO' o 'DISPONIBLE' y obtiene el número"""
     try:
         for r_idx in range(df_raw.shape[0]):
             for c_idx in range(df_raw.shape[1]):
                 val = str(df_raw.iloc[r_idx, c_idx]).lower()
-                if "saldo" in val and "inicial" not in val and "anterior" not in val:
-                    # Celda de la derecha
+                if ("saldo" in val or "disponible" in val) and "inicial" not in val and "anterior" not in val:
+                    # 1. Intentar extraer de la misma celda si contiene número
+                    partes = re.findall(r'[\d\.\,]+', val)
+                    if partes:
+                        for p in reversed(partes):
+                            num = convertir_monto(p)
+                            if num is not None and num > 100:
+                                return num
+                                
+                    # 2. Celda de la derecha
                     if c_idx + 1 < df_raw.shape[1]:
                         val_right = df_raw.iloc[r_idx, c_idx + 1]
                         num = convertir_monto(val_right)
                         if num is not None and num > 0:
                             return num
-                    # Celda de abajo
+                            
+                    # 3. Celda de abajo
                     if r_idx + 1 < df_raw.shape[0]:
                         val_below = df_raw.iloc[r_idx + 1, c_idx]
                         num = convertir_monto(val_below)
@@ -1627,7 +1636,35 @@ if list_df_convertidos:
     
     # Filtrar por fechas
     try:
-        fechas_convertidas = pd.to_datetime(df_original.iloc[:, 3], format="%d/%m/%Y", errors="coerce")
+        def parsear_fechas_consolidado(columna_fechas):
+            fechas = []
+            for val in columna_fechas:
+                val_str = str(val).strip().replace(".0", "")
+                if not val_str or val_str == "nan":
+                    fechas.append(pd.NaT)
+                    continue
+                
+                # Si es numérico de 8 dígitos (formato Mercantil ddmmyyyy)
+                if len(val_str) == 8 and val_str.isdigit():
+                    dt = pd.to_datetime(val_str, format="%d%m%Y", errors="coerce")
+                    if pd.notna(dt):
+                        fechas.append(dt)
+                        continue
+                
+                # Parseo flexible general
+                parsed = False
+                for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]:
+                    dt = pd.to_datetime(val_str, format=fmt, errors="coerce")
+                    if pd.notna(dt):
+                        fechas.append(dt)
+                        parsed = True
+                        break
+                if not parsed:
+                    dt = pd.to_datetime(val_str, errors="coerce", dayfirst=True)
+                    fechas.append(dt)
+            return pd.Series(fechas)
+            
+        fechas_convertidas = parsear_fechas_consolidado(df_original.iloc[:, 3])
         fecha_inicio_dt = pd.to_datetime(fecha_inicio)
         fecha_fin_dt = pd.to_datetime(fecha_fin)
         df_original = df_original[(fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)]
