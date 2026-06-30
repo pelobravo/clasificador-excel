@@ -311,20 +311,67 @@ def obtener_saldo_final_tesoro(df_raw):
         pass
     return saldo_inicial
 
+def obtener_saldo_final_columna_derecha(df_raw):
+    """Busca en las últimas columnas del DataFrame (de derecha a izquierda) el último valor numérico válido"""
+    try:
+        df_temp = df_raw.copy()
+        num_cols = df_temp.shape[1]
+        for col_idx in range(num_cols - 1, 3, -1):
+            balances = df_temp.iloc[:, col_idx].dropna()
+            for val in reversed(balances.values):
+                val_clean = convertir_monto(val)
+                if val_clean is not None and val_clean > 0:
+                    return val_clean
+    except:
+        pass
+    return 0.0
+
+def obtener_saldo_final_bancamiga(df_raw):
+    """Busca la columna de saldo en Bancamiga y extrae el último valor numérico"""
+    try:
+        encabezado_idx = None
+        for i in range(min(20, len(df_raw))):
+            fila = df_raw.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and "referencia" in texto and "saldo" in texto:
+                encabezado_idx = i
+                break
+        if encabezado_idx is None:
+            return buscar_saldo_en_texto(df_raw)
+            
+        df_temp = df_raw.iloc[encabezado_idx + 1:].copy()
+        headers = df_raw.iloc[encabezado_idx].fillna("").astype(str).str.lower().tolist()
+        saldo_col_idx = None
+        for idx, h in enumerate(headers):
+            if "saldo" in h:
+                saldo_col_idx = idx
+                break
+        if saldo_col_idx is not None:
+            balances = df_temp.iloc[:, saldo_col_idx].dropna()
+            for val in reversed(balances.values):
+                val_clean = convertir_monto(val)
+                if val_clean is not None:
+                    return val_clean
+    except:
+        pass
+    return buscar_saldo_en_texto(df_raw)
+
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
     if banco == "banesco":
-        return obtener_saldo_final_banesco(df_raw)
+        return obtener_saldo_final_banesco(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     elif banco == "bnc":
         if encabezado_idx is not None:
             return obtener_saldo_final_bnc(df_raw, encabezado_idx)
-        return buscar_saldo_en_texto(df_raw)
+        return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     elif banco == "mercantil":
-        return obtener_saldo_final_mercantil(df_raw) or buscar_saldo_en_texto(df_raw)
+        return obtener_saldo_final_mercantil(df_raw) or buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     elif banco == "tesoro":
         return obtener_saldo_final_tesoro(df_raw)
+    elif banco == "bancamiga":
+        return obtener_saldo_final_bancamiga(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     else:
-        return buscar_saldo_en_texto(df_raw)
+        return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
 
 def calcular_saldo_movimientos(df_convertido):
     """Suma los ingresos (NC) y resta los egresos (ND) de un DataFrame en formato unificado"""
@@ -1445,14 +1492,14 @@ if archivo_mercantil:
     st.session_state.saldo_mercantil = 0.0
     for idx, arch in enumerate(archivo_mercantil, 1):
         try:
-            df_raw = leer_excel_sin_encabezados(arch)
+            df_raw = leer_excel_con_encabezados(arch)
             saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
             st.session_state.saldo_mercantil += saldo_arch
             
             nombre_banco = f"Mercantil - Cuenta {idx}" if len(archivo_mercantil) > 1 else "Mercantil"
             saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
-            df_convertido = df_raw
+            df_convertido = convertir_a_formato_mercantil(df_raw, "mercantil")
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
                 if "Mercantil" not in bancos_procesados:
