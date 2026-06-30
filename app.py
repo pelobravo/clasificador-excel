@@ -227,6 +227,60 @@ def buscar_saldo_en_texto(df_raw):
         pass
     return 0.0
 
+def obtener_saldo_final_tesoro(df_raw):
+    """Calcula el saldo final de Banco del Tesoro sumando Créditos y Débitos o usando el neto"""
+    # Intentar buscar por palabra 'Saldo' primero
+    saldo_buscado = buscar_saldo_en_texto(df_raw)
+    if saldo_buscado > 0:
+        return saldo_buscado
+        
+    # Si no tiene columna Saldo, sumamos todos los créditos y restamos débitos
+    try:
+        encabezado = None
+        for i in range(min(30, len(df_raw))):
+            fila = df_raw.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
+                encabezado = i
+                break
+        if encabezado is None:
+            return 0.0
+            
+        df_temp = df_raw.iloc[encabezado + 1:].copy()
+        headers = df_raw.iloc[encabezado].fillna("").astype(str).str.strip().tolist()
+        
+        col_debito_idx = None
+        col_credito_idx = None
+        for idx, col in enumerate(headers):
+            c_clean = col.lower()
+            if "débito" in c_clean or "debito" in c_clean:
+                col_debito_idx = idx
+            elif "crédito" in c_clean or "credito" in c_clean:
+                col_credito_idx = idx
+                
+        total_creditos = 0.0
+        total_debitos = 0.0
+        
+        if col_credito_idx is not None:
+            creditos = df_temp.iloc[:, col_credito_idx].dropna()
+            for val in creditos:
+                num = convertir_monto(val)
+                if num is not None:
+                    total_creditos += num
+                    
+        if col_debito_idx is not None:
+            debitos = df_temp.iloc[:, col_debito_idx].dropna()
+            for val in debitos:
+                num = convertir_monto(val)
+                if num is not None:
+                    total_debitos += num
+                    
+        # Retornar la diferencia neta (Créditos - Débitos) del periodo
+        return total_creditos - total_debitos
+    except:
+        pass
+    return 0.0
+
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
     if banco == "banesco":
@@ -237,6 +291,8 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
         return buscar_saldo_en_texto(df_raw)
     elif banco == "mercantil":
         return obtener_saldo_final_mercantil(df_raw) or buscar_saldo_en_texto(df_raw)
+    elif banco == "tesoro":
+        return obtener_saldo_final_tesoro(df_raw)
     else:
         return buscar_saldo_en_texto(df_raw)
 
