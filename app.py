@@ -227,6 +227,29 @@ def buscar_saldo_en_texto(df_raw):
         pass
     return 0.0
 
+def buscar_saldo_inicial(df_raw):
+    """Busca un saldo inicial en el texto (Saldo Inicial, Saldo Anterior, etc.)"""
+    try:
+        for r_idx in range(df_raw.shape[0]):
+            for c_idx in range(df_raw.shape[1]):
+                val = str(df_raw.iloc[r_idx, c_idx]).lower()
+                if "saldo" in val and ("inicial" in val or "anterior" in val):
+                    # Celda de la derecha
+                    if c_idx + 1 < df_raw.shape[1]:
+                        val_right = df_raw.iloc[r_idx, c_idx + 1]
+                        num = convertir_monto(val_right)
+                        if num is not None and num > 0:
+                            return num
+                    # Celda de abajo
+                    if r_idx + 1 < df_raw.shape[0]:
+                        val_below = df_raw.iloc[r_idx + 1, c_idx]
+                        num = convertir_monto(val_below)
+                        if num is not None and num > 0:
+                            return num
+    except:
+        pass
+    return 0.0
+
 def obtener_saldo_final_tesoro(df_raw):
     """Calcula el saldo final de Banco del Tesoro sumando Créditos y Débitos o usando el neto"""
     # Intentar buscar por palabra 'Saldo' primero
@@ -234,6 +257,9 @@ def obtener_saldo_final_tesoro(df_raw):
     if saldo_buscado > 0:
         return saldo_buscado
         
+    # Intentar buscar saldo inicial
+    saldo_inicial = buscar_saldo_inicial(df_raw)
+    
     # Si no tiene columna Saldo, sumamos todos los créditos y restamos débitos
     try:
         encabezado = None
@@ -244,7 +270,7 @@ def obtener_saldo_final_tesoro(df_raw):
                 encabezado = i
                 break
         if encabezado is None:
-            return 0.0
+            return saldo_inicial
             
         df_temp = df_raw.iloc[encabezado + 1:].copy()
         headers = df_raw.iloc[encabezado].fillna("").astype(str).str.strip().tolist()
@@ -275,11 +301,15 @@ def obtener_saldo_final_tesoro(df_raw):
                 if num is not None:
                     total_debitos += num
                     
-        # Retornar la diferencia neta (Créditos - Débitos) del periodo
-        return total_creditos - total_debitos
+        # Retornar: Saldo Inicial + Créditos - Débitos
+        saldo_calc = saldo_inicial + total_creditos - total_debitos
+        # Si da negativo porque no hay saldo inicial en el archivo, tomar el neto absoluto de los movimientos
+        if saldo_calc < 0 and saldo_inicial == 0.0:
+            saldo_calc = abs(total_creditos - total_debitos)
+        return saldo_calc
     except:
         pass
-    return 0.0
+    return saldo_inicial
 
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
@@ -1336,11 +1366,12 @@ if archivo_ipago:
 
 list_df_convertidos = []
 bancos_procesados = []
+saldos_detalle_excel = []
 
 # 1. Banesco
 if archivo_banesco:
     st.session_state.saldo_banesco = 0.0
-    for arch in archivo_banesco:
+    for idx, arch in enumerate(archivo_banesco, 1):
         try:
             nombre = arch.name.lower()
             if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
@@ -1349,6 +1380,10 @@ if archivo_banesco:
                 df_raw = pd.read_html(arch)[0]
             saldo_arch = obtener_saldo_banco(df_raw, "banesco")
             st.session_state.saldo_banesco += saldo_arch
+            
+            nombre_banco = f"Banesco - Cuenta {idx}" if len(archivo_banesco) > 1 else "Banesco"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_banesco(df_raw)
             df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
             if not df_convertido.empty:
@@ -1357,11 +1392,13 @@ if archivo_banesco:
                     bancos_procesados.append("Banesco")
         except Exception as e:
             st.error(f"❌ Error leyendo Banesco ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Banesco", 0.0))
 
 # 2. BNC
 if archivo_bnc:
     st.session_state.saldo_bnc = 0.0
-    for arch in archivo_bnc:
+    for idx, arch in enumerate(archivo_bnc, 1):
         try:
             df_raw = leer_excel_con_encabezados(arch)
             encabezado = None
@@ -1373,6 +1410,10 @@ if archivo_bnc:
                     break
             saldo_arch = obtener_saldo_banco(df_raw, "bnc", encabezado)
             st.session_state.saldo_bnc += saldo_arch
+            
+            nombre_banco = f"BNC - Cuenta {idx}" if len(archivo_bnc) > 1 else "BNC"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_bnc(df_raw)
             df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
             if not df_convertido.empty:
@@ -1381,15 +1422,21 @@ if archivo_bnc:
                     bancos_procesados.append("BNC")
         except Exception as e:
             st.error(f"❌ Error leyendo BNC ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("BNC", 0.0))
 
 # 3. Mercantil
 if archivo_mercantil:
     st.session_state.saldo_mercantil = 0.0
-    for arch in archivo_mercantil:
+    for idx, arch in enumerate(archivo_mercantil, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
             saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
             st.session_state.saldo_mercantil += saldo_arch
+            
+            nombre_banco = f"Mercantil - Cuenta {idx}" if len(archivo_mercantil) > 1 else "Mercantil"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_convertido = df_raw
             if not df_convertido.empty:
                 list_df_convertidos.append(df_convertido)
@@ -1397,15 +1444,21 @@ if archivo_mercantil:
                     bancos_procesados.append("Mercantil")
         except Exception as e:
             st.error(f"❌ Error leyendo Mercantil ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Mercantil", 0.0))
 
 # 4. BDV
 if archivo_venezuela:
     st.session_state.saldo_venezuela = 0.0
-    for arch in archivo_venezuela:
+    for idx, arch in enumerate(archivo_venezuela, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
             saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
             st.session_state.saldo_venezuela += saldo_arch
+            
+            nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_venezuela_simple(df_raw)
             df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
             if not df_convertido.empty:
@@ -1414,15 +1467,21 @@ if archivo_venezuela:
                     bancos_procesados.append("Venezuela")
         except Exception as e:
             st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
 
 # 5. Provincial
 if archivo_provincial:
     st.session_state.saldo_provincial = 0.0
-    for arch in archivo_provincial:
+    for idx, arch in enumerate(archivo_provincial, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
             saldo_arch = obtener_saldo_banco(df_raw, "provincial")
             st.session_state.saldo_provincial += saldo_arch
+            
+            nombre_banco = f"Provincial - Cuenta {idx}" if len(archivo_provincial) > 1 else "Provincial"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_provincial(df_raw)
             df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
             if not df_convertido.empty:
@@ -1431,11 +1490,13 @@ if archivo_provincial:
                     bancos_procesados.append("Provincial")
         except Exception as e:
             st.error(f"❌ Error leyendo Provincial ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Provincial", 0.0))
 
 # 6. Bancamiga
 if archivo_bancamiga:
     st.session_state.saldo_bancamiga = 0.0
-    for arch in archivo_bancamiga:
+    for idx, arch in enumerate(archivo_bancamiga, 1):
         try:
             nombre = arch.name.lower()
             if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
@@ -1448,6 +1509,10 @@ if archivo_bancamiga:
                     df_raw = pd.read_html(arch)[0]
             saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
             st.session_state.saldo_bancamiga += saldo_arch
+            
+            nombre_banco = f"Bancamiga - Cuenta {idx}" if len(archivo_bancamiga) > 1 else "Bancamiga"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_bancamiga(df_raw)
             df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
             if not df_convertido.empty:
@@ -1456,15 +1521,21 @@ if archivo_bancamiga:
                     bancos_procesados.append("Bancamiga")
         except Exception as e:
             st.error(f"❌ Error leyendo Bancamiga ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Bancamiga", 0.0))
 
 # 7. Tesoro
 if archivo_tesoro:
     st.session_state.saldo_tesoro = 0.0
-    for arch in archivo_tesoro:
+    for idx, arch in enumerate(archivo_tesoro, 1):
         try:
             df_raw = pd.read_excel(arch, engine="openpyxl")
             saldo_arch = obtener_saldo_banco(df_raw, "tesoro")
             st.session_state.saldo_tesoro += saldo_arch
+            
+            nombre_banco = f"Banco del Tesoro - Cuenta {idx}" if len(archivo_tesoro) > 1 else "Banco del Tesoro"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
             df_normalizado = procesar_tesoro(df_raw)
             df_convertido = convertir_a_formato_mercantil(df_normalizado, "tesoro")
             if not df_convertido.empty:
@@ -1473,6 +1544,10 @@ if archivo_tesoro:
                     bancos_procesados.append("Tesoro")
         except Exception as e:
             st.error(f"❌ Error leyendo Tesoro ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Banco del Tesoro", 0.0))
+
+st.session_state.saldos_detalle_excel = saldos_detalle_excel
 
 # Recalcular el total consolidado con los datos extraídos
 total_ves = (
@@ -1606,7 +1681,7 @@ if list_df_convertidos:
                         cell.border = borde_fino
 
                     # Datos
-                    bancos_data = [
+                    bancos_data = st.session_state.get("saldos_detalle_excel", [
                         ("Banesco", st.session_state.saldo_banesco),
                         ("BNC", st.session_state.saldo_bnc),
                         ("Mercantil", st.session_state.saldo_mercantil),
@@ -1614,7 +1689,7 @@ if list_df_convertidos:
                         ("Provincial", st.session_state.saldo_provincial),
                         ("Bancamiga", st.session_state.saldo_bancamiga),
                         ("Banco del Tesoro", st.session_state.saldo_tesoro)
-                    ]
+                    ])
 
                     fila_r = 9
                     for banco_n, saldo_v in bancos_data:
