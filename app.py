@@ -547,11 +547,12 @@ with st.sidebar:
         )
 
     with st.expander("🏦 Banco del Tesoro", expanded=False):
-        archivo_tesoro = st.file_uploader(
-            "Cargar Banco del Tesoro",
-            type=["xlsx", "xls", "xlsm"],
-            accept_multiple_files=True,
-            key="uploader_tesoro"
+        saldo_manual_tesoro = st.number_input(
+            "Saldo manual Banco del Tesoro (VES)",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            key="saldo_manual_tesoro"
         )
 
     st.markdown("---")
@@ -1424,14 +1425,13 @@ def procesar_archivo(df, usar_api=False, banco=""):
 # INTERFAZ PRINCIPAL - EJECUCIÓN
 # =========================================================
 
-# Reset balances if uploaders are empty (to ensure dynamic updating)
 if not archivo_banesco: st.session_state.saldo_banesco = 0.0
 if not archivo_bnc: st.session_state.saldo_bnc = 0.0
 if not archivo_mercantil: st.session_state.saldo_mercantil = 0.0
 if not archivo_venezuela: st.session_state.saldo_venezuela = 0.0
 if not archivo_provincial: st.session_state.saldo_provincial = 0.0
 if not archivo_bancamiga: st.session_state.saldo_bancamiga = 0.0
-if not archivo_tesoro: st.session_state.saldo_tesoro = 0.0
+st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
 
 # Renderizado de KPIs
 tasa_dia = obtener_tasa_bcv()
@@ -1650,29 +1650,8 @@ if archivo_bancamiga:
 else:
     saldos_detalle_excel.append(("Bancamiga", 0.0))
 
-# 7. Tesoro
-if archivo_tesoro:
-    st.session_state.saldo_tesoro = 0.0
-    for idx, arch in enumerate(archivo_tesoro, 1):
-        try:
-            df_raw = pd.read_excel(arch, engine="openpyxl")
-            
-            saldo_arch = obtener_saldo_banco(df_raw, "tesoro")
-            st.session_state.saldo_tesoro += saldo_arch
-            
-            nombre_banco = f"Banco del Tesoro - Cuenta {idx}" if len(archivo_tesoro) > 1 else "Banco del Tesoro"
-            saldos_detalle_excel.append((nombre_banco, saldo_arch))
-            
-            df_normalizado = procesar_tesoro(df_raw)
-            df_convertido = convertir_a_formato_mercantil(df_normalizado, "tesoro")
-            if not df_convertido.empty:
-                list_df_convertidos.append(df_convertido)
-                if "Tesoro" not in bancos_procesados:
-                    bancos_procesados.append("Tesoro")
-        except Exception as e:
-            st.error(f"❌ Error leyendo Tesoro ({arch.name}): {e}")
-else:
-    saldos_detalle_excel.append(("Banco del Tesoro", 0.0))
+# 7. Tesoro (Manual)
+saldos_detalle_excel.append(("Banco del Tesoro", st.session_state.saldo_tesoro))
 
 st.session_state.saldos_detalle_excel = saldos_detalle_excel
 
