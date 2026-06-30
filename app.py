@@ -207,26 +207,55 @@ def obtener_saldo_final_mercantil(df_raw):
 def buscar_saldo_en_texto(df_raw):
     """Escanea todo el reporte en busca de celdas con la palabra 'SALDO' o 'DISPONIBLE' y obtiene el número"""
     try:
+        # 1. Búsqueda específica de términos de saldo final
+        terminos_finales = ["saldo disponible", "saldo actual", "saldo final", "saldo de la cuenta", "monto disponible"]
         for r_idx in range(df_raw.shape[0]):
             for c_idx in range(df_raw.shape[1]):
                 val = str(df_raw.iloc[r_idx, c_idx]).lower()
-                if ("saldo" in val or "disponible" in val) and "inicial" not in val and "anterior" not in val:
-                    # 1. Intentar extraer de la misma celda si contiene número
-                    partes = re.findall(r'[\d\.\,]+', val)
+                if any(term in val for term in terminos_finales):
+                    # Eliminar fechas del texto antes de buscar números para evitar extraer el año (ej. 2026)
+                    texto_sin_fechas = re.sub(r'\b\d{2}[/\-]\d{2}[/\-]\d{4}\b', '', val)
+                    texto_sin_fechas = re.sub(r'\b\d{4}[/\-]\d{2}[/\-]\d{2}\b', '', texto_sin_fechas)
+                    partes = re.findall(r'[\d\.\,]+', texto_sin_fechas)
                     if partes:
                         for p in reversed(partes):
                             num = convertir_monto(p)
                             if num is not None and num > 100:
                                 return num
-                                
-                    # 2. Celda de la derecha
+                    # Celda de la derecha
                     if c_idx + 1 < df_raw.shape[1]:
                         val_right = df_raw.iloc[r_idx, c_idx + 1]
                         num = convertir_monto(val_right)
                         if num is not None and num > 0:
                             return num
-                            
-                    # 3. Celda de abajo
+                    # Celda de abajo
+                    if r_idx + 1 < df_raw.shape[0]:
+                        val_below = df_raw.iloc[r_idx + 1, c_idx]
+                        num = convertir_monto(val_below)
+                        if num is not None and num > 0:
+                            return num
+
+        # 2. Búsqueda general si la específica falla (ignora inicial, anterior y promedio)
+        for r_idx in range(df_raw.shape[0]):
+            for c_idx in range(df_raw.shape[1]):
+                val = str(df_raw.iloc[r_idx, c_idx]).lower()
+                if ("saldo" in val or "disponible" in val) and "inicial" not in val and "anterior" not in val and "promedio" not in val:
+                    # Eliminar fechas del texto antes de buscar números para evitar extraer el año (ej. 2026)
+                    texto_sin_fechas = re.sub(r'\b\d{2}[/\-]\d{2}[/\-]\d{4}\b', '', val)
+                    texto_sin_fechas = re.sub(r'\b\d{4}[/\-]\d{2}[/\-]\d{2}\b', '', texto_sin_fechas)
+                    partes = re.findall(r'[\d\.\,]+', texto_sin_fechas)
+                    if partes:
+                        for p in reversed(partes):
+                            num = convertir_monto(p)
+                            if num is not None and num > 100:
+                                return num
+                    # Celda de la derecha
+                    if c_idx + 1 < df_raw.shape[1]:
+                        val_right = df_raw.iloc[r_idx, c_idx + 1]
+                        num = convertir_monto(val_right)
+                        if num is not None and num > 0:
+                            return num
+                    # Celda de abajo
                     if r_idx + 1 < df_raw.shape[0]:
                         val_below = df_raw.iloc[r_idx + 1, c_idx]
                         num = convertir_monto(val_below)
@@ -364,6 +393,26 @@ def obtener_saldo_final_bancamiga(df_raw):
     except:
         pass
     return buscar_saldo_en_texto(df_raw)
+
+def encontrar_fila_encabezado(df_raw):
+    """Busca en las primeras filas una que contenga 'fecha' y ('descripcion' o 'descripción' o 'referencia')"""
+    for i in range(min(40, len(df_raw))):
+        fila = df_raw.iloc[i].fillna("").astype(str)
+        texto = " ".join(fila.tolist()).lower()
+        if "fecha" in texto and ("descri" in texto or "referencia" in texto or "monto" in texto):
+            return i
+    return None
+
+def preparar_df_con_encabezado_dinamico(df_raw):
+    """Encuentra el encabezado y limpia el DataFrame para que las columnas tengan los nombres correctos"""
+    df_clean = df_raw.copy()
+    idx_header = encontrar_fila_encabezado(df_clean)
+    if idx_header is not None:
+        cols = df_clean.iloc[idx_header].fillna("").astype(str).tolist()
+        cols = [c.strip() for c in cols]
+        df_clean.columns = cols
+        df_clean = df_clean.iloc[idx_header + 1:].reset_index(drop=True)
+    return df_clean
 
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
@@ -1226,7 +1275,11 @@ def convertir_venezuela_a_formato_mercantil(df):
 
 def convertir_a_formato_mercantil(df, banco):
     datos_convertidos = []
-    for idx, fila in df.iterrows():
+    # Normalizar columnas del dataframe a mayúsculas para evitar problemas de casing
+    df_temp = df.copy()
+    df_temp.columns = [str(c).strip().upper() for c in df_temp.columns]
+    
+    for idx, fila in df_temp.iterrows():
         try:
             fecha = fila.get("FECHA", "")
             if pd.isna(fecha): continue
@@ -1501,7 +1554,8 @@ if archivo_mercantil:
     st.session_state.saldo_mercantil = 0.0
     for idx, arch in enumerate(archivo_mercantil, 1):
         try:
-            df_raw = leer_excel_con_encabezados(arch)
+            df_raw = leer_excel_sin_encabezados(arch)
+            df_raw = preparar_df_con_encabezado_dinamico(df_raw)
             saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
             st.session_state.saldo_mercantil += saldo_arch
             
