@@ -675,7 +675,10 @@ def es_comision(texto, proveedor=None):
         "comis",
         "comis. cr.i",
         "emision edo",
-        "retencion de impuesto"
+        "retencion de impuesto",
+        "com. trf",
+        "com.serv",
+        "emision de estado"
     ]
     for patron in palabras_comision_bancaria:
         if patron in texto:
@@ -1607,7 +1610,10 @@ def mono_es_comision(texto, proveedor=None):
         "comis",
         "comis. cr.i",
         "emision edo",
-        "retencion de impuesto"
+        "retencion de impuesto",
+        "com. trf",
+        "com.serv",
+        "emision de estado"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
