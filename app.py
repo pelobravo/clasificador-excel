@@ -36,6 +36,7 @@ if "saldo_provincial" not in st.session_state: st.session_state.saldo_provincial
 if "saldo_bancamiga" not in st.session_state: st.session_state.saldo_bancamiga = 0.0
 if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
+if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 
 # =========================================================
 # ESTILOS
@@ -3021,6 +3022,9 @@ if st.session_state.seccion_activa == "consolidado":
     
     total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
     total_ingresos_usd = total_ingresos_ves / tasa_dia if tasa_dia > 0 else 0.0
+    
+    total_egresos_ves = st.session_state.get("total_egresos_ipago_ves", 0.0)
+    total_egresos_usd = total_egresos_ves / tasa_dia if tasa_dia > 0 else 0.0
 
     bancos_con_saldo = []
     if st.session_state.saldo_banesco > 0: bancos_con_saldo.append(f"Banesco: Bs. {formato_venezolano(st.session_state.saldo_banesco)}")
@@ -3044,6 +3048,11 @@ if st.session_state.seccion_activa == "consolidado":
             <div class="kpi-title">Total Ingresos Bancos (VES)</div>
             <div class="kpi-value">Bs. {formato_venezolano(total_ingresos_ves)}</div>
             <div class="kpi-subtitle">Equivalente: ${total_ingresos_usd:,.2f} USD</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Total Egresos iPago (VES)</div>
+            <div class="kpi-value">Bs. {formato_venezolano(total_egresos_ves)}</div>
+            <div class="kpi-subtitle">Equivalente: ${total_egresos_usd:,.2f} USD</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-title">Tasa Oficial BCV del Día</div>
@@ -3322,6 +3331,35 @@ if st.session_state.seccion_activa == "consolidado":
                         pass
             st.session_state.total_ingresos_consolidado = total_ingresos_ves_calc
             
+            # Calcular la suma de egresos del archivo iPago
+            total_egresos_ipago_ves_calc = 0.0
+            if df_ipago is not None and not df_ipago.empty:
+                try:
+                    fechas_ipago = pd.to_datetime(df_ipago['Fecha Pago'], errors='coerce')
+                    df_ipago_filtrado = df_ipago[(fechas_ipago >= fecha_inicio_dt) & (fechas_ipago <= fecha_fin_dt)]
+                    # Sumar la columna Monto convirtiendo a float por seguridad
+                    monto_sum = 0.0
+                    for val in df_ipago_filtrado['Monto']:
+                        try:
+                            if isinstance(val, (int, float)):
+                                monto_sum += abs(float(val))
+                            else:
+                                val_str = str(val).strip()
+                                if "," in val_str and "." in val_str:
+                                    if val_str.find(".") < val_str.find(","):
+                                        val_str = val_str.replace(".", "").replace(",", ".")
+                                    else:
+                                        val_str = val_str.replace(",", "")
+                                elif "," in val_str:
+                                    val_str = val_str.replace(",", ".")
+                                monto_sum += abs(float(val_str))
+                        except:
+                            pass
+                    total_egresos_ipago_ves_calc = monto_sum
+                except Exception as e:
+                    st.warning(f"⚠️ Error al calcular egresos de iPago: {e}")
+            st.session_state.total_egresos_ipago_ves = total_egresos_ipago_ves_calc
+            
             st.success(f"📅 Movimientos consolidados de {', '.join(bancos_procesados)} filtrados del {fecha_inicio_dt.strftime('%d/%m/%Y')} al {fecha_fin_dt.strftime('%d/%m/%Y')} ({len(df_original)} registros)")
         except Exception as e:
             st.warning(f"⚠️ Error filtrando fechas consolidadas: {e}")
@@ -3513,6 +3551,29 @@ if st.session_state.seccion_activa == "consolidado":
                         cell_total_ing_usd.fill = amarillo
                         cell_total_ing_usd.alignment = alineacion_derecha
 
+                        # Total Egresos iPago
+                        fila_r += 1
+                        cell_total_egr_lbl = hoja_resumen.cell(row=fila_r, column=2, value="TOTAL EGRESOS IPAGO")
+                        cell_total_egr_lbl.font = negro_bold
+                        cell_total_egr_lbl.border = borde_fino
+                        cell_total_egr_lbl.fill = amarillo
+                    
+                        tot_egr_ves_export = st.session_state.get("total_egresos_ipago_ves", 0.0)
+                        cell_total_egr_ves = hoja_resumen.cell(row=fila_r, column=3, value=tot_egr_ves_export)
+                        cell_total_egr_ves.font = negro_bold
+                        cell_total_egr_ves.border = borde_fino
+                        cell_total_egr_ves.number_format = '#,##0.00'
+                        cell_total_egr_ves.fill = amarillo
+                        cell_total_egr_ves.alignment = alineacion_derecha
+                    
+                        tot_egr_usd_export = tot_egr_ves_export / tasa_dia if tasa_dia > 0 else 0.0
+                        cell_total_egr_usd = hoja_resumen.cell(row=fila_r, column=4, value=tot_egr_usd_export)
+                        cell_total_egr_usd.font = negro_bold
+                        cell_total_egr_usd.border = borde_fino
+                        cell_total_egr_usd.number_format = '$#,##0.00'
+                        cell_total_egr_usd.fill = amarillo
+                        cell_total_egr_usd.alignment = alineacion_derecha
+
                         for columna in hoja_resumen.columns:
                             max_length = 0
                             try:
@@ -3658,6 +3719,7 @@ if st.session_state.seccion_activa == "consolidado":
 
     else:
         st.session_state.total_ingresos_consolidado = 0.0
+        st.session_state.total_egresos_ipago_ves = 0.0
         st.markdown("""
         ### 👋 Conciliador Bancario Inteligente Multibanco
     
