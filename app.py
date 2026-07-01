@@ -1240,7 +1240,7 @@ def procesar_archivo(df, usar_api=False, banco=""):
     comisiones = []
     registros_procesados = set()
     
-    tipos_ingresos = ["NC", "C", "CREDITO", "ABONO"]
+    tipos_ingresos = ["NC", "C", "CREDITO", "ABONO", "DP", "DEP"]
     tipos_egresos = ["ND", "D", "DEBITO", "DEBIT"]
     cache_tasas = {}
 
@@ -2680,7 +2680,7 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
     comisiones = []
     registros_procesados = set()
     
-    tipos_ingresos = ["NC", "C", "CREDITO", "ABONO"]
+    tipos_ingresos = ["NC", "C", "CREDITO", "ABONO", "DP", "DEP"]
     tipos_egresos = ["ND", "D", "DEBITO", "DEBIT"]
     cache_tasas = {}
 
@@ -3363,7 +3363,7 @@ if st.session_state.seccion_activa == "consolidado":
             # Calcular la suma de ingresos de los archivos consolidados
             total_ingresos_ves_calc = 0.0
             if not df_original.empty:
-                tipos_ingresos = ["NC", "C", "CREDITO", "ABONO"]
+                tipos_ingresos = ["NC", "C", "CREDITO", "ABONO", "DP", "DEP"]
                 tipo_col = df_original.iloc[:, 5].astype(str).str.strip().str.upper()
                 ingresos_filas = df_original[tipo_col.isin(tipos_ingresos)]
                 
