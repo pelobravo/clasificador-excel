@@ -1694,7 +1694,10 @@ def mono_es_comision(texto, proveedor=None):
         "retencion de impuesto",
         "com. trf",
         "com.serv",
-        "emision de estado"
+        "emision de estado",
+        "below minimum balance charges",
+        "stament service",
+        "statement service"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -2983,6 +2986,31 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 
                 # Si es comisión de Mercantil, la clasificamos como tal
                 if es_comision_mercantil:
+                    comisiones.append(registro)
+                    continue
+
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA TESORO - DETECCIÓN DIRECTA
+            # =========================================================
+            es_comision_tesoro = False
+            
+            if banco == "tesoro":
+                descripcion_upper = descripcion.upper()
+                patrones_tesoro = [
+                    "BELOW MINIMUM BALANCE CHARGES",
+                    "STAMENT SERVICE",
+                    "STATEMENT SERVICE",
+                    "COMIS",
+                    "COMISION",
+                    "CARGO BANCARIO",
+                    "CARGO POR SERVICIO"
+                ]
+                for patron in patrones_tesoro:
+                    if patron in descripcion_upper:
+                        es_comision_tesoro = True
+                        break
+                
+                if es_comision_tesoro:
                     comisiones.append(registro)
                     continue
 
