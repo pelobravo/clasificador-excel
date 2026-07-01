@@ -36,6 +36,8 @@ if "saldo_provincial" not in st.session_state: st.session_state.saldo_provincial
 if "saldo_bancamiga" not in st.session_state: st.session_state.saldo_bancamiga = 0.0
 if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
 if "saldo_banplus" not in st.session_state: st.session_state.saldo_banplus = 0.0
+if "saldo_efectivo" not in st.session_state: st.session_state.saldo_efectivo = 0.0
+if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 
@@ -3124,6 +3126,24 @@ with st.sidebar:
                 step=100.0,
                 key="saldo_manual_tesoro"
             )
+
+        with st.expander("💵 Banco Efectivo (Manual)", expanded=False):
+            saldo_manual_efectivo = st.number_input(
+                "Saldo manual Banco Efectivo (VES)",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                key="saldo_manual_efectivo"
+            )
+
+        with st.expander("🪙 Banco Binance (Manual)", expanded=False):
+            saldo_manual_binance = st.number_input(
+                "Saldo manual Banco Binance (VES)",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                key="saldo_manual_binance"
+            )
     else:
         st.markdown("### 📂 Cargar Archivo Único (Monobanco)")
 
@@ -3182,6 +3202,8 @@ if st.session_state.seccion_activa == "consolidado":
     if not archivo_bancamiga: st.session_state.saldo_bancamiga = 0.0
     if not archivo_banplus: st.session_state.saldo_banplus = 0.0
     st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
+    st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0)
+    st.session_state.saldo_binance = st.session_state.get("saldo_manual_binance", 0.0)
 
     # Selector de Moneda para los KPIs
     col_mon1, col_mon2 = st.columns([1.5, 3.5])
@@ -3203,7 +3225,9 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
         st.session_state.saldo_banplus + 
-        st.session_state.saldo_tesoro
+        st.session_state.saldo_tesoro +
+        st.session_state.saldo_efectivo +
+        st.session_state.saldo_binance
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
     
@@ -3222,6 +3246,8 @@ if st.session_state.seccion_activa == "consolidado":
     if st.session_state.saldo_bancamiga > 0: bancos_con_saldo.append(f"Bancamiga: Bs. {formato_venezolano(st.session_state.saldo_bancamiga)}")
     if st.session_state.saldo_banplus > 0: bancos_con_saldo.append(f"BanPlus: Bs. {formato_venezolano(st.session_state.saldo_banplus)}")
     if st.session_state.saldo_tesoro > 0: bancos_con_saldo.append(f"Tesoro: Bs. {formato_venezolano(st.session_state.saldo_tesoro)}")
+    if st.session_state.saldo_efectivo > 0: bancos_con_saldo.append(f"Efectivo: Bs. {formato_venezolano(st.session_state.saldo_efectivo)}")
+    if st.session_state.saldo_binance > 0: bancos_con_saldo.append(f"Binance: Bs. {formato_venezolano(st.session_state.saldo_binance)}")
 
     kpi_subtitle_text = " | ".join(bancos_con_saldo) if bancos_con_saldo else "Sin saldos cargados"
 
@@ -3501,6 +3527,12 @@ if st.session_state.seccion_activa == "consolidado":
     # 7. Tesoro (Manual)
     saldos_detalle_excel.append(("Banco del Tesoro", st.session_state.saldo_tesoro))
 
+    # 7.5. Efectivo (Manual)
+    saldos_detalle_excel.append(("Banco Efectivo", st.session_state.saldo_efectivo))
+
+    # 7.6. Binance (Manual)
+    saldos_detalle_excel.append(("Banco Binance", st.session_state.saldo_binance))
+
     st.session_state.saldos_detalle_excel = saldos_detalle_excel
 
     # Recalcular el total consolidado con los datos extraídos
@@ -3509,7 +3541,9 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
         st.session_state.saldo_banplus + 
-        st.session_state.saldo_tesoro
+        st.session_state.saldo_tesoro +
+        st.session_state.saldo_efectivo +
+        st.session_state.saldo_binance
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
 
@@ -3740,7 +3774,9 @@ if st.session_state.seccion_activa == "consolidado":
                             ("Provincial", st.session_state.saldo_provincial),
                             ("Bancamiga", st.session_state.saldo_bancamiga),
                             ("BanPlus", st.session_state.saldo_banplus),
-                            ("Banco del Tesoro", st.session_state.saldo_tesoro)
+                            ("Banco del Tesoro", st.session_state.saldo_tesoro),
+                            ("Banco Efectivo", st.session_state.saldo_efectivo),
+                            ("Banco Binance", st.session_state.saldo_binance)
                         ])
 
                         fila_r = 9
