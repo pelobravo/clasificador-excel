@@ -484,7 +484,7 @@ if "seccion_activa" not in st.session_state:
 # Barra de Navegación Superior
 col_nav1, col_nav2 = st.columns(2)
 with col_nav1:
-    if st.button("📊 CIERRE CONSOLIDADO MULTIBANCO", use_container_width=True, type="primary" if st.session_state.seccion_activa == "consolidado" else "secondary", key="nav_btn_consolidado"):
+    if st.button("📊 SALDOS BANCARIOS MULTIBANCO", use_container_width=True, type="primary" if st.session_state.seccion_activa == "consolidado" else "secondary", key="nav_btn_consolidado"):
         st.session_state.seccion_activa = "consolidado"
         st.rerun()
 with col_nav2:
