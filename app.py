@@ -1469,6 +1469,8 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre:
         return "bancamiga"
+    elif "BANPLUS" in nombre:
+        return "banplus"
     elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
         return "banesco"
     elif (
@@ -2661,6 +2663,95 @@ def mono_convertir_venezuela_a_formato_mercantil(df):
     
     df_convertido = pd.DataFrame(datos_convertidos)
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
+
+def mono_procesar_banplus(df):
+    """
+    Procesa archivo de Banplus con formato HTML/Excel.
+    Columnas: Fecha | Referencia | Descripción | Débito | Crédito | Saldo
+    """
+    st.info("🔍 Procesando archivo de Banplus...")
+    try:
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df)}")
+        st.write(f"- Número de columnas: {len(df.columns)}")
+        
+        # Encontrar la fila de encabezados si no está en las columnas
+        encabezado_idx = None
+        cols_upper = [str(c).strip().upper() for c in df.columns]
+        if "FECHA" in cols_upper and "REFERENCIA" in cols_upper:
+            pass
+        else:
+            for i in range(min(15, len(df))):
+                fila = df.iloc[i].astype(str).str.strip().str.upper().tolist()
+                fila_str = " ".join(fila)
+                if "FECHA" in fila_str and "REFERENCIA" in fila_str:
+                    encabezado_idx = i
+                    break
+            if encabezado_idx is not None:
+                df.columns = df.iloc[encabezado_idx].tolist()
+                df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        
+        # Limpiar columnas
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        rename_map = {}
+        for col in df.columns:
+            col_clean = str(col).strip().upper()
+            if "FECHA" in col_clean: rename_map[col] = "FECHA"
+            elif "REFERENCIA" in col_clean: rename_map[col] = "REFERENCIA"
+            elif "DESCRIP" in col_clean: rename_map[col] = "DESCRIPCION"
+            elif "DÉBITO" in col_clean or "DEBITO" in col_clean or "DEB" in col_clean: rename_map[col] = "DEBITO"
+            elif "CRÉDITO" in col_clean or "CREDITO" in col_clean or "CRE" in col_clean: rename_map[col] = "CREDITO"
+            elif "SALDO" in col_clean: rename_map[col] = "SALDO"
+            
+        df = df.rename(columns=rename_map)
+        
+        # Filtrar filas vacías o totales
+        if "FECHA" in df.columns:
+            df["FECHA"] = df["FECHA"].astype(str).str.strip()
+            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período|Total", case=False, na=False)]
+            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
+            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+            df = df[df["FECHA"].notna()]
+            
+        # Reemplazar valores vacíos o nulos en Débito y Crédito
+        for col in ["DEBITO", "CREDITO"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                df[col] = df[col].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+                
+        datos_normalizados = []
+        for idx, fila in df.iterrows():
+            fecha_str = fila["FECHA"].strftime("%d/%m/%Y")
+            referencia = str(fila.get("REFERENCIA", "")).strip().replace("'", "")
+            descripcion = str(fila.get("DESCRIPCION", "")).strip()
+            
+            debito = float(fila.get("DEBITO", 0.0))
+            credito = float(fila.get("CREDITO", 0.0))
+            
+            if credito > 0:
+                tipo = "NC"
+                monto = credito
+            elif debito > 0:
+                tipo = "ND"
+                monto = debito
+            else:
+                continue
+                
+            datos_normalizados.append({
+                "FECHA": fecha_str,
+                "REFERENCIA": referencia,
+                "TIPO": tipo,
+                "DESCRIPCION": descripcion,
+                "MONTO": monto
+            })
+            
+        return pd.DataFrame(datos_normalizados)
+    except Exception as e:
+        st.error(f"❌ Error procesando archivo Banplus: {e}")
+        return pd.DataFrame()
 
 # =========================================================
 # 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA PROVINCIAL Y BANCAMIGA
@@ -3890,6 +3981,18 @@ else:
                     dayfirst=True,
                     errors="coerce"
                 )
+            
+            elif banco == "banplus":
+                try:
+                    df_raw = mono_leer_excel_sin_encabezados(archivo)
+                    df_normalizado = mono_procesar_banplus(df_raw)
+                    if df_normalizado.empty:
+                        st.error("No se pudieron procesar los datos de Banplus.")
+                        st.stop()
+                    df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
+                except Exception as e:
+                    st.error(f"Error leyendo Banplus: {str(e)}")
+                    st.stop()
             
             elif banco == "bnc":
                 df_raw = leer_excel_con_encabezados(archivo)
