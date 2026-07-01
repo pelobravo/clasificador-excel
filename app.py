@@ -3129,7 +3129,7 @@ with st.sidebar:
 
         with st.expander("💵 Banco Efectivo (Manual)", expanded=False):
             saldo_manual_efectivo = st.number_input(
-                "Saldo manual Banco Efectivo (VES)",
+                "Saldo manual Banco Efectivo (USD)",
                 min_value=0.0,
                 value=0.0,
                 step=100.0,
@@ -3138,7 +3138,7 @@ with st.sidebar:
 
         with st.expander("🪙 Banco Binance (Manual)", expanded=False):
             saldo_manual_binance = st.number_input(
-                "Saldo manual Banco Binance (VES)",
+                "Saldo manual Banco Binance (USD)",
                 min_value=0.0,
                 value=0.0,
                 step=100.0,
@@ -3220,6 +3220,11 @@ if st.session_state.seccion_activa == "consolidado":
 
     # Renderizado de KPIs
     tasa_dia = obtener_tasa_bcv()
+    
+    # Efectivo y Binance se ingresan en USD, los convertimos a VES usando la tasa del día
+    st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0) * tasa_dia
+    st.session_state.saldo_binance = st.session_state.get("saldo_manual_binance", 0.0) * tasa_dia
+
     total_ves = (
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
@@ -3246,8 +3251,10 @@ if st.session_state.seccion_activa == "consolidado":
     if st.session_state.saldo_bancamiga > 0: bancos_con_saldo.append(f"Bancamiga: Bs. {formato_venezolano(st.session_state.saldo_bancamiga)}")
     if st.session_state.saldo_banplus > 0: bancos_con_saldo.append(f"BanPlus: Bs. {formato_venezolano(st.session_state.saldo_banplus)}")
     if st.session_state.saldo_tesoro > 0: bancos_con_saldo.append(f"Tesoro: Bs. {formato_venezolano(st.session_state.saldo_tesoro)}")
-    if st.session_state.saldo_efectivo > 0: bancos_con_saldo.append(f"Efectivo: Bs. {formato_venezolano(st.session_state.saldo_efectivo)}")
-    if st.session_state.saldo_binance > 0: bancos_con_saldo.append(f"Binance: Bs. {formato_venezolano(st.session_state.saldo_binance)}")
+    saldo_ef_usd = st.session_state.get("saldo_manual_efectivo", 0.0)
+    if st.session_state.saldo_efectivo > 0: bancos_con_saldo.append(f"Efectivo: Bs. {formato_venezolano(st.session_state.saldo_efectivo)} (${saldo_ef_usd:,.2f})")
+    saldo_bin_usd = st.session_state.get("saldo_manual_binance", 0.0)
+    if st.session_state.saldo_binance > 0: bancos_con_saldo.append(f"Binance: Bs. {formato_venezolano(st.session_state.saldo_binance)} (${saldo_bin_usd:,.2f})")
 
     kpi_subtitle_text = " | ".join(bancos_con_saldo) if bancos_con_saldo else "Sin saldos cargados"
 
@@ -3536,6 +3543,9 @@ if st.session_state.seccion_activa == "consolidado":
     st.session_state.saldos_detalle_excel = saldos_detalle_excel
 
     # Recalcular el total consolidado con los datos extraídos
+    st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0) * tasa_dia
+    st.session_state.saldo_binance = st.session_state.get("saldo_manual_binance", 0.0) * tasa_dia
+
     total_ves = (
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
