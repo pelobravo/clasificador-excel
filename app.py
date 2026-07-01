@@ -581,7 +581,7 @@ def detectar_banco_por_nombre(nombre_archivo):
         or "VZLA" in nombre
     ):
         return "venezuela"
-    elif "PROVINCIAL" in nombre:
+    elif "PROVINCIAL" in nombre or "PROV" in nombre:
         return "provincial"
     elif "BNC" in nombre:
         return "bnc"
@@ -1479,7 +1479,7 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
         or "VZLA" in nombre
     ):
         return "venezuela"
-    elif "PROVINCIAL" in nombre:
+    elif "PROVINCIAL" in nombre or "PROV" in nombre:
         return "provincial"
     elif "BNC" in nombre:
         return "bnc"
