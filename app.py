@@ -681,7 +681,10 @@ def es_comision(texto, proveedor=None):
         "retencion de impuesto",
         "com. trf",
         "com.serv",
-        "emision de estado"
+        "emision de estado",
+        "below minimum balance charges",
+        "stament service",
+        "statement service"
     ]
     for patron in palabras_comision_bancaria:
         if patron in texto:
@@ -1382,6 +1385,13 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISION X PAGO DE NOMINAS MB"
                 ]
                 if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
+                    es_comision_banco = True
+            elif banco == "tesoro":
+                patrones_tesoro = [
+                    "BELOW MINIMUM BALANCE CHARGES", "STAMENT SERVICE", "STATEMENT SERVICE",
+                    "COMIS", "COMISION", "CARGO BANCARIO", "CARGO POR SERVICIO"
+                ]
+                if any(p in texto for p in patrones_tesoro):
                     es_comision_banco = True
 
             if es_comision_banco or es_comision(descripcion):
