@@ -844,7 +844,7 @@ def procesar_provincial(df):
             fila = df.iloc[i]
             fila_str = [str(val) for val in fila.tolist()]
             texto_fila = " ".join(fila_str).upper()
-            if "OPERAC" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
                 encabezado_idx = i
                 break
         if encabezado_idx is None:
@@ -1887,7 +1887,7 @@ def mono_procesar_provincial(df):
             texto_fila = " ".join(fila_str).upper()
             
             # Buscar columnas que contengan "F. Operación" o "Concepto" o "Importe"
-            if "OPERAC" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
                 encabezado_idx = i
                 break
         
