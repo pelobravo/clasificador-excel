@@ -3044,9 +3044,13 @@ saldo_manual_tesoro = 0.0
 archivo = None
 
 with st.sidebar:
-    st.image(
-        "https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg",
-        width=100
+    st.markdown(
+        """
+        <div style="display: flex; justify-content: center; align-items: center; background-color: #f1f3f5; padding: 12px; border-radius: 10px; border: 1px solid #e9ecef; margin-bottom: 5px;">
+            <img src="https://raw.githubusercontent.com/pelobravo/clasificador-excel/main/LOGO.jpeg" style="width: 100px; border-radius: 8px;">
+        </div>
+        """,
+        unsafe_allow_html=True
     )
     st.markdown("---")
 
