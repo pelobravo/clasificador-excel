@@ -2362,7 +2362,7 @@ def mono_procesar_bancamiga(df):
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
     tasas_bcv_local = {
-        "01/06/2026": 554.4258,
+        "01/07/2026": 633.3644,
         "02/06/2026": 557.9741,
         "03/06/2026": 558.6436,
         "04/06/2026": 560.3753,
