@@ -3010,6 +3010,19 @@ if st.session_state.seccion_activa == "consolidado":
     if not archivo_bancamiga: st.session_state.saldo_bancamiga = 0.0
     st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
 
+    # Selector de Moneda para los KPIs
+    col_mon1, col_mon2 = st.columns([1.5, 3.5])
+    with col_mon1:
+        st.radio(
+            "💱 Mostrar KPIs en:",
+            options=["Dólares ($)", "Bolívares (Bs.)"],
+            horizontal=True,
+            key="selector_moneda_kpis"
+        )
+    
+    # Determinar moneda seleccionada
+    moneda_kpi = "USD" if st.session_state.get("selector_moneda_kpis", "Dólares ($)") == "Dólares ($)" else "VES"
+
     # Renderizado de KPIs
     tasa_dia = obtener_tasa_bcv()
     total_ves = (
@@ -3037,22 +3050,57 @@ if st.session_state.seccion_activa == "consolidado":
 
     kpi_subtitle_text = " | ".join(bancos_con_saldo) if bancos_con_saldo else "Sin saldos cargados"
 
+    if moneda_kpi == "USD":
+        val_saldos = f"${total_usd:,.2f}"
+        sub_saldos = f"Bs. {formato_venezolano(total_ves)}"
+        
+        val_ingresos = f"${total_ingresos_usd:,.2f}"
+        sub_ingresos = f"Bs. {formato_venezolano(total_ingresos_ves)}"
+        
+        val_egresos = f"${total_egresos_usd:,.2f}"
+        sub_egresos = f"Bs. {formato_venezolano(total_egresos_ves)}"
+        
+        title_saldos = "Total Saldos Bancos (USD)"
+        title_ingresos = "Total Ingresos Bancos (USD)"
+        title_egresos = "Total Egresos iPago (USD)"
+        
+        title_extra = "Total Equivalente (VES)"
+        val_extra = f"Bs. {formato_venezolano(total_ves)}"
+        sub_extra = "Saldos convertidos a tasa oficial"
+    else:
+        val_saldos = f"Bs. {formato_venezolano(total_ves)}"
+        sub_saldos = f"${total_usd:,.2f} USD"
+        
+        val_ingresos = f"Bs. {formato_venezolano(total_ingresos_ves)}"
+        sub_ingresos = f"${total_ingresos_usd:,.2f} USD"
+        
+        val_egresos = f"Bs. {formato_venezolano(total_egresos_ves)}"
+        sub_egresos = f"${total_egresos_usd:,.2f} USD"
+        
+        title_saldos = "Total Saldos Bancos (VES)"
+        title_ingresos = "Total Ingresos Bancos (VES)"
+        title_egresos = "Total Egresos iPago (VES)"
+        
+        title_extra = "Total Equivalente (USD)"
+        val_extra = f"${total_usd:,.2f}"
+        sub_extra = "Convertido al tipo de cambio oficial"
+
     st.markdown(f"""
     <div class="kpi-container">
         <div class="kpi-card">
-            <div class="kpi-title">Total Saldos Bancos (VES)</div>
-            <div class="kpi-value">Bs. {formato_venezolano(total_ves)}</div>
-            <div class="kpi-subtitle">{kpi_subtitle_text}</div>
+            <div class="kpi-title">{title_saldos}</div>
+            <div class="kpi-value">{val_saldos}</div>
+            <div class="kpi-subtitle">{kpi_subtitle_text if moneda_kpi == 'VES' else sub_saldos}</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Total Ingresos Bancos (VES)</div>
-            <div class="kpi-value">Bs. {formato_venezolano(total_ingresos_ves)}</div>
-            <div class="kpi-subtitle">Equivalente: ${total_ingresos_usd:,.2f} USD</div>
+            <div class="kpi-title">{title_ingresos}</div>
+            <div class="kpi-value">{val_ingresos}</div>
+            <div class="kpi-subtitle">{sub_ingresos}</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Total Egresos iPago (VES)</div>
-            <div class="kpi-value">Bs. {formato_venezolano(total_egresos_ves)}</div>
-            <div class="kpi-subtitle">Equivalente: ${total_egresos_usd:,.2f} USD</div>
+            <div class="kpi-title">{title_egresos}</div>
+            <div class="kpi-value">{val_egresos}</div>
+            <div class="kpi-subtitle">{sub_egresos}</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-title">Tasa Oficial BCV del Día</div>
@@ -3060,9 +3108,9 @@ if st.session_state.seccion_activa == "consolidado":
             <div class="kpi-subtitle">Tasa del Banco Central de Venezuela</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Total Equivalente en Dólares (USD)</div>
-            <div class="kpi-value">${total_usd:,.2f}</div>
-            <div class="kpi-subtitle">Convertido al tipo de cambio oficial</div>
+            <div class="kpi-title">{title_extra}</div>
+            <div class="kpi-value">{val_extra}</div>
+            <div class="kpi-subtitle">{sub_extra}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
