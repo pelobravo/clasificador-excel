@@ -2409,8 +2409,19 @@ if st.session_state.seccion_activa == "consolidado":
             fechas_convertidas = parsear_fechas_consolidado(df_original.iloc[:, 3])
             fecha_inicio_dt = pd.to_datetime(fecha_inicio)
             fecha_fin_dt = pd.to_datetime(fecha_fin)
+            
+            # Ajustar automáticamente el rango si las fechas consolidadas están fuera del rango seleccionado
+            if not fechas_convertidas.empty:
+                min_file_date = fechas_convertidas.min()
+                max_file_date = fechas_convertidas.max()
+                if pd.notna(min_file_date) and pd.notna(max_file_date):
+                    if fecha_inicio_dt > min_file_date or fecha_fin_dt < max_file_date:
+                        fecha_inicio_dt = min_file_date
+                        fecha_fin_dt = max_file_date
+                        st.info(f"💡 **Rango de fechas ajustado automáticamente** al contenido de los archivos: {min_file_date.strftime('%d/%m/%Y')} al {max_file_date.strftime('%d/%m/%Y')}")
+            
             df_original = df_original[(fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)]
-            st.success(f"📅 Movimientos consolidados de {', '.join(bancos_procesados)} filtrados del {fecha_inicio} al {fecha_fin} ({len(df_original)} registros)")
+            st.success(f"📅 Movimientos consolidados de {', '.join(bancos_procesados)} filtrados del {fecha_inicio_dt.strftime('%d/%m/%Y')} al {fecha_fin_dt.strftime('%d/%m/%Y')} ({len(df_original)} registros)")
         except Exception as e:
             st.warning(f"⚠️ Error filtrando fechas consolidadas: {e}")
 
@@ -2872,6 +2883,16 @@ else:
                 fecha_inicio_dt = pd.to_datetime(fecha_inicio)
                 fecha_fin_dt = pd.to_datetime(fecha_fin)
 
+                # Ajustar automáticamente el rango si las fechas del archivo están fuera del rango seleccionado
+                if not fechas_convertidas.empty:
+                    min_file_date = fechas_convertidas.min()
+                    max_file_date = fechas_convertidas.max()
+                    if pd.notna(min_file_date) and pd.notna(max_file_date):
+                        if fecha_inicio_dt > min_file_date or fecha_fin_dt < max_file_date:
+                            fecha_inicio_dt = min_file_date
+                            fecha_fin_dt = max_file_date
+                            st.info(f"💡 **Rango de fechas ajustado automáticamente** al contenido del archivo: {min_file_date.strftime('%d/%m/%Y')} al {max_file_date.strftime('%d/%m/%Y')}")
+
                 # Aplicar filtro según el banco
                 if banco == "venezuela":
                     # Usar el dataframe original para el filtro
@@ -2884,7 +2905,7 @@ else:
                         (fechas_convertidas <= fecha_fin_dt)
                     ]
             
-                st.success(f"Filtro de fechas aplicado: {fecha_inicio} a {fecha_fin}")
+                st.success(f"Filtro de fechas aplicado: {fecha_inicio_dt.strftime('%d/%m/%Y')} a {fecha_fin_dt.strftime('%d/%m/%Y')}")
             except Exception as e:
                 st.warning(f"Error filtrando fechas: {e}")
             
