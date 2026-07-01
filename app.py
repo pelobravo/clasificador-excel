@@ -35,6 +35,7 @@ if "saldo_venezuela" not in st.session_state: st.session_state.saldo_venezuela =
 if "saldo_provincial" not in st.session_state: st.session_state.saldo_provincial = 0.0
 if "saldo_bancamiga" not in st.session_state: st.session_state.saldo_bancamiga = 0.0
 if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
+if "saldo_banplus" not in st.session_state: st.session_state.saldo_banplus = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 
@@ -1054,6 +1055,72 @@ def procesar_bancamiga(df):
         return df_resultado
     except Exception as e:
         st.error(f"❌ Error Bancamiga: {str(e)}")
+        return pd.DataFrame()
+
+def procesar_banplus(df):
+    st.info("🔍 Procesando archivo de BanPlus...")
+    try:
+        columnas = [str(c).strip().upper() for c in df.columns]
+        if "FECHA" in columnas and "REFERENCIA" in columnas:
+            rename_map = {
+                "FECHA": "FECHA", "REFERENCIA": "REFERENCIA", "DESCRIPCION": "DESCRIPCION",
+                "CONCEPTO": "DESCRIPCION", "DEBITO": "DEBITO", "DEBITOS": "DEBITO",
+                "DÉBITO": "DEBITO", "CREDITO": "CREDITO", "CREDITOS": "CREDITO",
+                "CRÉDITO": "CREDITO", "SALDO": "SALDO"
+            }
+            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df.columns]
+        else:
+            encabezado_idx = None
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                if "FECHA" in texto_fila and ("REFERENCIA" in texto_fila or "REF" in texto_fila or "DESCRIPCION" in texto_fila or "CONCEPTO" in texto_fila):
+                    encabezado_idx = i
+                    break
+            if encabezado_idx is None: return pd.DataFrame()
+            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            rename_map = {}
+            for col in headers:
+                col_clean = str(col).strip().upper()
+                if "FECHA" in col_clean: rename_map[col] = "FECHA"
+                elif "REFERENCIA" in col_clean or "REF" in col_clean: rename_map[col] = "REFERENCIA"
+                elif "CONCEPTO" in col_clean or "DESCRIP" in col_clean: rename_map[col] = "DESCRIPCION"
+                elif "DÉBITO" in col_clean or "DEBITO" in col_clean or "EGRESO" in col_clean or "CARGO" in col_clean: rename_map[col] = "DEBITO"
+                elif "CRÉDITO" in col_clean or "CREDITO" in col_clean or "INGRESO" in col_clean or "ABONO" in col_clean: rename_map[col] = "CREDITO"
+                elif "SALDO" in col_clean: rename_map[col] = "SALDO"
+            df.columns = headers
+            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            df = df.rename(columns=rename_map)
+            
+        if "FECHA" not in df.columns: return pd.DataFrame()
+        df["FECHA"] = df["FECHA"].astype(str).str.strip()
+        df = df[~df["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
+        df["FECHA"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
+        mask = df["FECHA"].isna()
+        if mask.any():
+            df.loc[mask, "FECHA"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
+        df = df[df["FECHA"].notna()]
+        
+        df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "DEBITO" in df.columns else "0"
+        df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
+        df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "CREDITO" in df.columns else "0"
+        df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+        
+        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df["MONTO"] = df["MONTO"].abs()
+        df = df[df["MONTO"] > 0]
+        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
+        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
+        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        st.success(f"✅ BanPlus OK: {len(df_resultado)} movimientos")
+        return df_resultado
+    except Exception as e:
+        st.error(f"❌ Error BanPlus: {str(e)}")
         return pd.DataFrame()
 
 def procesar_venezuela_simple(df):
@@ -3041,6 +3108,14 @@ with st.sidebar:
                 key="uploader_bancamiga"
             )
 
+        with st.expander("🏦 BanPlus", expanded=False):
+            archivo_banplus = st.file_uploader(
+                "Cargar BanPlus",
+                type=["xlsx", "xls", "xlsm"],
+                accept_multiple_files=True,
+                key="uploader_banplus"
+            )
+
         with st.expander("🏦 Banco del Tesoro", expanded=False):
             saldo_manual_tesoro = st.number_input(
                 "Saldo manual Banco del Tesoro (VES)",
@@ -3105,6 +3180,7 @@ if st.session_state.seccion_activa == "consolidado":
     if not archivo_venezuela: st.session_state.saldo_venezuela = 0.0
     if not archivo_provincial: st.session_state.saldo_provincial = 0.0
     if not archivo_bancamiga: st.session_state.saldo_bancamiga = 0.0
+    if not archivo_banplus: st.session_state.saldo_banplus = 0.0
     st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
 
     # Selector de Moneda para los KPIs
@@ -3126,6 +3202,7 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
+        st.session_state.saldo_banplus + 
         st.session_state.saldo_tesoro
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
@@ -3143,6 +3220,7 @@ if st.session_state.seccion_activa == "consolidado":
     if st.session_state.saldo_venezuela > 0: bancos_con_saldo.append(f"BDV: Bs. {formato_venezolano(st.session_state.saldo_venezuela)}")
     if st.session_state.saldo_provincial > 0: bancos_con_saldo.append(f"Provincial: Bs. {formato_venezolano(st.session_state.saldo_provincial)}")
     if st.session_state.saldo_bancamiga > 0: bancos_con_saldo.append(f"Bancamiga: Bs. {formato_venezolano(st.session_state.saldo_bancamiga)}")
+    if st.session_state.saldo_banplus > 0: bancos_con_saldo.append(f"BanPlus: Bs. {formato_venezolano(st.session_state.saldo_banplus)}")
     if st.session_state.saldo_tesoro > 0: bancos_con_saldo.append(f"Tesoro: Bs. {formato_venezolano(st.session_state.saldo_tesoro)}")
 
     kpi_subtitle_text = " | ".join(bancos_con_saldo) if bancos_con_saldo else "Sin saldos cargados"
@@ -3388,6 +3466,38 @@ if st.session_state.seccion_activa == "consolidado":
     else:
         saldos_detalle_excel.append(("Bancamiga", 0.0))
 
+    # 6.5. BanPlus
+    if archivo_banplus:
+        st.session_state.saldo_banplus = 0.0
+        for idx, arch in enumerate(archivo_banplus, 1):
+            try:
+                nombre = arch.name.lower()
+                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
+                else:
+                    try:
+                        df_raw = pd.read_excel(arch, header=None)
+                    except Exception:
+                        arch.seek(0)
+                        df_raw = pd.read_html(arch)[0]
+            
+                saldo_arch = obtener_saldo_banco(df_raw, "banplus")
+                st.session_state.saldo_banplus += saldo_arch
+            
+                nombre_banco = f"BanPlus - Cuenta {idx}" if len(archivo_banplus) > 1 else "BanPlus"
+                saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
+                df_normalizado = procesar_banplus(df_raw)
+                df_convertido = convertir_a_formato_mercantil(df_normalizado, "banplus")
+                if not df_convertido.empty:
+                    list_df_convertidos.append(df_convertido)
+                    if "BanPlus" not in bancos_procesados:
+                        bancos_procesados.append("BanPlus")
+            except Exception as e:
+                st.error(f"❌ Error leyendo BanPlus ({arch.name}): {e}")
+    else:
+        saldos_detalle_excel.append(("BanPlus", 0.0))
+
     # 7. Tesoro (Manual)
     saldos_detalle_excel.append(("Banco del Tesoro", st.session_state.saldo_tesoro))
 
@@ -3398,6 +3508,7 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
+        st.session_state.saldo_banplus + 
         st.session_state.saldo_tesoro
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
@@ -3628,6 +3739,7 @@ if st.session_state.seccion_activa == "consolidado":
                             ("Banco de Venezuela (BDV)", st.session_state.saldo_venezuela),
                             ("Provincial", st.session_state.saldo_provincial),
                             ("Bancamiga", st.session_state.saldo_bancamiga),
+                            ("BanPlus", st.session_state.saldo_banplus),
                             ("Banco del Tesoro", st.session_state.saldo_tesoro)
                         ])
 
