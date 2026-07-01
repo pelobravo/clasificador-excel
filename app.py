@@ -463,6 +463,846 @@ def normalizar_texto(texto):
 # =========================================================
 
 
+def leer_excel_sin_encabezados(archivo):
+    """Lee archivo Excel sin encabezados detectando el engine correcto"""
+    nombre = archivo.name.lower()
+    
+    try:
+        if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            try:
+                import xlrd
+                return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
+            except Exception as e:
+                st.warning(f"⚠️ Error leyendo como Excel, intentando como HTML: {str(e)}")
+                archivo.seek(0)
+                try:
+                    tablas = pd.read_html(archivo)
+                    if len(tablas) > 0:
+                        return tablas[0]
+                except Exception:
+                    pass
+                archivo.seek(0)
+                contenido = archivo.read().decode("utf-8", errors="ignore")
+                lineas = contenido.split("\n")
+                datos = []
+                for linea in lineas:
+                    if linea.strip():
+                        partes = linea.split("\t")
+                        if len(partes) == 1:
+                            partes = [p for p in linea.split(" ") if p.strip()]
+                        if len(partes) > 0:
+                            datos.append(partes)
+                return pd.DataFrame(datos)
+        else:
+            return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo. Error: {str(e)}")
+        st.stop()
+
+def leer_excel_con_encabezados(archivo):
+    """Lee archivo Excel con encabezados detectando el engine correcto"""
+    nombre = archivo.name.lower()
+    
+    try:
+        if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            try:
+                import xlrd
+                return pd.read_excel(archivo, sheet_name=0, header=0, engine='xlrd')
+            except ImportError:
+                st.error("❌ Para archivos .xls es necesario instalar xlrd. Ejecuta: pip install xlrd")
+                st.stop()
+        else:
+            return pd.read_excel(archivo, sheet_name=0, header=0, engine='openpyxl')
+    except Exception as e:
+        try:
+            return pd.read_excel(archivo, sheet_name=0, header=None, engine='openpyxl')
+        except:
+            st.error(f"No se pudo leer el archivo. Error: {str(e)}")
+            st.stop()
+
+# =========================================================
+# 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
+# =========================================================
+
+def detectar_banco_por_contenido(archivo):
+    """
+    Detecta el banco leyendo el contenido del archivo, no solo el nombre.
+    """
+    try:
+        pos = archivo.tell()
+        archivo.seek(0)
+        try:
+            df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
+            texto = " ".join(df_temp.astype(str).values.flatten()).upper()
+            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto:
+                archivo.seek(pos)
+                return "bancamiga"
+            elif "BANESCO" in texto:
+                archivo.seek(pos)
+                return "banesco"
+            elif "PROVINCIAL" in texto:
+                archivo.seek(pos)
+                return "provincial"
+            elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
+                archivo.seek(pos)
+                return "venezuela"
+            elif "BNC" in texto:
+                archivo.seek(pos)
+                return "bnc"
+            elif "MERCANTIL" in texto:
+                archivo.seek(pos)
+                return "mercantil"
+            elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
+                archivo.seek(pos)
+                return "tesoro"
+        except Exception:
+            pass
+        archivo.seek(pos)
+        return None
+    except Exception:
+        return None
+
+def detectar_banco_por_nombre(nombre_archivo):
+    """Detecta el banco por el nombre del archivo (fallback)"""
+    nombre = nombre_archivo.upper()
+    if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
+        return "tesoro"
+    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre:
+        return "bancamiga"
+    elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
+        return "banesco"
+    elif (
+        "MOVIMIENTOS EN MONEDA NACIONAL" in nombre
+        or "VENEZUELA" in nombre
+        or "BANCO DE VENEZUELA" in nombre
+        or "BDV" in nombre
+        or "VZLA" in nombre
+    ):
+        return "venezuela"
+    elif "PROVINCIAL" in nombre:
+        return "provincial"
+    elif "BNC" in nombre:
+        return "bnc"
+    elif "MERCANTIL" in nombre:
+        return "mercantil"
+    return "mercantil"
+
+# =========================================================
+# FUNCIONES DE CONVERSIÓN Y LIMPIEZA
+# =========================================================
+
+def convertir_monto(valor):
+    try:
+        if pd.isna(valor):
+            return None
+        if isinstance(valor, (int, float)):
+            numero = float(valor)
+            if isinstance(valor, int) and numero >= 100000:
+                numero = numero / 100
+            return numero
+        valor_original = str(valor).strip()
+        valor = valor_original
+        valor = valor.replace(" ", "").replace("$", "").replace("Bs", "").replace("€", "")
+        if valor == "":
+            return None
+        if "." in valor and "," in valor:
+            valor = valor.replace(".", "").replace(",", ".")
+        elif "," in valor:
+            valor = valor.replace(",", ".")
+        numero = float(valor)
+        if "." not in valor_original and "," not in valor_original and numero >= 100000:
+            numero = numero / 100
+        return numero
+    except Exception:
+        return None
+
+def calcular_usd(monto_bs, tasa):
+    try:
+        if monto_bs is None or tasa is None or tasa == 0:
+            return None
+        return round(abs(monto_bs) / abs(tasa), 2)
+    except:
+        return None
+
+def es_comision(texto, proveedor=None):
+    texto = normalizar_texto(texto).strip()
+    if proveedor and str(proveedor).strip():
+        return False
+    if any(x in texto for x in [
+        "comisiones sobre servicios contratados",
+        "comision gerente comercial",
+        "comision vendedor",
+        "comision asesor",
+        "comision ejecutivo",
+        "comision supervisor",
+        "comision ventas",
+        "comisiones ventas",
+        "comision comercial",
+        "comisiones comerciales"
+    ]):
+        return False
+    if any(x in texto for x in [
+        "pago a proveedores",
+        "pago de nomina",
+        "nomina",
+        "transf entre ctas",
+        "transferencia a terceros",
+        "pago movil comercial"
+    ]):
+        return False
+    palabras_comision_bancaria = [
+        "comision por transferencia",
+        "comision pago movil",
+        "comisión pago movil",
+        "comision x pago de nomina",
+        "comision x pago de nominas",
+        "itf",
+        "impuesto a las transacciones financieras",
+        "cargo bancario",
+        "mantenimiento de cuenta",
+        "comision bancaria",
+        "comisión bancaria",
+        "cargo por servicio",
+        "cargo por transaccion",
+        "comision por",
+        "comisión por",
+        "comision pago movil comercial",
+        "comision x pago de nominas mb",
+        "com pago otras ctas",
+        "com pago otr bcos",
+        "comis",
+        "comis. cr.i"
+    ]
+    for patron in palabras_comision_bancaria:
+        if patron in texto:
+            return True
+    return False
+
+# =========================================================
+# ENRIQUECER EGRESOS CON IPAGO
+# =========================================================
+
+def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
+    if df_ipago is None or df_ipago.empty:
+        return df_egresos
+    df_resultado = df_egresos.copy()
+    df_resultado["REFERENCIA_NORM"] = df_resultado["REFERENCIA"].astype(str).str.replace(".0", "", regex=False).str.strip()
+    df_ipago["Referencia_Norm"] = df_ipago["Referencia"].astype(str).str.replace(".0", "", regex=False).str.strip()
+    
+    def generar_variantes_ref(ref):
+        ref = str(ref).strip()
+        if not ref or ref == "nan":
+            return set()
+        variantes = set()
+        variantes.add(ref)
+        ref_sin_ceros = ref.lstrip('0')
+        if ref_sin_ceros != ref and ref_sin_ceros:
+            variantes.add(ref_sin_ceros)
+        if ref.endswith('X'):
+            ref_sin_x = ref[:-1]
+            if ref_sin_x:
+                variantes.add(ref_sin_x)
+                ref_sin_x_sin_ceros = ref_sin_x.lstrip('0')
+                if ref_sin_x_sin_ceros:
+                    variantes.add(ref_sin_x_sin_ceros)
+        if 'X' in ref and not ref.endswith('X'):
+            ref_sin_x = ref.replace('X', '')
+            if ref_sin_x:
+                variantes.add(ref_sin_x)
+                ref_sin_x_sin_ceros = ref_sin_x.lstrip('0')
+                if ref_sin_x_sin_ceros:
+                    variantes.add(ref_sin_x_sin_ceros)
+        if len(ref) >= 10 and ref.startswith('0'):
+            ref_sin_cero_inicial = ref[1:]
+            if ref_sin_cero_inicial:
+                variantes.add(ref_sin_cero_inicial)
+                variantes.add(ref_sin_cero_inicial.lstrip('0'))
+        if '.' in ref:
+            ref_sin_puntos = ref.replace('.', '')
+            if ref_sin_puntos:
+                variantes.add(ref_sin_puntos)
+                variantes.add(ref_sin_puntos.lstrip('0'))
+        return variantes
+
+    ipago_dict = {}
+    for _, row in df_ipago.iterrows():
+        ref_original = str(row.get("Referencia", "")).strip()
+        if not ref_original or ref_original == "nan":
+            continue
+        variantes = generar_variantes_ref(ref_original)
+        for variante in variantes:
+            if variante and variante not in ipago_dict:
+                ipago_dict[variante] = {
+                    "PROVEEDOR": row.get("Proveedor", ""),
+                    "TIPO_EGRESO": row.get("Tipo de Egreso", ""),
+                    "TIPO_PAGO": row.get("Tipo de Pago", ""),
+                    "DESCRIPCION_IPAGO": row.get("Descripción", ""),
+                    "FECHA_PAGO": row.get("Fecha Pago", ""),
+                    "EMPRESA": row.get("Empresa", ""),
+                    "MONTO_IPAGO": row.get("Monto", 0),
+                    "MONTO_USD": row.get("Monto USD", 0),
+                    "REFERENCIA_ORIGINAL": ref_original
+                }
+
+    for idx, row in df_resultado.iterrows():
+        ref_banco = str(row.get("REFERENCIA", "")).strip()
+        monto_banco = float(row.get("MONTO BS", 0))
+        variantes_banco = generar_variantes_ref(ref_banco)
+        coincide_ref = False
+        datos_encontrados = None
+        for variante in variantes_banco:
+            if variante in ipago_dict:
+                datos_encontrados = ipago_dict[variante]
+                coincide_ref = True
+                break
+        if not coincide_ref:
+            for clave, datos in ipago_dict.items():
+                monto_ipago = float(datos.get("MONTO_IPAGO", 0))
+                if monto_ipago > 0:
+                    diferencia = abs(monto_banco - monto_ipago) / max(monto_banco, monto_ipago)
+                    if diferencia < 0.01:
+                        datos_encontrados = datos
+                        coincide_ref = True
+                        break
+        if datos_encontrados:
+            df_resultado.at[idx, "STATUS"] = datos_encontrados["PROVEEDOR"]
+            df_resultado.at[idx, "OBSERVACIÓN"] = datos_encontrados["TIPO_EGRESO"]
+            df_resultado.at[idx, "TIPO_PAGO"] = datos_encontrados["TIPO_PAGO"]
+            df_resultado.at[idx, "PROVEEDOR_IPAGO"] = datos_encontrados["PROVEEDOR"]
+            df_resultado.at[idx, "REFERENCIA_IPAGO"] = datos_encontrados.get("REFERENCIA_ORIGINAL", "")
+            descripcion_ipago = datos_encontrados["DESCRIPCION_IPAGO"]
+            if descripcion_ipago:
+                df_resultado.at[idx, "DESCRIPCIÓN"] = descripcion_ipago
+                df_resultado.at[idx, "DESCRIPCION_ORIGINAL"] = row.get("DESCRIPCIÓN", "")
+            tipo = str(datos_encontrados["TIPO_EGRESO"]).upper()
+            desc = str(datos_encontrados["DESCRIPCION_IPAGO"]).upper()
+            if "COMISION" in tipo or "COMISION" in desc:
+                df_resultado.at[idx, "ES_COMISION"] = True
+            else:
+                df_resultado.at[idx, "ES_COMISION"] = False
+        else:
+            df_resultado.at[idx, "STATUS"] = "SIN DATOS IPAGO"
+            df_resultado.at[idx, "OBSERVACIÓN"] = "SIN CONCORDANCIA"
+            df_resultado.at[idx, "TIPO_PAGO"] = ""
+            df_resultado.at[idx, "PROVEEDOR_IPAGO"] = ""
+            df_resultado.at[idx, "ES_COMISION"] = False
+            
+    df_resultado = df_resultado.drop(columns=["REFERENCIA_NORM"], errors="ignore")
+    return df_resultado
+
+# =========================================================
+# PROCESADORES ESPECÍFICOS POR BANCO
+# =========================================================
+
+def procesar_banesco(df):
+    st.info("Procesando Banesco...")
+    try:
+        df.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        rename_map = {}
+        for col in df.columns:
+            c = str(col).lower()
+            if "fecha" in c: rename_map[col] = "FECHA"
+            elif "referencia" in c: rename_map[col] = "REFERENCIA"
+            elif "descrip" in c: rename_map[col] = "DESCRIPCION"
+            elif "monto" in c: rename_map[col] = "MONTO_RAW"
+        df = df.rename(columns=rename_map)
+        for col in ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW"]:
+            if col not in df.columns:
+                st.error(f"No existe columna: {col}")
+                return pd.DataFrame()
+        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        df = df[df["FECHA"].notna()]
+        df["TIPO"] = df["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
+        df["MONTO"] = (df["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
+                       .str.replace("-", "", regex=False)
+                       .str.replace(".", "", regex=False)
+                       .str.replace(",", ".", regex=False)
+                       .str.strip())
+        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+        df = df[df["MONTO"].notna()]
+        df = df[df["MONTO"] > 0]
+        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Banesco OK: {len(df)} movimientos")
+        return df
+    except Exception as e:
+        st.error(f"Error Banesco: {str(e)}")
+        return pd.DataFrame()
+
+def procesar_provincial(df):
+    st.info("🔍 Procesando archivo de Provincial...")
+    try:
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i]
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            if "F. OPERACIÓN" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+                encabezado_idx = i
+                break
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
+            return pd.DataFrame()
+        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        rename_map = {}
+        for col in headers:
+            col_clean = str(col).strip().upper()
+            if "F. OPERACIÓN" in col_clean or "FECHA" in col_clean: rename_map[col] = "FECHA"
+            elif "F. VALOR" in col_clean: rename_map[col] = "FECHA_VALOR"
+            elif "CÓDIGO" in col_clean or "CODIGO" in col_clean: rename_map[col] = "CODIGO"
+            elif "Nº. DOC" in col_clean or "NRO DOC" in col_clean or "DOC" in col_clean: rename_map[col] = "REFERENCIA"
+            elif "CONCEPTO" in col_clean: rename_map[col] = "DESCRIPCION"
+            elif "IMPORTE" in col_clean: rename_map[col] = "MONTO"
+        df.columns = headers
+        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        df = df.rename(columns=rename_map)
+        if "FECHA" in df.columns:
+            df["FECHA"] = df["FECHA"].astype(str).str.strip()
+            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
+            df = df[df["FECHA"].str.match(r'^\d{2}-\d{2}-\d{4}$', na=False)]
+            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+            df = df[df["FECHA"].notna()]
+        else:
+            return pd.DataFrame()
+        if "MONTO" in df.columns:
+            df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace("'", "", regex=False)
+            df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+            df = df[df["MONTO"].notna()]
+            df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+            df["MONTO"] = df["MONTO"].abs()
+            df = df[df["MONTO"] > 0]
+        else:
+            return pd.DataFrame()
+        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
+        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
+        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        st.success(f"✅ Provincial OK: {len(df_resultado)} movimientos")
+        return df_resultado
+    except Exception as e:
+        st.error(f"❌ Error procesando Provincial: {str(e)}")
+        return pd.DataFrame()
+
+def procesar_bnc(df):
+    st.info("Procesando archivo BNC...")
+    try:
+        encabezado = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+                encabezado = i
+                break
+        if encabezado is None:
+            return pd.DataFrame()
+        headers = []
+        for idx, col in enumerate(df.iloc[encabezado]):
+            col = str(col).strip().replace("\n", " ")
+            if col == "" or col.lower() == "nan": col = f"COLUMNA_{idx}"
+            headers.append(col)
+        headers_unicos = []
+        contador = {}
+        for h in headers:
+            if h in contador:
+                contador[h] += 1
+                nuevo = f"{h}_{contador[h]}"
+            else:
+                contador[h] = 0
+                nuevo = h
+            headers_unicos.append(nuevo)
+        df.columns = headers_unicos
+        df = df.iloc[encabezado + 1:].reset_index(drop=True)
+        rename_map = {}
+        for col in df.columns:
+            col_str = str(col).strip().lower()
+            if "fecha" in col_str: rename_map[col] = "FECHA"
+            elif "descripcion" in col_str or "descripción" in col_str or "concepto" in col_str: rename_map[col] = "DESCRIPCION"
+            elif "referencia" in col_str: rename_map[col] = "REFERENCIA"
+            elif "credito" in col_str or "haber" in col_str: rename_map[col] = "CREDITO"
+            elif "debito" in col_str or "debe" in col_str: rename_map[col] = "DEBITO"
+        df = df.rename(columns=rename_map)
+        if "FECHA" in df.columns:
+            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+            df = df[df["FECHA"].notna()]
+        df["CREDITO"] = pd.to_numeric(df.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df.columns else 0
+        df["DEBITO"] = pd.to_numeric(df.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df.columns else 0
+        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df["MONTO"] = df["MONTO"].abs()
+        df = df[df["MONTO"] != 0]
+        st.success(f"Registros BNC OK: {len(df)}")
+        return df
+    except Exception as e:
+        st.error(f"Error BNC: {e}")
+        return pd.DataFrame()
+
+def procesar_tesoro(df):
+    st.info("Procesando Banco del Tesoro...")
+    try:
+        encabezado = None
+        for i in range(min(20, len(df))):
+            fila = df.iloc[i].astype(str)
+            texto = " ".join(map(str, fila.tolist())).lower()
+            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
+                encabezado = i
+                break
+        if encabezado is None:
+            return pd.DataFrame()
+        df.columns = df.iloc[encabezado]
+        df = df.iloc[encabezado + 1:].reset_index(drop=True)
+        df.columns = [str(c).strip() for c in df.columns]
+        rename_map = {}
+        for col in df.columns:
+            c = str(col).strip().lower()
+            if "fecha" in c: rename_map[col] = "FECHA"
+            elif "referencia" in c: rename_map[col] = "REFERENCIA"
+            elif "concepto" in c: rename_map[col] = "DESCRIPCION"
+            elif "débito" in c or "debito" in c: rename_map[col] = "DEBITO"
+            elif "crédito" in c or "credito" in c: rename_map[col] = "CREDITO"
+            elif "código" in c or "codigo" in c: rename_map[col] = "TIPO"
+        df = df.rename(columns=rename_map)
+        if "FECHA" not in df.columns: return pd.DataFrame()
+        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        df = df[df["FECHA"].notna()]
+        def limpiar_numero(valor):
+            valor = str(valor).replace(".", "").replace(",", ".")
+            try: return float(valor)
+            except: return 0
+        df["CREDITO"] = df.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df.columns else 0
+        df["DEBITO"] = df.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df.columns else 0
+        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df["MONTO"] = df["MONTO"].abs()
+        df = df[df["MONTO"] > 0]
+        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Tesoro OK: {len(df)} registros")
+        return df
+    except Exception as e:
+        st.error(f"Error Tesoro: {str(e)}")
+        return pd.DataFrame()
+
+def procesar_bancamiga(df):
+    st.info("🔍 Procesando archivo de Bancamiga...")
+    try:
+        columnas = [str(c).strip().upper() for c in df.columns]
+        if "FECHA" in columnas and "REFERENCIA" in columnas:
+            rename_map = {
+                "NRO.": "NRO", "NRO": "NRO", "FECHA": "FECHA", "REFERENCIA": "REFERENCIA",
+                "CONCEPTO": "DESCRIPCION", "DÉBITO": "DEBITO", "DEBITO": "DEBITO",
+                "CRÉDITO": "CREDITO", "CREDITO": "CREDITO", "SALDO": "SALDO"
+            }
+            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df.columns]
+        else:
+            encabezado_idx = None
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
+                    encabezado_idx = i
+                    break
+            if encabezado_idx is None: return pd.DataFrame()
+            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            rename_map = {}
+            for col in headers:
+                col_clean = str(col).strip().upper()
+                if "NRO" in col_clean or "Nº" in col_clean: rename_map[col] = "NRO"
+                elif "FECHA" in col_clean: rename_map[col] = "FECHA"
+                elif "REFERENCIA" in col_clean: rename_map[col] = "REFERENCIA"
+                elif "CONCEPTO" in col_clean: rename_map[col] = "DESCRIPCION"
+                elif "DÉBITO" in col_clean or "DEBITO" in col_clean: rename_map[col] = "DEBITO"
+                elif "CRÉDITO" in col_clean or "CREDITO" in col_clean: rename_map[col] = "CREDITO"
+                elif "SALDO" in col_clean: rename_map[col] = "SALDO"
+            df.columns = headers
+            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            df = df.rename(columns=rename_map)
+            
+        if "FECHA" not in df.columns: return pd.DataFrame()
+        df["FECHA"] = df["FECHA"].astype(str).str.strip()
+        df = df[~df["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
+        df["FECHA"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
+        mask = df["FECHA"].isna()
+        if mask.any():
+            df.loc[mask, "FECHA"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
+        df = df[df["FECHA"].notna()]
+        
+        df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "DEBITO" in df.columns else "0"
+        df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
+        df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "CREDITO" in df.columns else "0"
+        df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+        
+        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df["MONTO"] = df["MONTO"].abs()
+        df = df[df["MONTO"] > 0]
+        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
+        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
+        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        st.success(f"✅ Bancamiga OK: {len(df_resultado)} movimientos")
+        return df_resultado
+    except Exception as e:
+        st.error(f"❌ Error Bancamiga: {str(e)}")
+        return pd.DataFrame()
+
+def procesar_venezuela_simple(df):
+    st.info("🔍 Procesando Banco de Venezuela (MODO SIMPLE)...")
+    try:
+        col_fecha = 3
+        col_ref = 1
+        col_desc = 2
+        col_tipo = 4
+        col_credito = 5
+        col_debito = 6
+        
+        movimientos = []
+        for idx in range(1, len(df)):
+            try:
+                fila = df.iloc[idx]
+                if pd.isna(fila[col_fecha]): continue
+                fecha_raw = str(fila[col_fecha]).strip()
+                fecha_val = pd.to_datetime(fecha_raw, format="%d/%m/%Y", errors="coerce")
+                if pd.isna(fecha_val):
+                    fecha_val = pd.to_datetime(fecha_raw, dayfirst=True, errors="coerce")
+                if pd.isna(fecha_val): continue
+                
+                referencia = str(fila[col_ref]).strip() if pd.notna(fila[col_ref]) else ""
+                descripcion = str(fila[col_desc]).strip() if pd.notna(fila[col_desc]) else ""
+                tipo_mov = str(fila[col_tipo]).strip().upper() if pd.notna(fila[col_tipo]) else ""
+                
+                desc_upper = descripcion.upper()
+                if desc_upper in ["SALDO INICIAL", "SALDO FINAL", "TOTALES"]: continue
+                
+                val_credito = 0
+                if pd.notna(fila[col_credito]):
+                    clean_cred = str(fila[col_credito]).strip().replace(".", "").replace(",", ".")
+                    try: val_credito = float(clean_cred)
+                    except: pass
+                
+                val_debito = 0
+                if pd.notna(fila[col_debito]):
+                    clean_deb = str(fila[col_debito]).strip().replace(".", "").replace(",", ".")
+                    try: val_debito = float(clean_deb)
+                    except: pass
+                
+                monto = 0
+                tipo = ""
+                if tipo_mov == "NC":
+                    monto = abs(val_credito)
+                    tipo = "NC"
+                elif tipo_mov == "ND":
+                    monto = abs(val_debito)
+                    tipo = "ND"
+                else:
+                    if abs(val_credito) > 0:
+                        monto = abs(val_credito)
+                        tipo = "NC"
+                    elif abs(val_debito) > 0:
+                        monto = abs(val_debito)
+                        tipo = "ND"
+                    else: continue
+                
+                if monto <= 0: continue
+                movimientos.append({
+                    "FECHA": fecha_val.strftime("%d/%m/%Y"),
+                    "FECHA_OBJ": fecha_val,
+                    "REFERENCIA": referencia,
+                    "DESCRIPCION": descripcion,
+                    "TIPO": tipo,
+                    "MONTO": monto
+                })
+            except:
+                continue
+        df_resultado = pd.DataFrame(movimientos)
+        st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos")
+        return df_resultado
+    except Exception as e:
+        st.error(f"❌ Error en BDV: {str(e)}")
+        return pd.DataFrame()
+
+# =========================================================
+# CONVERTIDORES A FORMATO MERCANTIL
+# =========================================================
+
+def convertir_venezuela_a_formato_mercantil(df):
+    datos_convertidos = []
+    for idx, fila in df.iterrows():
+        try:
+            fecha = fila["FECHA_OBJ"] if "FECHA_OBJ" in fila else fila["FECHA"]
+            if pd.isna(fecha): continue
+            if isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha_str = fecha.strftime("%d/%m/%Y")
+            else:
+                fecha_str = str(fecha)
+            
+            tipo = fila.get("TIPO", "") or ""
+            descripcion = fila.get("DESCRIPCION", "") or ""
+            referencia = fila.get("REFERENCIA", "") or ""
+            monto = fila.get("MONTO", 0) or 0
+            
+            fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", False]
+            datos_convertidos.append(fila_convertida)
+        except:
+            continue
+    df_convertido = pd.DataFrame(datos_convertidos)
+    return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
+
+def convertir_a_formato_mercantil(df, banco):
+    datos_convertidos = []
+    # Normalizar columnas del dataframe a mayúsculas para evitar problemas de casing
+    df_temp = df.copy()
+    df_temp.columns = [str(c).strip().upper() for c in df_temp.columns]
+    
+    for idx, fila in df_temp.iterrows():
+        try:
+            fecha = fila.get("FECHA", "")
+            if pd.isna(fecha): continue
+            if isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha_str = fecha.strftime("%d/%m/%Y")
+            else:
+                fecha_str = str(fecha)
+            
+            tipo = fila.get("TIPO", "") or ""
+            descripcion = fila.get("DESCRIPCION", "") or ""
+            referencia = fila.get("REFERENCIA", "") or ""
+            monto = fila.get("MONTO", 0) or 0
+            es_comision_flag = bool(fila.get("ES_COMISION", False))
+            
+            fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", es_comision_flag]
+            datos_convertidos.append(fila_convertida)
+        except:
+            continue
+    df_convertido = pd.DataFrame(datos_convertidos)
+    return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
+
+# =========================================================
+# OBTENER TASA BCV HISTORICA LOCAL
+# =========================================================
+
+@st.cache_data(ttl=3600)
+def obtener_tasa_bcv_fecha(fecha_obj):
+    tasas_bcv_local = {
+        "01/06/2026": 554.4258, "02/06/2026": 557.9741, "03/06/2026": 558.6436,
+        "04/06/2026": 560.3753, "05/06/2026": 563.2892, "06/06/2026": 567.6828,
+        "07/06/2026": 567.6828, "08/06/2026": 567.6828, "09/06/2026": 567.6828,
+        "10/06/2026": 572.6784, "11/06/2026": 577.5461, "12/06/2026": 582.6862,
+        "13/06/2026": 587.4059, "14/06/2026": 587.4059, "15/06/2026": 587.4059,
+        "16/06/2026": 592.5163, "17/06/2026": 596.7824, "18/06/2026": 602.3324,
+        "19/06/2026": 607.3919, "20/06/2026": 612.4332, "21/06/2026": 612.4332,
+        "22/06/2026": 612.4332, "23/06/2026": 617.6388, "24/06/2026": 621.5299,
+        "25/06/2026": 621.5299, "26/06/2026": 622.2135, "27/06/2026": 623.0223,
+        "28/06/2026": 623.0223, "29/06/2026": 623.0223, "30/06/2026": 623.0223,
+    }
+    fecha_str = fecha_obj.strftime("%d/%m/%Y")
+    return tasas_bcv_local.get(fecha_str, None)
+
+def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
+    return obtener_tasa_bcv_fecha(fecha_obj)
+
+# =========================================================
+# 🔥 PROCESAMIENTO PRINCIPAL - CLASIFICACIÓN
+# =========================================================
+
+def procesar_archivo(df, usar_api=False, banco=""):
+    ingresos = []
+    egresos = []
+    comisiones = []
+    registros_procesados = set()
+    
+    tipos_ingresos = ["NC", "C", "CREDITO", "ABONO"]
+    tipos_egresos = ["ND", "D", "DEBITO", "DEBIT"]
+    cache_tasas = {}
+
+    for _, fila in df.iterrows():
+        try:
+            if len(fila) < 10: continue
+            fecha_raw = str(fila[3]).strip()
+            if fecha_raw.lower() == "nan": continue
+            fecha_raw = fecha_raw.replace(".0", "")
+            if len(fecha_raw) == 7:
+                fecha = f"0{fecha_raw[0]}/{fecha_raw[1:3]}/{fecha_raw[3:]}"
+            elif len(fecha_raw) == 8:
+                fecha = f"{fecha_raw[0:2]}/{fecha_raw[2:4]}/{fecha_raw[4:]}"
+            else:
+                fecha = fecha_raw
+
+            tipo = str(fila[5]).strip().upper()
+            descripcion = str(fila[6]).strip()
+            referencia = str(fila[4]).strip()
+            monto_bs = convertir_monto(fila[7])
+            if monto_bs is None or monto_bs == 0: continue
+            
+            fecha_obj = pd.to_datetime(fecha, dayfirst=True, errors="coerce")
+            if pd.isna(fecha_obj): continue
+            
+            fecha_key = fecha_obj.strftime("%d/%m/%Y")
+            tasa = cache_tasas.get(fecha_key) or obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
+            cache_tasas[fecha_key] = tasa
+
+            monto_usd = calcular_usd(monto_bs, tasa)
+            if monto_usd is None: continue
+            
+            texto = descripcion.upper()
+            if texto in ["SALDO", "DESCRIPCION", "DESCRIPCIÓN", "REFERENCIA", "MOVIMIENTO", "FECHA", "SALDO INICIAL", "SALDO FINAL"]:
+                continue
+
+            registro = {
+                "FECHA": fecha, "REFERENCIA": referencia, "DESCRIPCIÓN": descripcion,
+                "MONTO BS": round(abs(monto_bs), 2), "TASA BCV": round(tasa, 4), "MONTO USD": monto_usd,
+                "STATUS": "", "OBSERVACIÓN": "", "TIPO_PAGO": "", "PROVEEDOR_IPAGO": "", "DESCRIPCION_ORIGINAL": ""
+            }
+
+            clave = (fecha, referencia, descripcion, monto_usd, tipo)
+            if clave in registros_procesados: continue
+            registros_procesados.add(clave)
+
+            # Reglas específicas por banco
+            es_comision_banco = False
+            if banco == "provincial" and "COMIS" in texto: es_comision_banco = True
+            elif banco == "bancamiga" and "COMISI" in texto: es_comision_banco = True
+            elif banco == "mercantil":
+                patrones = [
+                    "OP.CRED.DIRT. CLTE-CLTE", "OP CRED DIRT CLTE CLTE", "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION POR TRANSFERENCIA DE FONDOS", "COMISION X PAGO DE NOMINAS",
+                    "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO", "COMISION X PAGO DE NOMINAS MB",
+                    "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS", "CARGO BANCARIO",
+                    "MANTENIMIENTO DE CUENTA", "COMISION POR TRANSFERENCIA"
+                ]
+                if any(p in texto for p in patrones): es_comision_banco = True
+            
+            # BDV / Venezuela comisiones por descripción o referencia
+            if banco == "venezuela":
+                patrones_bdv = [
+                    "COM PAGO OTRAS CTAS", "COMISION PAGO A PROVEEDORES", "COM PAGO OTR BCOS",
+                    "COM PAGO OTRAS CTAS JUR NAT", "COM PAGO OTRAS CTAS JUR JUR", "COMISION POR TRANSFERENCIA",
+                    "COMISION PAGO MOVIL", "COMISIÓN PAGO MOVIL", "COMISION X PAGO DE NOMINA",
+                    "COMISION X PAGO DE NOMINAS", "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                    "CARGO BANCARIO", "MANTENIMIENTO DE CUENTA", "COMISION BANCARIA", "COMISIÓN BANCARIA",
+                    "CARGO POR SERVICIO", "CARGO POR TRANSACCION", "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION X PAGO DE NOMINAS MB"
+                ]
+                if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
+                    es_comision_banco = True
+
+            if es_comision_banco or es_comision(descripcion):
+                comisiones.append(registro)
+            elif tipo in tipos_ingresos:
+                ingresos.append(registro)
+            elif tipo in tipos_egresos:
+                egresos.append(registro)
+        except:
+            continue
+    return ingresos, egresos, comisiones
+
+# =========================================================
+# INTERFAZ PRINCIPAL - EJECUCIÓN
+# =========================================================
+
+
 # =========================================================
 # 🔥 MONOBANCO FUNCTIONS (NAMESPACED TO AVOID OVERWRITING)
 # =========================================================
