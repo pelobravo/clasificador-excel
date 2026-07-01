@@ -844,7 +844,7 @@ def procesar_provincial(df):
             fila = df.iloc[i]
             fila_str = [str(val) for val in fila.tolist()]
             texto_fila = " ".join(fila_str).upper()
-            if "F. OPERACIÓN" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+            if "OPERAC" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
                 encabezado_idx = i
                 break
         if encabezado_idx is None:
@@ -854,7 +854,7 @@ def procesar_provincial(df):
         rename_map = {}
         for col in headers:
             col_clean = str(col).strip().upper()
-            if "F. OPERACIÓN" in col_clean or "FECHA" in col_clean: rename_map[col] = "FECHA"
+            if "OPERAC" in col_clean or "FECHA" in col_clean: rename_map[col] = "FECHA"
             elif "F. VALOR" in col_clean: rename_map[col] = "FECHA_VALOR"
             elif "CÓDIGO" in col_clean or "CODIGO" in col_clean: rename_map[col] = "CODIGO"
             elif "Nº. DOC" in col_clean or "NRO DOC" in col_clean or "DOC" in col_clean: rename_map[col] = "REFERENCIA"
@@ -866,7 +866,7 @@ def procesar_provincial(df):
         if "FECHA" in df.columns:
             df["FECHA"] = df["FECHA"].astype(str).str.strip()
             df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
-            df = df[df["FECHA"].str.match(r'^\d{2}-\d{2}-\d{4}$', na=False)]
+            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
             df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
             df = df[df["FECHA"].notna()]
         else:
@@ -1887,7 +1887,7 @@ def mono_procesar_provincial(df):
             texto_fila = " ".join(fila_str).upper()
             
             # Buscar columnas que contengan "F. Operación" o "Concepto" o "Importe"
-            if "F. OPERACIÓN" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
+            if "OPERAC" in texto_fila or "F. VALOR" in texto_fila or "CONCEPTO" in texto_fila:
                 encabezado_idx = i
                 break
         
@@ -1905,7 +1905,7 @@ def mono_procesar_provincial(df):
         rename_map = {}
         for col in headers:
             col_clean = str(col).strip().upper()
-            if "F. OPERACIÓN" in col_clean or "FECHA" in col_clean:
+            if "OPERAC" in col_clean or "FECHA" in col_clean:
                 rename_map[col] = "FECHA"
             elif "F. VALOR" in col_clean:
                 rename_map[col] = "FECHA_VALOR"
@@ -1943,9 +1943,9 @@ def mono_procesar_provincial(df):
             # Eliminar filas con fechas vacías o que sean encabezados
             df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
             # Eliminar filas con fechas que sean números o NaN
-            df = df[df["FECHA"].str.match(r'^\d{2}-\d{2}-\d{4}$', na=False)]
+            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
             
-            # Convertir fechas (formato DD-MM-YYYY)
+            # Convertir fechas (formato DD-MM-YYYY o DD/MM/YYYY)
             df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
             df = df[df["FECHA"].notna()]
         else:
