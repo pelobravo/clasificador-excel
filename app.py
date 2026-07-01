@@ -35,6 +35,7 @@ if "saldo_venezuela" not in st.session_state: st.session_state.saldo_venezuela =
 if "saldo_provincial" not in st.session_state: st.session_state.saldo_provincial = 0.0
 if "saldo_bancamiga" not in st.session_state: st.session_state.saldo_bancamiga = 0.0
 if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
+if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 
 # =========================================================
 # ESTILOS
@@ -2362,7 +2363,7 @@ def mono_procesar_bancamiga(df):
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
     tasas_bcv_local = {
-        "01/07/2026": 633.3644,
+        "01/06/2026": 554.4258,
         "02/06/2026": 557.9741,
         "03/06/2026": 558.6436,
         "04/06/2026": 560.3753,
@@ -3017,6 +3018,9 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_tesoro
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
+    
+    total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
+    total_ingresos_usd = total_ingresos_ves / tasa_dia if tasa_dia > 0 else 0.0
 
     bancos_con_saldo = []
     if st.session_state.saldo_banesco > 0: bancos_con_saldo.append(f"Banesco: Bs. {formato_venezolano(st.session_state.saldo_banesco)}")
@@ -3035,6 +3039,11 @@ if st.session_state.seccion_activa == "consolidado":
             <div class="kpi-title">Total Saldos Bancos (VES)</div>
             <div class="kpi-value">Bs. {formato_venezolano(total_ves)}</div>
             <div class="kpi-subtitle">{kpi_subtitle_text}</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Total Ingresos Bancos (VES)</div>
+            <div class="kpi-value">Bs. {formato_venezolano(total_ingresos_ves)}</div>
+            <div class="kpi-subtitle">Equivalente: ${total_ingresos_usd:,.2f} USD</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-title">Tasa Oficial BCV del Día</div>
@@ -3287,6 +3296,32 @@ if st.session_state.seccion_activa == "consolidado":
                         st.info(f"💡 **Rango de fechas ajustado automáticamente** al contenido de los archivos: {min_file_date.strftime('%d/%m/%Y')} al {max_file_date.strftime('%d/%m/%Y')}")
             
             df_original = df_original[(fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)]
+            
+            # Calcular la suma de ingresos de los archivos consolidados
+            total_ingresos_ves_calc = 0.0
+            if not df_original.empty:
+                tipos_ingresos = ["NC", "C", "CREDITO", "ABONO"]
+                tipo_col = df_original.iloc[:, 5].astype(str).str.strip().str.upper()
+                ingresos_filas = df_original[tipo_col.isin(tipos_ingresos)]
+                
+                for val in ingresos_filas.iloc[:, 7]:
+                    try:
+                        if isinstance(val, (int, float)):
+                            total_ingresos_ves_calc += abs(float(val))
+                        else:
+                            val_str = str(val).strip()
+                            if "," in val_str and "." in val_str:
+                                if val_str.find(".") < val_str.find(","):
+                                    val_str = val_str.replace(".", "").replace(",", ".")
+                                else:
+                                    val_str = val_str.replace(",", "")
+                            elif "," in val_str:
+                                val_str = val_str.replace(",", ".")
+                            total_ingresos_ves_calc += abs(float(val_str))
+                    except:
+                        pass
+            st.session_state.total_ingresos_consolidado = total_ingresos_ves_calc
+            
             st.success(f"📅 Movimientos consolidados de {', '.join(bancos_procesados)} filtrados del {fecha_inicio_dt.strftime('%d/%m/%Y')} al {fecha_fin_dt.strftime('%d/%m/%Y')} ({len(df_original)} registros)")
         except Exception as e:
             st.warning(f"⚠️ Error filtrando fechas consolidadas: {e}")
@@ -3455,6 +3490,29 @@ if st.session_state.seccion_activa == "consolidado":
                         cell_total_usd.fill = verde_claro
                         cell_total_usd.alignment = alineacion_derecha
 
+                        # Total Ingresos Archivos
+                        fila_r += 1
+                        cell_total_ing_lbl = hoja_resumen.cell(row=fila_r, column=2, value="TOTAL INGRESOS ARCHIVOS")
+                        cell_total_ing_lbl.font = negro_bold
+                        cell_total_ing_lbl.border = borde_fino
+                        cell_total_ing_lbl.fill = amarillo
+                    
+                        tot_ing_ves_export = st.session_state.get("total_ingresos_consolidado", 0.0)
+                        cell_total_ing_ves = hoja_resumen.cell(row=fila_r, column=3, value=tot_ing_ves_export)
+                        cell_total_ing_ves.font = negro_bold
+                        cell_total_ing_ves.border = borde_fino
+                        cell_total_ing_ves.number_format = '#,##0.00'
+                        cell_total_ing_ves.fill = amarillo
+                        cell_total_ing_ves.alignment = alineacion_derecha
+                    
+                        tot_ing_usd_export = tot_ing_ves_export / tasa_dia if tasa_dia > 0 else 0.0
+                        cell_total_ing_usd = hoja_resumen.cell(row=fila_r, column=4, value=tot_ing_usd_export)
+                        cell_total_ing_usd.font = negro_bold
+                        cell_total_ing_usd.border = borde_fino
+                        cell_total_ing_usd.number_format = '$#,##0.00'
+                        cell_total_ing_usd.fill = amarillo
+                        cell_total_ing_usd.alignment = alineacion_derecha
+
                         for columna in hoja_resumen.columns:
                             max_length = 0
                             try:
@@ -3599,6 +3657,7 @@ if st.session_state.seccion_activa == "consolidado":
                             st.dataframe(df_tasas, use_container_width=True)
 
     else:
+        st.session_state.total_ingresos_consolidado = 0.0
         st.markdown("""
         ### 👋 Conciliador Bancario Inteligente Multibanco
     
