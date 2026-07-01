@@ -671,7 +671,9 @@ def es_comision(texto, proveedor=None):
         "com pago otras ctas",
         "com pago otr bcos",
         "comis",
-        "comis. cr.i"
+        "comis. cr.i",
+        "emision edo",
+        "retencion de impuesto"
     ]
     for patron in palabras_comision_bancaria:
         if patron in texto:
@@ -1153,29 +1155,49 @@ def convertir_venezuela_a_formato_mercantil(df):
 
 def convertir_a_formato_mercantil(df, banco):
     datos_convertidos = []
-    # Normalizar columnas del dataframe a mayúsculas para evitar problemas de casing
     df_temp = df.copy()
-    df_temp.columns = [str(c).strip().upper() for c in df_temp.columns]
     
-    for idx, fila in df_temp.iterrows():
-        try:
-            fecha = fila.get("FECHA", "")
-            if pd.isna(fecha): continue
-            if isinstance(fecha, (pd.Timestamp, datetime)):
-                fecha_str = fecha.strftime("%d/%m/%Y")
-            else:
-                fecha_str = str(fecha)
-            
-            tipo = fila.get("TIPO", "") or ""
-            descripcion = fila.get("DESCRIPCION", "") or ""
-            referencia = fila.get("REFERENCIA", "") or ""
-            monto = fila.get("MONTO", 0) or 0
-            es_comision_flag = bool(fila.get("ES_COMISION", False))
-            
-            fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", es_comision_flag]
-            datos_convertidos.append(fila_convertida)
-        except:
-            continue
+    # Si es Mercantil o no hay columnas de texto esperadas, mapeamos por índice
+    if banco == "mercantil" or "FECHA" not in [str(c).strip().upper() for c in df_temp.columns]:
+        for idx, fila in df_temp.iterrows():
+            try:
+                if len(fila) < 8: continue
+                fecha = fila.iloc[3]
+                if pd.isna(fecha): continue
+                fecha_str = str(fecha).strip().replace(".0", "")
+                
+                tipo = str(fila.iloc[5]).strip()
+                descripcion = str(fila.iloc[6]).strip()
+                referencia = str(fila.iloc[4]).strip()
+                monto = fila.iloc[7]
+                es_comision_flag = bool(fila.iloc[9]) if len(fila) > 9 else False
+                
+                fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", es_comision_flag]
+                datos_convertidos.append(fila_convertida)
+            except:
+                continue
+    else:
+        df_temp.columns = [str(c).strip().upper() for c in df_temp.columns]
+        for idx, fila in df_temp.iterrows():
+            try:
+                fecha = fila.get("FECHA", "")
+                if pd.isna(fecha): continue
+                if isinstance(fecha, (pd.Timestamp, datetime)):
+                    fecha_str = fecha.strftime("%d/%m/%Y")
+                else:
+                    fecha_str = str(fecha)
+                
+                tipo = fila.get("TIPO", "") or ""
+                descripcion = fila.get("DESCRIPCION", "") or ""
+                referencia = fila.get("REFERENCIA", "") or ""
+                monto = fila.get("MONTO", 0) or 0
+                es_comision_flag = bool(fila.get("ES_COMISION", False))
+                
+                fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", es_comision_flag]
+                datos_convertidos.append(fila_convertida)
+            except:
+                continue
+                
     df_convertido = pd.DataFrame(datos_convertidos)
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
@@ -1581,7 +1603,9 @@ def mono_es_comision(texto, proveedor=None):
         "com pago otras ctas",
         "com pago otr bcos",
         "comis",
-        "comis. cr.i"
+        "comis. cr.i",
+        "emision edo",
+        "retencion de impuesto"
     ]
     
     # Verificar si coincide con alguna comisión bancaria
@@ -2769,7 +2793,9 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
                     "CARGO BANCARIO",
                     "MANTENIMIENTO DE CUENTA",
-                    "COMISION POR TRANSFERENCIA"
+                    "COMISION POR TRANSFERENCIA",
+                    "EMISION EDO",
+                    "RETENCION DE IMPUESTO"
                 ]
                 
                 for patron in patrones_comision_mercantil:
