@@ -539,7 +539,7 @@ def detectar_banco_por_contenido(archivo):
         try:
             df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
             texto = " ".join(df_temp.astype(str).values.flatten()).upper()
-            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto:
+            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 archivo.seek(pos)
                 return "bancamiga"
             elif "BANESCO" in texto:
@@ -572,7 +572,7 @@ def detectar_banco_por_nombre(nombre_archivo):
     nombre = nombre_archivo.upper()
     if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
-    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre:
+    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
         return "bancamiga"
     elif "BANESCO" in nombre or re.match(r"^J\d+", nombre_archivo):
         return "banesco"
@@ -1509,7 +1509,7 @@ def mono_detectar_banco_por_contenido(archivo):
             texto = " ".join(df_temp.astype(str).values.flatten()).upper()
             
             # Detectar por contenido
-            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto:
+            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 archivo.seek(pos)
                 return "bancamiga"
             elif "BANESCO" in texto:
@@ -1546,7 +1546,7 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
 
     if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
-    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre:
+    elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
         return "bancamiga"
     elif "BANPLUS" in nombre:
         return "banplus"
@@ -2454,8 +2454,8 @@ def mono_procesar_bancamiga(df):
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
     tasas_bcv_local = {
-        "01/07/2026": 633.3644,
-        "02/07/2026": 639.7029,
+        "01/06/2026": 554.4258,
+        "02/06/2026": 557.9741,
         "03/06/2026": 558.6436,
         "04/06/2026": 560.3753,
         "05/06/2026": 563.2892,
