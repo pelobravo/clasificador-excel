@@ -153,9 +153,11 @@ def formato_venezolano(valor):
     except:
         return "0,00"
 
-def obtener_tasa_bcv():
-    """Obtiene la tasa del día de forma segura"""
-    tasa = obtener_tasa_por_fecha(date.today())
+def obtener_tasa_bcv(fecha=None, usar_api=False):
+    """Obtiene la tasa de la fecha especificada de forma segura"""
+    if fecha is None:
+        fecha = date.today()
+    tasa = obtener_tasa_por_fecha(fecha, usar_api)
     if tasa is None:
         # Intentar obtener la tasa más reciente disponible en nuestro diccionario local
         tasa = 623.0223  # Fallback tasa del 30/06/2026
@@ -3354,7 +3356,7 @@ if st.session_state.seccion_activa == "consolidado":
     moneda_kpi = "USD" if st.session_state.get("selector_moneda_kpis", "Dólares ($)") == "Dólares ($)" else "VES"
 
     # Renderizado de KPIs
-    tasa_dia = obtener_tasa_bcv()
+    tasa_dia = obtener_tasa_bcv(fecha_fin, usar_api)
     
     # Efectivo y Binance se ingresan en USD, los convertimos a VES usando la tasa del día
     st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0) * tasa_dia
