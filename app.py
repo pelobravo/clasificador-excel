@@ -1735,6 +1735,8 @@ def mono_es_comision(texto, proveedor=None):
         "servicio sms",
         "servicio sms plus",
         "sms plus",
+        "domiciliacion j412438905",
+        "distribuidora global",
         "emision edo",
         "retencion de impuesto",
         "com. trf",
