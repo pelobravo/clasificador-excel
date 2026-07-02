@@ -677,6 +677,12 @@ def es_comision(texto, proveedor=None):
         "com pago otr bcos",
         "comis",
         "comis. cr.i",
+        "sms",
+        "servicio sms",
+        "servicio sms plus",
+        "sms plus",
+        "domiciliacion j412438905",
+        "distribuidora global",
         "emision edo",
         "retencion de impuesto",
         "com. trf",
@@ -1384,7 +1390,8 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISION X PAGO DE NOMINAS", "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
                     "CARGO BANCARIO", "MANTENIMIENTO DE CUENTA", "COMISION BANCARIA", "COMISIÓN BANCARIA",
                     "CARGO POR SERVICIO", "CARGO POR TRANSACCION", "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION X PAGO DE NOMINAS MB"
+                    "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
+                    "DOMICILIACION"
                 ]
                 if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
                     es_comision_banco = True
@@ -2988,6 +2995,30 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     st.write(f"🔍 Comisión Bancamiga detectada: {descripcion} - Monto: {monto_bs}")
                 
                 if es_comision_bancamiga:
+                    comisiones.append(registro)
+                    continue
+
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA VENEZUELA - DETECCIÓN DIRECTA
+            # =========================================================
+            es_comision_bdv = False
+
+            if banco == "venezuela":
+                descripcion_upper = descripcion.upper()
+                patrones_bdv = [
+                    "COM PAGO OTRAS CTAS", "COMISION PAGO A PROVEEDORES", "COM PAGO OTR BCOS",
+                    "COM PAGO OTRAS CTAS JUR NAT", "COM PAGO OTRAS CTAS JUR JUR", "COMISION POR TRANSFERENCIA",
+                    "COMISION PAGO MOVIL", "COMISIÓN PAGO MOVIL", "COMISION X PAGO DE NOMINA",
+                    "COMISION X PAGO DE NOMINAS", "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                    "CARGO BANCARIO", "MANTENIMIENTO DE CUENTA", "COMISION BANCARIA", "COMISIÓN BANCARIA",
+                    "CARGO POR SERVICIO", "CARGO POR TRANSACCION", "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
+                    "DOMICILIACION"
+                ]
+                if any(p in descripcion_upper for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in descripcion_upper):
+                    es_comision_bdv = True
+
+                if es_comision_bdv:
                     comisiones.append(registro)
                     continue
 
