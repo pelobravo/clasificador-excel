@@ -1111,10 +1111,8 @@ def procesar_banplus(df):
             df.loc[mask, "FECHA"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
         df = df[df["FECHA"].notna()]
         
-        df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "DEBITO" in df.columns else "0"
-        df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
-        df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "CREDITO" in df.columns else "0"
-        df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+        df["DEBITO"] = df["DEBITO"].apply(mono_limpiar_monto_banplus) if "DEBITO" in df.columns else 0.0
+        df["CREDITO"] = df["CREDITO"].apply(mono_limpiar_monto_banplus) if "CREDITO" in df.columns else 0.0
         
         df["MONTO"] = df["CREDITO"] - df["DEBITO"]
         df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
@@ -1124,7 +1122,7 @@ def procesar_banplus(df):
         else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
         if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
         else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi|sms|servicio sms|sms plus", case=False, na=False)
         df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         st.success(f"✅ BanPlus OK: {len(df_resultado)} movimientos")
         return df_resultado
@@ -1613,6 +1611,45 @@ def mono_convertir_monto(valor):
     except Exception:
         return None
 
+def mono_limpiar_monto_banplus(valor):
+    if valor is None or pd.isna(valor):
+        return 0.0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    
+    valor_str = str(valor).strip()
+    if not valor_str:
+        return 0.0
+    
+    valor_str = valor_str.replace('$', '').replace('Bs.', '').replace('Bs', '').replace(' ', '').strip()
+    
+    try:
+        return float(valor_str)
+    except ValueError:
+        pass
+    
+    has_comma = ',' in valor_str
+    has_dot = '.' in valor_str
+    
+    if has_comma and has_dot:
+        pos_comma = valor_str.rfind(',')
+        pos_dot = valor_str.rfind('.')
+        if pos_dot > pos_comma:
+            valor_limpio = valor_str.replace(',', '')
+        else:
+            valor_limpio = valor_str.replace('.', '').replace(',', '.')
+    elif has_comma:
+        valor_limpio = valor_str.replace(',', '.')
+    elif has_dot:
+        valor_limpio = valor_str
+    else:
+        valor_limpio = valor_str
+        
+    try:
+        return float(valor_limpio)
+    except ValueError:
+        return 0.0
+
 # =========================================================
 # CALCULAR USD SEGÚN TASA
 # =========================================================
@@ -1694,6 +1731,10 @@ def mono_es_comision(texto, proveedor=None):
         "com pago otr bcos",
         "comis",
         "comis. cr.i",
+        "sms",
+        "servicio sms",
+        "servicio sms plus",
+        "sms plus",
         "emision edo",
         "retencion de impuesto",
         "com. trf",
@@ -2797,9 +2838,7 @@ def mono_procesar_banplus(df):
         # Reemplazar valores vacíos o nulos en Débito y Crédito
         for col in ["DEBITO", "CREDITO"]:
             if col in df.columns:
-                df[col] = df[col].astype(str).str.strip()
-                df[col] = df[col].str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+                df[col] = df[col].apply(mono_limpiar_monto_banplus).fillna(0.0)
                 
         datos_normalizados = []
         for idx, fila in df.iterrows():
