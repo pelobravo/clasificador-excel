@@ -1033,12 +1033,16 @@ def procesar_bancamiga(df):
             df = df.rename(columns=rename_map)
             
         if "FECHA" not in df.columns: return pd.DataFrame()
-        df["FECHA"] = df["FECHA"].astype(str).str.strip()
-        df = df[~df["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
-        df["FECHA"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
-        mask = df["FECHA"].isna()
+        # Filtrar filas que no son movimientos
+        fechas_str_col = df["FECHA"].astype(str).str.strip()
+        df = df[~fechas_str_col.str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
+        
+        # Convertir fechas de manera robusta
+        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        mask = df["FECHA_DT"].isna()
         if mask.any():
-            df.loc[mask, "FECHA"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
+            df.loc[mask, "FECHA_DT"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+        df["FECHA"] = df["FECHA_DT"]
         df = df[df["FECHA"].notna()]
         
         df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "DEBITO" in df.columns else "0"
@@ -2350,30 +2354,23 @@ def mono_procesar_bancamiga(df):
             st.error("❌ No se encontró columna FECHA en el archivo Bancamiga.")
             return pd.DataFrame()
         
-        # 🔥 PROCESAR FECHAS DE BANCAMIGA (22/6/2026 o 22/06/2026)
-        df["FECHA"] = df["FECHA"].astype(str).str.strip()
-        
-        # Quitar filas que no son movimientos
+        # 🔥 PROCESAR FECHAS DE BANCAMIGA DE MANERA ROBUSTA
+        # Filtrar filas que no son movimientos
+        fechas_str_col = df["FECHA"].astype(str).str.strip()
         df = df[
-            ~df["FECHA"].str.contains(
+            ~fechas_str_col.str.contains(
                 "FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO",
                 case=False,
                 na=False
             )
         ]
-        
-        # Convertir fechas DD/MM/YYYY
-        df["FECHA"] = pd.to_datetime(
-            df["FECHA"],
-            format="%d/%m/%Y",
-            errors="coerce"
-        )
-        
-        # Si alguna viene sin cero (22/6/2026), intentar conversión automática
-        mask = df["FECHA"].isna()
+
+        # Convertir fechas de manera robusta
+        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        mask = df["FECHA_DT"].isna()
         if mask.any():
-            df.loc[mask, "FECHA"] = pd.to_datetime(
-                df.loc[mask, "FECHA"].astype(str),
+            df.loc[mask, "FECHA_DT"] = pd.to_datetime(
+                df.loc[mask, "FECHA"].astype(str).str.strip(),
                 dayfirst=True,
                 errors="coerce"
             )
