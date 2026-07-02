@@ -419,6 +419,28 @@ def preparar_df_con_encabezado_dinamico(df_raw):
         df_clean = df_clean.iloc[idx_header + 1:].reset_index(drop=True)
     return df_clean
 
+def obtener_saldo_final_banplus(df_raw):
+    """Extrae el saldo de Banplus buscando 'Saldo Total' al inicio del archivo"""
+    try:
+        df_temp = df_raw.copy()
+        for idx in range(min(15, len(df_temp))):
+            for col_idx in range(df_temp.shape[1]):
+                val_str = str(df_temp.iloc[idx, col_idx]).strip().lower()
+                if "saldo total" in val_str:
+                    for r_col in range(col_idx + 1, df_temp.shape[1]):
+                        val_saldo = df_temp.iloc[idx, r_col]
+                        val_clean = convertir_monto(val_saldo)
+                        if val_clean is not None and val_clean > 0:
+                            return val_clean
+                    if df_temp.shape[1] > 5:
+                        val_saldo = df_temp.iloc[idx, 5]
+                        val_clean = convertir_monto(val_saldo)
+                        if val_clean is not None:
+                            return val_clean
+    except Exception as e:
+        st.warning(f"No se pudo extraer el saldo de Banplus: {e}")
+    return 0.0
+
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
     if banco == "banesco":
@@ -433,6 +455,8 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
         return obtener_saldo_final_tesoro(df_raw)
     elif banco == "bancamiga":
         return obtener_saldo_final_bancamiga(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
+    elif banco == "banplus":
+        return obtener_saldo_final_banplus(df_raw) or buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     else:
         return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
 
