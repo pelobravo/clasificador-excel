@@ -4397,7 +4397,10 @@ else:
                                 "CARGO POR SERVICIO",
                                 "CARGO POR TRANSACCION",
                                 "COMISION PAGO MOVIL COMERCIAL",
-                                "COMISION X PAGO DE NOMINAS MB"
+                                "COMISION X PAGO DE NOMINAS MB",
+                                "DOMICILIACION J412438905",
+                                "DISTRIBUIDORA GLOBAL",
+                                "DOMICILIACION"
                             ]
                         
                             # Verificar si la descripción coincide con alguna comisión
