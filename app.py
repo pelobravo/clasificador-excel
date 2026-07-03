@@ -1530,49 +1530,51 @@ def leer_excel_con_encabezados(archivo):
 def mono_detectar_banco_por_contenido(archivo):
     """
     Detecta el banco leyendo el contenido del archivo, no solo el nombre.
+    Soporta formatos binarios de Excel, HTML o texto de forma robusta.
     """
     try:
         # Guardar la posición actual
         pos = archivo.tell()
         archivo.seek(0)
         
-        # Leer las primeras líneas para detectar el banco
-        try:
-            # Intentar leer con pandas
-            df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
-            # Convertir todo a string para buscar
-            texto = " ".join(df_temp.astype(str).values.flatten()).upper()
+        # Leer usando la función robusta mono_leer_excel_sin_encabezados
+        df_temp = mono_leer_excel_sin_encabezados(archivo)
+        
+        if df_temp is not None and not df_temp.empty:
+            # Convertir las primeras 40 filas a string para buscar
+            df_sub = df_temp.head(40)
+            texto = " ".join(df_sub.astype(str).values.flatten()).upper()
+            
+            # Restablecer la posición del archivo
+            archivo.seek(pos)
             
             # Detectar por contenido
             if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
-                archivo.seek(pos)
                 return "bancamiga"
             elif "BANESCO" in texto:
-                archivo.seek(pos)
                 return "banesco"
-            elif "PROVINCIAL" in texto:
-                archivo.seek(pos)
+            elif "PROVINCIAL" in texto or "BBVA" in texto or "OPERACIÓN" in texto or "F. VALOR" in texto or "F.OPERACIÓN" in texto:
                 return "provincial"
             elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
-                archivo.seek(pos)
                 return "venezuela"
-            elif "BNC" in texto:
-                archivo.seek(pos)
+            elif "BNC" in texto or "BANCO NACIONAL DE CREDITO" in texto:
                 return "bnc"
+            elif "BANPLUS" in texto or "BAN PLUS" in texto:
+                return "banplus"
             elif "MERCANTIL" in texto:
-                archivo.seek(pos)
                 return "mercantil"
             elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
-                archivo.seek(pos)
                 return "tesoro"
-        except Exception as e:
-            pass
-        
-        # Si no se detectó por contenido, usar el nombre como fallback
+                
+        # Restablecer si no se detectó nada
         archivo.seek(pos)
         return None
         
     except Exception as e:
+        try:
+            archivo.seek(pos)
+        except Exception:
+            pass
         return None
 
 def mono_detectar_banco_por_nombre(nombre_archivo):
