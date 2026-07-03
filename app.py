@@ -1543,7 +1543,7 @@ def mono_detectar_banco_por_contenido(archivo):
         if df_temp is not None and not df_temp.empty:
             # Convertir las primeras 40 filas a string para buscar
             df_sub = df_temp.head(40)
-            texto = " ".join(df_sub.astype(str).values.flatten()).upper()
+            texto = " ".join([str(val) for val in df_sub.values.flatten() if pd.notna(val)]).upper()
             
             # Restablecer la posición del archivo
             archivo.seek(pos)
