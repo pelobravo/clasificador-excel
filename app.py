@@ -1579,6 +1579,28 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
     """Detecta el banco por el nombre del archivo (fallback)"""
     nombre = nombre_archivo.upper()
 
+    # Detectar por número de cuenta en el nombre (20 dígitos continuos o separados)
+    clean_name = re.sub(r'[\s\-_]', '', nombre_archivo)
+    match_banco = re.search(r'(0102|0105|0108|0134|0163|0172|0174|0191)\d{16}', clean_name)
+    if match_banco:
+        codigo = match_banco.group(1)
+        if codigo == "0102":
+            return "venezuela"
+        elif codigo == "0105":
+            return "mercantil"
+        elif codigo == "0108":
+            return "provincial"
+        elif codigo == "0134":
+            return "banesco"
+        elif codigo == "0163":
+            return "tesoro"
+        elif codigo == "0172":
+            return "bancamiga"
+        elif codigo == "0174":
+            return "banplus"
+        elif codigo == "0191":
+            return "bnc"
+
     if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
@@ -2527,9 +2549,9 @@ def mono_procesar_bancamiga(df):
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
     tasas_bcv_local = {
-        "01/07/2026": 633.3644,
-        "02/07/2026": 639.7029,
-        "03/07/2026": 652.9726,
+        "01/06/2026": 554.4258,
+        "02/06/2026": 557.9741,
+        "03/06/2026": 558.6436,
         "04/06/2026": 560.3753,
         "05/06/2026": 563.2892,
         "06/06/2026": 567.6828,
