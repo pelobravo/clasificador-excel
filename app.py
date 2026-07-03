@@ -1460,7 +1460,7 @@ def mono_leer_excel_sin_encabezados(archivo):
                 return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
             except Exception as e:
                 # Si falla, intentar leer como HTML o texto
-                st.warning(f"⚠️ Error leyendo como Excel, intentando como HTML: {str(e)}")
+                print(f"[Reader Warning] Error leyendo como Excel, intentando como HTML: {str(e)}")
                 
                 archivo.seek(0)
                 
