@@ -374,6 +374,8 @@ def obtener_saldo_final_columna_derecha(df_raw):
 def obtener_saldo_final_bancamiga(df_raw):
     """Busca la columna de saldo en Bancamiga y extrae el último valor numérico"""
     try:
+        if isinstance(df_raw.columns, pd.MultiIndex):
+            df_raw.columns = df_raw.columns.get_level_values(-1)
         encabezado_idx = None
         for i in range(min(20, len(df_raw))):
             fila = df_raw.iloc[i].fillna("").astype(str)
@@ -1031,6 +1033,8 @@ def procesar_tesoro(df):
 def procesar_bancamiga(df):
     st.info("🔍 Procesando archivo de Bancamiga...")
     try:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(-1)
         columnas = [str(c).strip().upper() for c in df.columns]
         if "FECHA" in columnas and "REFERENCIA" in columnas:
             rename_map = {
@@ -1077,10 +1081,16 @@ def procesar_bancamiga(df):
         df["FECHA"] = df["FECHA_DT"]
         df = df[df["FECHA"].notna()]
         
-        df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "DEBITO" in df.columns else "0"
-        df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
-        df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False) if "CREDITO" in df.columns else "0"
-        df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+        def limpiar_monto(val):
+            val_str = str(val).strip().replace(" ", "")
+            if not val_str or val_str == "nan":
+                return 0.0
+            if "," in val_str:
+                val_str = val_str.replace(".", "").replace(",", ".")
+            return pd.to_numeric(val_str, errors="coerce")
+
+        df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0) if "DEBITO" in df.columns else 0.0
+        df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0) if "CREDITO" in df.columns else 0.0
         
         df["MONTO"] = df["CREDITO"] - df["DEBITO"]
         df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
@@ -2363,6 +2373,8 @@ def mono_procesar_bancamiga(df):
     st.info("🔍 Procesando archivo de Bancamiga...")
     
     try:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(-1)
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
         st.write(f"- Número de filas: {len(df)}")
@@ -2478,21 +2490,23 @@ def mono_procesar_bancamiga(df):
         df = df[df["FECHA"].notna()]
         
         # Procesar débito y crédito
+        def limpiar_monto(val):
+            val_str = str(val).strip().replace(" ", "")
+            if not val_str or val_str == "nan":
+                return 0.0
+            if "," in val_str:
+                val_str = val_str.replace(".", "").replace(",", ".")
+            return pd.to_numeric(val_str, errors="coerce")
+
         if "DEBITO" in df.columns:
-            df["DEBITO"] = df["DEBITO"].astype(str).str.replace(" ", "", regex=False)
-            df["DEBITO"] = df["DEBITO"].str.replace(".", "", regex=False)
-            df["DEBITO"] = df["DEBITO"].str.replace(",", ".", regex=False)
-            df["DEBITO"] = pd.to_numeric(df["DEBITO"], errors="coerce").fillna(0)
+            df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0)
         else:
-            df["DEBITO"] = 0
+            df["DEBITO"] = 0.0
         
         if "CREDITO" in df.columns:
-            df["CREDITO"] = df["CREDITO"].astype(str).str.replace(" ", "", regex=False)
-            df["CREDITO"] = df["CREDITO"].str.replace(".", "", regex=False)
-            df["CREDITO"] = df["CREDITO"].str.replace(",", ".", regex=False)
-            df["CREDITO"] = pd.to_numeric(df["CREDITO"], errors="coerce").fillna(0)
+            df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0)
         else:
-            df["CREDITO"] = 0
+            df["CREDITO"] = 0.0
         
         # Determinar tipo y monto
         df["MONTO"] = df["CREDITO"] - df["DEBITO"]
@@ -2551,12 +2565,12 @@ def mono_procesar_bancamiga(df):
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
     tasas_bcv_local = {
-        "01/07/2026": 633.3644,
-        "02/07/2026": 639.7029,
-        "03/07/2026": 652.9726,
-        "04/07/2026": 667.0500,
-        "05/07/2026": 667.0500,
-        "06/07/2026": 667.0500,
+        "01/06/2026": 554.4258,
+        "02/06/2026": 557.9741,
+        "03/06/2026": 558.6436,
+        "04/06/2026": 560.3753,
+        "05/06/2026": 563.2892,
+        "06/06/2026": 567.6828,
         "07/06/2026": 567.6828,
         "08/06/2026": 567.6828,
         "09/06/2026": 567.6828,
@@ -3641,7 +3655,10 @@ if st.session_state.seccion_activa == "consolidado":
                         df_raw = pd.read_excel(arch, header=None)
                     except Exception:
                         arch.seek(0)
-                        df_raw = pd.read_html(arch)[0]
+                        df_raw = pd.read_html(arch, decimal=',', thousands='.')[0]
+                
+                if isinstance(df_raw.columns, pd.MultiIndex):
+                    df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
                 st.session_state.saldo_bancamiga += saldo_arch
@@ -4261,7 +4278,10 @@ else:
                         except Exception:
                             # Si realmente es HTML disfrazado de .xls
                             archivo.seek(0)
-                            df_raw = pd.read_html(archivo)[0]
+                            df_raw = pd.read_html(archivo, decimal=',', thousands='.')[0]
+                    
+                    if isinstance(df_raw.columns, pd.MultiIndex):
+                        df_raw.columns = df_raw.columns.get_level_values(-1)
                 
                     df_normalizado = mono_procesar_bancamiga(df_raw)
                     if df_normalizado.empty:
