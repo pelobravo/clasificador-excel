@@ -858,7 +858,16 @@ def procesar_banesco(df):
             if col not in df.columns:
                 st.error(f"No existe columna: {col}")
                 return pd.DataFrame()
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        # Convertir fechas de manera robusta
+        def parse_banesco_date(val):
+            val_str = str(val).strip()
+            if not val_str or val_str == "nan":
+                return pd.NaT
+            if len(val_str) >= 5 and val_str[:4].isdigit() and val_str[4] in ('/', '-'):
+                return pd.to_datetime(val_str, dayfirst=False, errors="coerce")
+            return pd.to_datetime(val_str, dayfirst=True, errors="coerce")
+
+        df["FECHA"] = df["FECHA"].apply(parse_banesco_date)
         df = df[df["FECHA"].notna()]
         df["TIPO"] = df["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
         df["MONTO"] = (df["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
@@ -2031,7 +2040,16 @@ def mono_procesar_banesco(df):
                 st.error(f"No existe columna: {col}")
                 return pd.DataFrame()
 
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        # Convertir fechas de manera robusta
+        def parse_banesco_date(val):
+            val_str = str(val).strip()
+            if not val_str or val_str == "nan":
+                return pd.NaT
+            if len(val_str) >= 5 and val_str[:4].isdigit() and val_str[4] in ('/', '-'):
+                return pd.to_datetime(val_str, dayfirst=False, errors="coerce")
+            return pd.to_datetime(val_str, dayfirst=True, errors="coerce")
+
+        df["FECHA"] = df["FECHA"].apply(parse_banesco_date)
         df = df[df["FECHA"].notna()]
 
         df["TIPO"] = df["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
