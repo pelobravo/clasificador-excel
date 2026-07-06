@@ -1366,9 +1366,9 @@ def procesar_archivo(df, usar_api=False, banco=""):
             fecha_raw = str(fila[3]).strip()
             if fecha_raw.lower() == "nan": continue
             fecha_raw = fecha_raw.replace(".0", "")
-            if len(fecha_raw) == 7:
+            if len(fecha_raw) == 7 and fecha_raw.isdigit():
                 fecha = f"0{fecha_raw[0]}/{fecha_raw[1:3]}/{fecha_raw[3:]}"
-            elif len(fecha_raw) == 8:
+            elif len(fecha_raw) == 8 and fecha_raw.isdigit():
                 fecha = f"{fecha_raw[0:2]}/{fecha_raw[2:4]}/{fecha_raw[4:]}"
             else:
                 fecha = fecha_raw
@@ -2976,9 +2976,9 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 continue
 
             fecha_raw = fecha_raw.replace(".0", "")
-            if len(fecha_raw) == 7:
+            if len(fecha_raw) == 7 and fecha_raw.isdigit():
                 fecha = f"0{fecha_raw[0]}/{fecha_raw[1:3]}/{fecha_raw[3:]}"
-            elif len(fecha_raw) == 8:
+            elif len(fecha_raw) == 8 and fecha_raw.isdigit():
                 fecha = f"{fecha_raw[0:2]}/{fecha_raw[2:4]}/{fecha_raw[4:]}"
             else:
                 fecha = fecha_raw
