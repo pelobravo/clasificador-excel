@@ -1560,9 +1560,18 @@ def mono_detectar_banco_por_contenido(archivo):
         df_temp = mono_leer_excel_sin_encabezados(archivo)
         
         if df_temp is not None and not df_temp.empty:
+            # Incluir encabezados/columnas de forma robusta (soporta MultiIndex)
+            columnas_texto = ""
+            if isinstance(df_temp.columns, pd.MultiIndex):
+                for lvl in df_temp.columns.levels:
+                    columnas_texto += " " + " ".join([str(x) for x in lvl if pd.notna(x)])
+            else:
+                columnas_texto = " ".join([str(x) for x in df_temp.columns if pd.notna(x)])
+            
             # Convertir las primeras 40 filas a string para buscar
             df_sub = df_temp.head(40)
-            texto = " ".join([str(val) for val in df_sub.values.flatten() if pd.notna(val)]).upper()
+            texto_valores = " ".join([str(val) for val in df_sub.values.flatten() if pd.notna(val)])
+            texto = (columnas_texto + " " + texto_valores).upper()
             
             # Restablecer la posición del archivo
             archivo.seek(pos)
