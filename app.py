@@ -36,6 +36,7 @@ if "saldo_provincial" not in st.session_state: st.session_state.saldo_provincial
 if "saldo_bancamiga" not in st.session_state: st.session_state.saldo_bancamiga = 0.0
 if "saldo_tesoro" not in st.session_state: st.session_state.saldo_tesoro = 0.0
 if "saldo_banplus" not in st.session_state: st.session_state.saldo_banplus = 0.0
+if "saldo_activo" not in st.session_state: st.session_state.saldo_activo = 0.0
 if "saldo_efectivo" not in st.session_state: st.session_state.saldo_efectivo = 0.0
 if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
@@ -445,6 +446,53 @@ def obtener_saldo_final_banplus(df_raw):
         st.warning(f"No se pudo extraer el saldo de Banplus: {e}")
     return 0.0
 
+def obtener_saldo_final_banco_activo(df_raw):
+    """
+    Extrae el saldo final de Banco Activo.
+    El saldo aparece en la columna SALDO (columna 7) en la última fila de movimientos.
+    """
+    try:
+        # Primero buscar por columna SALDO
+        df_temp = df_raw.copy()
+        
+        # Buscar encabezados
+        encabezado_idx = None
+        for i in range(min(30, len(df_temp))):
+            fila = df_temp.iloc[i]
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            if "FECHA" in texto_fila and "CONCEPTO" in texto_fila and "CREDITO" in texto_fila:
+                encabezado_idx = i
+                break
+        
+        if encabezado_idx is not None:
+            # Asignar encabezados
+            headers = df_temp.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            df_temp.columns = headers
+            df_temp = df_temp.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            
+            # Buscar columna SALDO
+            saldo_col_idx = None
+            for idx, col in enumerate(df_temp.columns):
+                if "SALDO" in str(col).upper():
+                    saldo_col_idx = idx
+                    break
+            
+            if saldo_col_idx is not None:
+                # Buscar el último valor no nulo en la columna saldo
+                saldos = df_temp.iloc[:, saldo_col_idx].dropna()
+                for val in reversed(saldos.values):
+                    val_clean = convertir_monto(val)
+                    if val_clean is not None and val_clean > 0:
+                        return val_clean
+        
+        # Fallback: buscar en texto
+        return buscar_saldo_en_texto(df_raw)
+        
+    except Exception as e:
+        st.warning(f"No se pudo extraer el saldo de Banco Activo: {e}")
+        return 0.0
+
 def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
     """Obtiene el saldo de un banco combinando extractores específicos y el escáner de texto"""
     if banco == "banesco":
@@ -461,6 +509,8 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
         return obtener_saldo_final_bancamiga(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     elif banco == "banplus":
         return obtener_saldo_final_banplus(df_raw) or buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
+    elif banco == "activo":
+        return obtener_saldo_final_banco_activo(df_raw) or buscar_saldo_en_texto(df_raw)
     else:
         return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
 
@@ -567,7 +617,10 @@ def detectar_banco_por_contenido(archivo):
         try:
             df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
             texto = " ".join(df_temp.astype(str).values.flatten()).upper()
-            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
+            if "BANCO ACTIVO" in texto:
+                archivo.seek(pos)
+                return "activo"
+            elif "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 archivo.seek(pos)
                 return "bancamiga"
             elif "BANESCO" in texto:
@@ -598,7 +651,9 @@ def detectar_banco_por_contenido(archivo):
 def detectar_banco_por_nombre(nombre_archivo):
     """Detecta el banco por el nombre del archivo (fallback)"""
     nombre = nombre_archivo.upper()
-    if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
+    if "ACTIVO" in nombre:
+        return "activo"
+    elif "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
         return "bancamiga"
@@ -1257,6 +1312,191 @@ def procesar_venezuela_simple(df):
         return pd.DataFrame()
 
 # =========================================================
+# 🔥 FUNCIÓN PARA PROCESAR BANCO ACTIVO
+# =========================================================
+
+def procesar_banco_activo(df):
+    """
+    Procesa archivo de Banco Activo con formato específico.
+    El archivo tiene columnas: Fecha | Fecha Valor | Concepto | # | Débito | Crédito | Saldo
+    """
+    st.info("🔍 Procesando archivo de Banco Activo...")
+    
+    try:
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df)}")
+        st.write(f"- Número de columnas: {len(df.columns)}")
+        
+        # Mostrar primeras filas para debug
+        st.write("👁️ **Primeras 15 filas del archivo:**")
+        st.dataframe(df.head(15))
+        
+        # Buscar encabezados
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i]
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            
+            # Buscar columnas que contengan "FECHA" y "CONCEPTO" y "CREDITO"
+            if "FECHA" in texto_fila and "CONCEPTO" in texto_fila and "CREDITO" in texto_fila:
+                encabezado_idx = i
+                break
+        
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo de Banco Activo.")
+            return pd.DataFrame()
+        
+        st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
+        
+        # Obtener los encabezados
+        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        st.write("📋 **Encabezados detectados:**", headers)
+        
+        # Limpiar y mapear encabezados
+        rename_map = {}
+        for col in headers:
+            col_clean = str(col).strip().upper()
+            if col_clean == "FECHA" or col_clean == "FECHA VALOR":
+                rename_map[col] = "FECHA"
+            elif col_clean == "CONCEPTO":
+                rename_map[col] = "DESCRIPCION"
+            elif col_clean == "#":
+                rename_map[col] = "NRO"
+            elif col_clean == "DÉBITO" or col_clean == "DEBITO":
+                rename_map[col] = "DEBITO"
+            elif col_clean == "CRÉDITO" or col_clean == "CREDITO":
+                rename_map[col] = "CREDITO"
+            elif col_clean == "SALDO":
+                rename_map[col] = "SALDO"
+        
+        st.write("📋 **Mapeo de columnas:**", rename_map)
+        
+        # Asignar encabezados al DataFrame
+        df.columns = headers
+        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        
+        # Renombrar columnas
+        df = df.rename(columns=rename_map)
+        
+        # Verificar columnas necesarias
+        if "FECHA" not in df.columns:
+            st.error("❌ No se encontró columna FECHA en el archivo de Banco Activo.")
+            return pd.DataFrame()
+        
+        # 🔥 PROCESAR FECHAS DE BANCO ACTIVO
+        # Filtrar filas que no son movimientos
+        fechas_str_col = df["FECHA"].astype(str).str.strip()
+        df = df[
+            ~fechas_str_col.str.contains(
+                "FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO|NÚMERO",
+                case=False,
+                na=False
+            )
+        ]
+        
+        # Convertir fechas (formato DD/MM/YYYY)
+        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
+        mask = df["FECHA_DT"].isna()
+        if mask.any():
+            df.loc[mask, "FECHA_DT"] = pd.to_datetime(
+                df.loc[mask, "FECHA"].astype(str).str.strip(),
+                dayfirst=True,
+                errors="coerce"
+            )
+        
+        df["FECHA"] = df["FECHA_DT"]
+        df = df[df["FECHA"].notna()]
+        
+        # Procesar débito y crédito
+        def limpiar_monto(val):
+            val_str = str(val).strip().replace(" ", "")
+            if not val_str or val_str == "nan":
+                return 0.0
+            # Limpiar formato venezolano (puntos como separadores de miles, coma decimal)
+            if "," in val_str:
+                val_str = val_str.replace(".", "").replace(",", ".")
+            return pd.to_numeric(val_str, errors="coerce")
+        
+        if "DEBITO" in df.columns:
+            df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0)
+        else:
+            df["DEBITO"] = 0.0
+        
+        if "CREDITO" in df.columns:
+            df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0)
+        else:
+            df["CREDITO"] = 0.0
+        
+        # Determinar tipo y monto
+        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
+        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df["MONTO"] = df["MONTO"].abs()
+        
+        # Eliminar filas con monto 0
+        df = df[df["MONTO"] > 0]
+        
+        # Asegurar que existe columna REFERENCIA
+        if "NRO" in df.columns:
+            df["REFERENCIA"] = df["NRO"].astype(str).str.strip()
+        else:
+            df["REFERENCIA"] = ""
+        
+        # Asegurar que existe columna DESCRIPCION
+        if "DESCRIPCION" not in df.columns:
+            df["DESCRIPCION"] = ""
+        else:
+            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        
+        # 🔥 DETECTAR COMISIONES DE BANCO ACTIVO
+        # Las comisiones suelen tener palabras clave como "CARGO", "MANTENIMIENTO", "COMISION"
+        palabras_comision = [
+            "CARGO POR MANTENIMIENTO",
+            "CARGO EMISION EDO DE CUENTA",
+            "CARGO SERVICIO SMS",
+            "COMISION",
+            "COMISIÓN",
+            "MANTENIMIENTO",
+            "SMS",
+            "EMISION EDO",
+            "CARGO POR"
+        ]
+        
+        df["ES_COMISION"] = df["DESCRIPCION"].str.contains('|'.join(palabras_comision), case=False, na=False)
+        
+        # También detectar comisiones por monto pequeño (típico de cargos bancarios)
+        mascara_monto_pequeno = df["MONTO"] < 1000
+        df.loc[mascara_monto_pequeno, "ES_COMISION"] = (
+            df.loc[mascara_monto_pequeno, "ES_COMISION"] | 
+            df.loc[mascara_monto_pequeno, "DESCRIPCION"].str.contains("CARGO|COMIS", case=False, na=False)
+        )
+        
+        # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
+        num_comisiones = df["ES_COMISION"].sum()
+        st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo de Banco Activo")
+        
+        # Mostrar las comisiones detectadas
+        if num_comisiones > 0:
+            st.write("📋 **Comisiones detectadas:**")
+            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+        
+        # Seleccionar solo las columnas necesarias
+        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        
+        # Mostrar resultados
+        st.success(f"✅ Banco Activo OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
+        
+        return df_resultado
+        
+    except Exception as e:
+        st.error(f"❌ Error procesando Banco Activo: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return pd.DataFrame()
+
+# =========================================================
 # CONVERTIDORES A FORMATO MERCANTIL
 # =========================================================
 
@@ -1416,6 +1656,19 @@ def procesar_archivo(df, usar_api=False, banco=""):
             es_comision_banco = False
             if banco == "provincial" and "COMIS" in texto: es_comision_banco = True
             elif banco == "bancamiga" and "COMISI" in texto: es_comision_banco = True
+            elif banco == "activo":
+                patrones_activo = [
+                    "CARGO POR MANTENIMIENTO",
+                    "CARGO EMISION EDO DE CUENTA",
+                    "CARGO SERVICIO SMS",
+                    "COMISION",
+                    "COMISIÓN",
+                    "MANTENIMIENTO",
+                    "SMS",
+                    "EMISION EDO"
+                ]
+                if any(p in texto for p in patrones_activo):
+                    es_comision_banco = True
             elif banco == "mercantil":
                 patrones = [
                     "OP.CRED.DIRT. CLTE-CLTE", "OP CRED DIRT CLTE CLTE", "COMISION PAGO MOVIL COMERCIAL",
@@ -1577,7 +1830,9 @@ def mono_detectar_banco_por_contenido(archivo):
             archivo.seek(pos)
             
             # Detectar por contenido
-            if "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
+            if "BANCO ACTIVO" in texto:
+                return "activo"
+            elif "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 return "bancamiga"
             elif "BANESCO" in texto:
                 return "banesco"
@@ -1611,7 +1866,7 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
 
     # Detectar por número de cuenta en el nombre (20 dígitos continuos o separados)
     clean_name = re.sub(r'[\s\-_]', '', nombre_archivo)
-    match_banco = re.search(r'(0102|0105|0108|0134|0163|0172|0174|0191)\d{16}', clean_name)
+    match_banco = re.search(r'(0102|0105|0108|0134|0138|0163|0172|0174|0191)\d{16}', clean_name)
     if match_banco:
         codigo = match_banco.group(1)
         if codigo == "0102":
@@ -1622,6 +1877,8 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
             return "provincial"
         elif codigo == "0134":
             return "banesco"
+        elif codigo == "0138":
+            return "activo"
         elif codigo == "0163":
             return "tesoro"
         elif codigo == "0172":
@@ -1631,7 +1888,9 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
         elif codigo == "0191":
             return "bnc"
 
-    if "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
+    if "ACTIVO" in nombre:
+        return "activo"
+    elif "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
         return "bancamiga"
@@ -3174,6 +3433,32 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     comisiones.append(registro)
                     continue
 
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA BANCO ACTIVO - DETECCIÓN DIRECTA
+            # =========================================================
+            es_comision_activo = False
+            
+            if banco == "activo":
+                descripcion_upper = descripcion.upper()
+                patrones_activo = [
+                    "CARGO POR MANTENIMIENTO",
+                    "CARGO EMISION EDO DE CUENTA",
+                    "CARGO SERVICIO SMS",
+                    "COMISION",
+                    "COMISIÓN",
+                    "MANTENIMIENTO",
+                    "SMS",
+                    "EMISION EDO"
+                ]
+                for patron in patrones_activo:
+                    if patron in descripcion_upper:
+                        es_comision_activo = True
+                        break
+                
+                if es_comision_activo:
+                    comisiones.append(registro)
+                    continue
+
             # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision
             proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
             if mono_es_comision(descripcion, proveedor):
@@ -3237,6 +3522,8 @@ archivo_mercantil = None
 archivo_venezuela = None
 archivo_provincial = None
 archivo_bancamiga = None
+archivo_banplus = None
+archivo_activo = None
 saldo_manual_tesoro = 0.0
 
 archivo = None
@@ -3318,6 +3605,14 @@ with st.sidebar:
                 type=["xlsx", "xls", "xlsm"],
                 accept_multiple_files=True,
                 key="uploader_banplus"
+            )
+
+        with st.expander("🏦 Banco Activo", expanded=False):
+            archivo_activo = st.file_uploader(
+                "Cargar Banco Activo",
+                type=["xlsx", "xls", "xlsm"],
+                accept_multiple_files=True,
+                key="uploader_activo"
             )
 
         with st.expander("🏦 Banco del Tesoro", expanded=False):
@@ -3403,6 +3698,7 @@ if st.session_state.seccion_activa == "consolidado":
     if not archivo_provincial: st.session_state.saldo_provincial = 0.0
     if not archivo_bancamiga: st.session_state.saldo_bancamiga = 0.0
     if not archivo_banplus: st.session_state.saldo_banplus = 0.0
+    if not archivo_activo: st.session_state.saldo_activo = 0.0
     st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
     st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0)
     st.session_state.saldo_binance = st.session_state.get("saldo_manual_binance", 0.0)
@@ -3431,7 +3727,7 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
-        st.session_state.saldo_banplus + 
+        st.session_state.saldo_banplus + st.session_state.saldo_activo +
         st.session_state.saldo_tesoro +
         st.session_state.saldo_efectivo +
         st.session_state.saldo_binance
@@ -3452,6 +3748,7 @@ if st.session_state.seccion_activa == "consolidado":
     if st.session_state.saldo_provincial > 0: bancos_con_saldo.append(f"Provincial: Bs. {formato_venezolano(st.session_state.saldo_provincial)}")
     if st.session_state.saldo_bancamiga > 0: bancos_con_saldo.append(f"Bancamiga: Bs. {formato_venezolano(st.session_state.saldo_bancamiga)}")
     if st.session_state.saldo_banplus > 0: bancos_con_saldo.append(f"BanPlus: Bs. {formato_venezolano(st.session_state.saldo_banplus)}")
+    if st.session_state.saldo_activo > 0: bancos_con_saldo.append(f"Banco Activo: Bs. {formato_venezolano(st.session_state.saldo_activo)}")
     if st.session_state.saldo_tesoro > 0: bancos_con_saldo.append(f"Tesoro: Bs. {formato_venezolano(st.session_state.saldo_tesoro)}")
     saldo_ef_usd = st.session_state.get("saldo_manual_efectivo", 0.0)
     if st.session_state.saldo_efectivo > 0: bancos_con_saldo.append(f"Efectivo: Bs. {formato_venezolano(st.session_state.saldo_efectivo)} (${saldo_ef_usd:,.2f})")
@@ -3736,6 +4033,41 @@ if st.session_state.seccion_activa == "consolidado":
     else:
         saldos_detalle_excel.append(("BanPlus", 0.0))
 
+    # 6.75. Banco Activo
+    if archivo_activo:
+        st.session_state.saldo_activo = 0.0
+        for idx, arch in enumerate(archivo_activo, 1):
+            try:
+                nombre = arch.name.lower()
+                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
+                else:
+                    try:
+                        df_raw = pd.read_excel(arch, header=None)
+                    except Exception:
+                        arch.seek(0)
+                        df_raw = pd.read_html(arch)[0]
+                
+                if isinstance(df_raw.columns, pd.MultiIndex):
+                    df_raw.columns = df_raw.columns.get_level_values(-1)
+            
+                saldo_arch = obtener_saldo_banco(df_raw, "activo")
+                st.session_state.saldo_activo += saldo_arch
+            
+                nombre_banco = f"Banco Activo - Cuenta {idx}" if len(archivo_activo) > 1 else "Banco Activo"
+                saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
+                df_normalizado = procesar_banco_activo(df_raw)
+                df_convertido = convertir_a_formato_mercantil(df_normalizado, "activo")
+                if not df_convertido.empty:
+                    list_df_convertidos.append(df_convertido)
+                    if "Activo" not in bancos_procesados:
+                        bancos_procesados.append("Activo")
+            except Exception as e:
+                st.error(f"❌ Error leyendo Banco Activo ({arch.name}): {e}")
+    else:
+        saldos_detalle_excel.append(("Banco Activo", 0.0))
+
     # 7. Tesoro (Manual)
     saldos_detalle_excel.append(("Banco del Tesoro", st.session_state.saldo_tesoro))
 
@@ -3755,7 +4087,7 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banesco + st.session_state.saldo_bnc + 
         st.session_state.saldo_mercantil + st.session_state.saldo_venezuela + 
         st.session_state.saldo_provincial + st.session_state.saldo_bancamiga + 
-        st.session_state.saldo_banplus + 
+        st.session_state.saldo_banplus + st.session_state.saldo_activo +
         st.session_state.saldo_tesoro +
         st.session_state.saldo_efectivo +
         st.session_state.saldo_binance
@@ -3989,6 +4321,7 @@ if st.session_state.seccion_activa == "consolidado":
                             ("Provincial", st.session_state.saldo_provincial),
                             ("Bancamiga", st.session_state.saldo_bancamiga),
                             ("BanPlus", st.session_state.saldo_banplus),
+                            ("Banco Activo", st.session_state.saldo_activo),
                             ("Banco del Tesoro", st.session_state.saldo_tesoro),
                             ("Banco Efectivo", st.session_state.saldo_efectivo),
                             ("Banco Binance", st.session_state.saldo_binance)
@@ -4364,6 +4697,20 @@ else:
                 df_raw = leer_excel_con_encabezados(archivo)
                 df_normalizado = mono_procesar_bnc(df_raw)
                 df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
+            
+            elif banco == "activo":
+                try:
+                    df_raw = mono_leer_excel_sin_encabezados(archivo)
+                    df_normalizado = procesar_banco_activo(df_raw)
+                    if df_normalizado.empty:
+                        st.error("No se pudieron procesar los datos de Banco Activo.")
+                        st.stop()
+                    df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
+                    # Guardar el saldo si es necesario
+                    st.session_state.saldo_activo = obtener_saldo_final_banco_activo(df_raw)
+                except Exception as e:
+                    st.error(f"Error leyendo Banco Activo: {str(e)}")
+                    st.stop()
             
             else:
                 df_raw = leer_excel_con_encabezados(archivo)
@@ -4769,7 +5116,7 @@ else:
         ### 👋 Clasificador Bancario Inteligente Multi-Banco
 
         ## FUNCIONES
-        ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga.
+        ✅ **Bancos soportados:** Mercantil, Banco de Venezuela, Banesco, Provincial, BNC, Tesoro, Bancamiga, BanPlus, Banco Activo.
         ✅ Clasifica automáticamente: Ingresos (NC, C, CREDITO, ABONO), Egresos (ND, D, DEBITO, DEBIT), Comisiones.
         ✅ **NUEVO:** Cruce inteligente con iPago usando REFERENCIA + DESCRIPCIÓN.
         ✅ **NUEVO:** Exporta con datos completos de iPago: Proveedor, Tipo de Egreso, Tipo de Pago.
