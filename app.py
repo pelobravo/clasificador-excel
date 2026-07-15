@@ -452,39 +452,19 @@ def obtener_saldo_final_banco_activo(df_raw):
     El saldo aparece en la columna SALDO (columna 7) en la última fila de movimientos.
     """
     try:
-        # Primero buscar por columna SALDO
-        df_temp = df_raw.copy()
+        # Saltar la primera fila (Número de Cuenta) y empezar desde la fila 1
+        df_datos = df_raw.iloc[1:].copy().reset_index(drop=True)
         
-        # Buscar encabezados
-        encabezado_idx = None
-        for i in range(min(30, len(df_temp))):
-            fila = df_temp.iloc[i]
-            fila_str = [str(val) for val in fila.tolist()]
-            texto_fila = " ".join(fila_str).upper()
-            if "FECHA" in texto_fila and "CONCEPTO" in texto_fila and "CREDITO" in texto_fila:
-                encabezado_idx = i
-                break
-        
-        if encabezado_idx is not None:
-            # Asignar encabezados
-            headers = df_temp.iloc[encabezado_idx].astype(str).str.strip().tolist()
-            df_temp.columns = headers
-            df_temp = df_temp.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        # Asignar nombres de columnas
+        if df_datos.shape[1] >= 7:
+            df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO"]
             
-            # Buscar columna SALDO
-            saldo_col_idx = None
-            for idx, col in enumerate(df_temp.columns):
-                if "SALDO" in str(col).upper():
-                    saldo_col_idx = idx
-                    break
-            
-            if saldo_col_idx is not None:
-                # Buscar el último valor no nulo en la columna saldo
-                saldos = df_temp.iloc[:, saldo_col_idx].dropna()
-                for val in reversed(saldos.values):
-                    val_clean = convertir_monto(val)
-                    if val_clean is not None and val_clean > 0:
-                        return val_clean
+            # Buscar el último valor no nulo en la columna SALDO
+            saldos = df_datos["SALDO"].dropna()
+            for val in reversed(saldos.values):
+                val_clean = convertir_monto(val)
+                if val_clean is not None and val_clean > 0:
+                    return val_clean
         
         # Fallback: buscar en texto
         return buscar_saldo_en_texto(df_raw)
@@ -617,9 +597,19 @@ def detectar_banco_por_contenido(archivo):
         try:
             df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
             texto = " ".join(df_temp.astype(str).values.flatten()).upper()
-            if "BANCO ACTIVO" in texto:
-                archivo.seek(pos)
-                return "activo"
+            # Buscar específicamente Banco Activo
+            if "BANCO ACTIVO" in texto or "0171" in texto or "NUMERO DE CUENTA" in texto:
+                # Verificar si tiene el formato de Banco Activo (fechas en columna 0, conceptos en columna 2)
+                if df_temp.shape[1] >= 7:
+                    # Intentar detectar el patrón de Banco Activo
+                    for i in range(min(10, len(df_temp))):
+                        fila = df_temp.iloc[i]
+                        if pd.notna(fila[0]) and pd.notna(fila[2]) and pd.notna(fila[6]):
+                            # Verificar si la columna 0 tiene formato de fecha
+                            fecha_str = str(fila[0]).strip()
+                            if re.match(r'\d{2}/\d{2}/\d{4}', fecha_str):
+                                archivo.seek(pos)
+                                return "activo"
             elif "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 archivo.seek(pos)
                 return "bancamiga"
@@ -641,6 +631,8 @@ def detectar_banco_por_contenido(archivo):
             elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
                 archivo.seek(pos)
                 return "tesoro"
+            archivo.seek(pos)
+            return None
         except Exception:
             pass
         archivo.seek(pos)
@@ -1312,13 +1304,14 @@ def procesar_venezuela_simple(df):
         return pd.DataFrame()
 
 # =========================================================
-# 🔥 FUNCIÓN PARA PROCESAR BANCO ACTIVO
+# 🔥 FUNCIÓN PARA PROCESAR BANCO ACTIVO - VERSIÓN CORREGIDA
 # =========================================================
 
 def procesar_banco_activo(df):
     """
     Procesa archivo de Banco Activo con formato específico.
-    El archivo tiene columnas: Fecha | Fecha Valor | Concepto | # | Débito | Crédito | Saldo
+    El archivo tiene formato: Número de Cuenta en primera fila, luego columnas:
+    Fecha | Fecha Valor | Concepto | # | Débito | Crédito | Saldo
     """
     st.info("🔍 Procesando archivo de Banco Activo...")
     
@@ -1332,122 +1325,73 @@ def procesar_banco_activo(df):
         st.write("👁️ **Primeras 15 filas del archivo:**")
         st.dataframe(df.head(15))
         
-        # Buscar encabezados
-        encabezado_idx = None
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i]
-            fila_str = [str(val) for val in fila.tolist()]
-            texto_fila = " ".join(fila_str).upper()
-            
-            # Buscar columnas que contengan "FECHA" y "CONCEPTO" y "CREDITO"
-            if "FECHA" in texto_fila and "CONCEPTO" in texto_fila and "CREDITO" in texto_fila:
-                encabezado_idx = i
-                break
+        # 🔥 NUEVO: El archivo tiene los encabezados en la fila 0 con "Número de Cuenta"
+        # Pero los datos están en las filas siguientes sin encabezados de columna
+        # Así que vamos a usar índices fijos: columna 0 = Fecha, 1 = Fecha Valor, 2 = Concepto, 3 = #, 4 = Débito, 5 = Crédito, 6 = Saldo
         
-        if encabezado_idx is None:
-            st.error("❌ No se encontró la fila de encabezados en el archivo de Banco Activo.")
+        # Verificar que tenemos suficientes columnas
+        if df.shape[1] < 7:
+            st.error("❌ El archivo no tiene el número esperado de columnas (7).")
             return pd.DataFrame()
         
-        st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
+        # Saltar la primera fila (Número de Cuenta) y empezar desde la fila 1
+        df_datos = df.iloc[1:].copy().reset_index(drop=True)
         
-        # Obtener los encabezados
-        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
-        st.write("📋 **Encabezados detectados:**", headers)
+        # Asignar nombres de columnas
+        df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO"]
         
-        # Limpiar y mapear encabezados
-        rename_map = {}
-        for col in headers:
-            col_clean = str(col).strip().upper()
-            if col_clean == "FECHA" or col_clean == "FECHA VALOR":
-                rename_map[col] = "FECHA"
-            elif col_clean == "CONCEPTO":
-                rename_map[col] = "DESCRIPCION"
-            elif col_clean == "#":
-                rename_map[col] = "NRO"
-            elif col_clean == "DÉBITO" or col_clean == "DEBITO":
-                rename_map[col] = "DEBITO"
-            elif col_clean == "CRÉDITO" or col_clean == "CREDITO":
-                rename_map[col] = "CREDITO"
-            elif col_clean == "SALDO":
-                rename_map[col] = "SALDO"
-        
-        st.write("📋 **Mapeo de columnas:**", rename_map)
-        
-        # Asignar encabezados al DataFrame
-        df.columns = headers
-        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
-        
-        # Renombrar columnas
-        df = df.rename(columns=rename_map)
-        
-        # Verificar columnas necesarias
-        if "FECHA" not in df.columns:
-            st.error("❌ No se encontró columna FECHA en el archivo de Banco Activo.")
-            return pd.DataFrame()
+        st.write("📋 **Estructura de datos asignada:**")
+        st.write(f"- Columnas: {df_datos.columns.tolist()}")
         
         # 🔥 PROCESAR FECHAS DE BANCO ACTIVO
-        # Filtrar filas que no son movimientos
-        fechas_str_col = df["FECHA"].astype(str).str.strip()
-        df = df[
-            ~fechas_str_col.str.contains(
-                "FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO|NÚMERO",
-                case=False,
-                na=False
-            )
-        ]
-        
         # Convertir fechas (formato DD/MM/YYYY)
-        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        mask = df["FECHA_DT"].isna()
-        if mask.any():
-            df.loc[mask, "FECHA_DT"] = pd.to_datetime(
-                df.loc[mask, "FECHA"].astype(str).str.strip(),
-                dayfirst=True,
-                errors="coerce"
-            )
+        def parse_fecha(val):
+            if pd.isna(val):
+                return pd.NaT
+            val_str = str(val).strip()
+            if not val_str:
+                return pd.NaT
+            # Intentar diferentes formatos
+            try:
+                return pd.to_datetime(val_str, format="%d/%m/%Y", errors="coerce")
+            except:
+                try:
+                    return pd.to_datetime(val_str, dayfirst=True, errors="coerce")
+                except:
+                    return pd.NaT
         
-        df["FECHA"] = df["FECHA_DT"]
-        df = df[df["FECHA"].notna()]
+        df_datos["FECHA_DT"] = df_datos["FECHA"].apply(parse_fecha)
+        df_datos = df_datos[df_datos["FECHA_DT"].notna()]
         
         # Procesar débito y crédito
         def limpiar_monto(val):
             val_str = str(val).strip().replace(" ", "")
-            if not val_str or val_str == "nan":
+            if not val_str or val_str == "nan" or val_str == "":
                 return 0.0
             # Limpiar formato venezolano (puntos como separadores de miles, coma decimal)
             if "," in val_str:
                 val_str = val_str.replace(".", "").replace(",", ".")
-            return pd.to_numeric(val_str, errors="coerce")
+            try:
+                return float(val_str)
+            except:
+                return 0.0
         
-        if "DEBITO" in df.columns:
-            df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0)
-        else:
-            df["DEBITO"] = 0.0
-        
-        if "CREDITO" in df.columns:
-            df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0)
-        else:
-            df["CREDITO"] = 0.0
+        df_datos["DEBITO"] = df_datos["DEBITO"].apply(limpiar_monto)
+        df_datos["CREDITO"] = df_datos["CREDITO"].apply(limpiar_monto)
         
         # Determinar tipo y monto
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
-        df["MONTO"] = df["MONTO"].abs()
+        df_datos["MONTO"] = df_datos["CREDITO"] - df_datos["DEBITO"]
+        df_datos["TIPO"] = df_datos["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df_datos["MONTO"] = df_datos["MONTO"].abs()
         
         # Eliminar filas con monto 0
-        df = df[df["MONTO"] > 0]
+        df_datos = df_datos[df_datos["MONTO"] > 0]
         
         # Asegurar que existe columna REFERENCIA
-        if "NRO" in df.columns:
-            df["REFERENCIA"] = df["NRO"].astype(str).str.strip()
-        else:
-            df["REFERENCIA"] = ""
+        df_datos["REFERENCIA"] = df_datos["NRO"].astype(str).str.strip()
         
         # Asegurar que existe columna DESCRIPCION
-        if "DESCRIPCION" not in df.columns:
-            df["DESCRIPCION"] = ""
-        else:
-            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+        df_datos["DESCRIPCION"] = df_datos["DESCRIPCION"].astype(str).str.strip()
         
         # 🔥 DETECTAR COMISIONES DE BANCO ACTIVO
         # Las comisiones suelen tener palabras clave como "CARGO", "MANTENIMIENTO", "COMISION"
@@ -1460,29 +1404,32 @@ def procesar_banco_activo(df):
             "MANTENIMIENTO",
             "SMS",
             "EMISION EDO",
-            "CARGO POR"
+            "CARGO POR",
+            "COM EDO",
+            "COM MOV"
         ]
         
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains('|'.join(palabras_comision), case=False, na=False)
+        df_datos["ES_COMISION"] = df_datos["DESCRIPCION"].str.contains('|'.join(palabras_comision), case=False, na=False)
         
         # También detectar comisiones por monto pequeño (típico de cargos bancarios)
-        mascara_monto_pequeno = df["MONTO"] < 1000
-        df.loc[mascara_monto_pequeno, "ES_COMISION"] = (
-            df.loc[mascara_monto_pequeno, "ES_COMISION"] | 
-            df.loc[mascara_monto_pequeno, "DESCRIPCION"].str.contains("CARGO|COMIS", case=False, na=False)
+        mascara_monto_pequeno = df_datos["MONTO"] < 1000
+        df_datos.loc[mascara_monto_pequeno, "ES_COMISION"] = (
+            df_datos.loc[mascara_monto_pequeno, "ES_COMISION"] | 
+            df_datos.loc[mascara_monto_pequeno, "DESCRIPCION"].str.contains("CARGO|COM|MANTENIMIENTO|SMS", case=False, na=False)
         )
         
         # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
-        num_comisiones = df["ES_COMISION"].sum()
+        num_comisiones = df_datos["ES_COMISION"].sum()
         st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo de Banco Activo")
         
         # Mostrar las comisiones detectadas
         if num_comisiones > 0:
             st.write("📋 **Comisiones detectadas:**")
-            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+            st.dataframe(df_datos[df_datos["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
         
         # Seleccionar solo las columnas necesarias
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_resultado = df_datos[["FECHA_DT", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_resultado = df_resultado.rename(columns={"FECHA_DT": "FECHA"})
         
         # Mostrar resultados
         st.success(f"✅ Banco Activo OK: {len(df_resultado)} movimientos detectados")
@@ -1665,7 +1612,9 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISIÓN",
                     "MANTENIMIENTO",
                     "SMS",
-                    "EMISION EDO"
+                    "EMISION EDO",
+                    "COM EDO",
+                    "COM MOV"
                 ]
                 if any(p in texto for p in patrones_activo):
                     es_comision_banco = True
@@ -1796,7 +1745,7 @@ def leer_excel_con_encabezados(archivo):
             st.stop()
 
 # =========================================================
-# 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
+# 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO (VERSIÓN MONOBANCO)
 # =========================================================
 
 def mono_detectar_banco_por_contenido(archivo):
@@ -1829,8 +1778,16 @@ def mono_detectar_banco_por_contenido(archivo):
             # Restablecer la posición del archivo
             archivo.seek(pos)
             
-            # Detectar por contenido
-            if "BANCO ACTIVO" in texto:
+            # Detectar por contenido - Banco Activo primero
+            if "BANCO ACTIVO" in texto or "0171" in texto or "NUMERO DE CUENTA" in texto:
+                # Verificar si tiene el formato de Banco Activo
+                if df_temp.shape[1] >= 7:
+                    for i in range(min(10, len(df_temp))):
+                        fila = df_temp.iloc[i]
+                        if pd.notna(fila[0]) and pd.notna(fila[2]) and pd.notna(fila[6]):
+                            fecha_str = str(fila[0]).strip()
+                            if re.match(r'\d{2}/\d{2}/\d{4}', fecha_str):
+                                return "activo"
                 return "activo"
             elif "BANCAMIGA" in texto or "BANCAMIGA BANCO UNIVERSAL" in texto or "BANCA AMIGA" in texto or "AMIGA" in texto:
                 return "bancamiga"
@@ -3231,7 +3188,7 @@ def mono_procesar_banplus(df):
         return pd.DataFrame()
 
 # =========================================================
-# 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA PROVINCIAL Y BANCAMIGA
+# 🔥 PROCESAMIENTO PRINCIPAL - CON DETECCIÓN DIRECTA PARA TODOS LOS BANCOS
 # =========================================================
 
 def mono_procesar_archivo(df, usar_api=False, banco=""):
@@ -3315,6 +3272,34 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
             if clave in registros_procesados:
                 continue
             registros_procesados.add(clave)
+
+            # =========================================================
+            # 🔥 REGLA ESPECIAL PARA BANCO ACTIVO - DETECCIÓN DIRECTA
+            # =========================================================
+            es_comision_activo = False
+            
+            if banco == "activo":
+                descripcion_upper = descripcion.upper()
+                patrones_activo = [
+                    "CARGO POR MANTENIMIENTO",
+                    "CARGO EMISION EDO DE CUENTA",
+                    "CARGO SERVICIO SMS",
+                    "COMISION",
+                    "COMISIÓN",
+                    "MANTENIMIENTO",
+                    "SMS",
+                    "EMISION EDO",
+                    "COM EDO",
+                    "COM MOV"
+                ]
+                for patron in patrones_activo:
+                    if patron in descripcion_upper:
+                        es_comision_activo = True
+                        break
+                
+                if es_comision_activo:
+                    comisiones.append(registro)
+                    continue
 
             # =========================================================
             # 🔥 REGLA ESPECIAL PARA PROVINCIAL - DETECCIÓN DIRECTA
@@ -3430,32 +3415,6 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                         break
                 
                 if es_comision_tesoro:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA BANCO ACTIVO - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_activo = False
-            
-            if banco == "activo":
-                descripcion_upper = descripcion.upper()
-                patrones_activo = [
-                    "CARGO POR MANTENIMIENTO",
-                    "CARGO EMISION EDO DE CUENTA",
-                    "CARGO SERVICIO SMS",
-                    "COMISION",
-                    "COMISIÓN",
-                    "MANTENIMIENTO",
-                    "SMS",
-                    "EMISION EDO"
-                ]
-                for patron in patrones_activo:
-                    if patron in descripcion_upper:
-                        es_comision_activo = True
-                        break
-                
-                if es_comision_activo:
                     comisiones.append(registro)
                     continue
 
