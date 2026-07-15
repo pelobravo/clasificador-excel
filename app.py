@@ -1356,6 +1356,165 @@ def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
+# 🔥 FUNCIÓN CORREGIDA: procesar_formato_nuevo
+# =========================================================
+
+def procesar_formato_nuevo(df):
+    """Adaptador para el formato de 5 columnas (Fecha, Ref, Desc, Monto, Balance)
+    
+    Esta función toma un DataFrame con 5 columnas y lo convierte al formato interno
+    de 10 columnas requerido por el sistema.
+    
+    Columnas de entrada:
+        0: FECHA
+        1: REFERENCIA  
+        2: DESCRIPCION
+        3: MONTO_RAW (con signo + para ingresos, - para egresos)
+        4: BALANCE
+    
+    Columnas de salida (10 columnas):
+        0: (vacío)
+        1: (vacío)
+        2: (vacío)
+        3: FECHA (formato dd/mm/yyyy)
+        4: REFERENCIA
+        5: TIPO (NC o ND)
+        6: DESCRIPCION
+        7: MONTO (valor absoluto)
+        8: (vacío)
+        9: ES_COMISION (False por defecto)
+    """
+    # Asignar nombres a las columnas si no los tienen
+    if df.shape[1] >= 5:
+        df.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"][:df.shape[1]]
+    else:
+        # Si tiene menos de 5 columnas, intentar rellenar
+        st.warning(f"El archivo tiene {df.shape[1]} columnas, se esperaban 5. Intentando procesar igual.")
+        # Renombrar columnas disponibles
+        col_names = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
+        df.columns = col_names[:df.shape[1]]
+        # Crear columnas faltantes
+        for i in range(df.shape[1], 5):
+            df[f"COL_{i}"] = ""
+    
+    # Normalizar Monto - detectar tipo por el signo
+    def determinar_tipo(valor):
+        if isinstance(valor, (int, float)):
+            return "NC" if valor > 0 else "ND" if valor < 0 else None
+        # Si es string, buscar signos
+        val_str = str(valor).strip()
+        if val_str.startswith("+"):
+            return "NC"
+        elif val_str.startswith("-"):
+            return "ND"
+        # Buscar + o - en cualquier parte
+        if "+" in val_str:
+            return "NC"
+        elif "-" in val_str:
+            return "ND"
+        return None
+    
+    def limpiar_monto(valor):
+        if isinstance(valor, (int, float)):
+            return abs(float(valor))
+        val_str = str(valor).strip()
+        # Remover signos
+        val_str = val_str.replace("+", "").replace("-", "")
+        # Limpiar formato
+        val_str = val_str.replace(" ", "").replace("$", "").replace("Bs", "")
+        # Reemplazar coma por punto para decimales
+        if "," in val_str and "." in val_str:
+            val_str = val_str.replace(".", "").replace(",", ".")
+        elif "," in val_str:
+            val_str = val_str.replace(",", ".")
+        try:
+            return abs(float(val_str))
+        except:
+            return None
+    
+    # Procesar cada fila
+    datos_convertidos = []
+    for idx, fila in df.iterrows():
+        try:
+            # Obtener fecha
+            fecha_val = fila["FECHA"]
+            if pd.isna(fecha_val):
+                continue
+            
+            # Convertir fecha a string en formato dd/mm/yyyy
+            if isinstance(fecha_val, (pd.Timestamp, datetime)):
+                fecha_str = fecha_val.strftime("%d/%m/%Y")
+            else:
+                # Intentar parsear
+                try:
+                    fecha_dt = pd.to_datetime(fecha_val, dayfirst=True, errors="coerce")
+                    if pd.notna(fecha_dt):
+                        fecha_str = fecha_dt.strftime("%d/%m/%Y")
+                    else:
+                        fecha_str = str(fecha_val)
+                except:
+                    fecha_str = str(fecha_val)
+            
+            # Obtener referencia
+            referencia = str(fila.get("REFERENCIA", "")).strip()
+            if referencia == "nan" or referencia == "None":
+                referencia = ""
+            
+            # Obtener descripción
+            descripcion = str(fila.get("DESCRIPCION", "")).strip()
+            if descripcion == "nan" or descripcion == "None":
+                descripcion = ""
+            
+            # Determinar tipo y monto
+            monto_raw = fila.get("MONTO_RAW", 0)
+            tipo = determinar_tipo(monto_raw)
+            monto = limpiar_monto(monto_raw)
+            
+            # Si no se pudo determinar el tipo, intentar con la descripción
+            if tipo is None:
+                desc_upper = descripcion.upper()
+                if any(p in desc_upper for p in ["INGRESO", "CREDITO", "ABONO", "DEPOSITO", "NC"]):
+                    tipo = "NC"
+                elif any(p in desc_upper for p in ["EGRESO", "DEBITO", "CARGO", "RETIRO", "ND"]):
+                    tipo = "ND"
+                else:
+                    # Si no se puede determinar, continuar
+                    continue
+            
+            # Si no se pudo obtener el monto, continuar
+            if monto is None or monto == 0:
+                continue
+            
+            # Crear fila en formato interno (10 columnas)
+            fila_convertida = [
+                "",           # col0 - vacío
+                "",           # col1 - vacío
+                "",           # col2 - vacío
+                fecha_str,    # col3 - FECHA
+                referencia,   # col4 - REFERENCIA
+                tipo,         # col5 - TIPO (NC/ND)
+                descripcion,  # col6 - DESCRIPCION
+                monto,        # col7 - MONTO (absoluto)
+                "",           # col8 - vacío
+                False         # col9 - ES_COMISION (False por defecto)
+            ]
+            datos_convertidos.append(fila_convertida)
+            
+        except Exception as e:
+            continue
+    
+    # Crear DataFrame con el formato requerido
+    df_adaptado = pd.DataFrame(datos_convertidos)
+    
+    # Si está vacío, crear DataFrame vacío con la estructura correcta
+    if df_adaptado.empty:
+        df_adaptado = pd.DataFrame(columns=[str(i) for i in range(10)])
+    
+    st.success(f"✅ Formato adaptado correctamente: {len(df_adaptado)} movimientos")
+    
+    return df_adaptado
+
+# =========================================================
 # 🔥 PROCESAMIENTO PRINCIPAL - CLASIFICACIÓN
 # =========================================================
 
