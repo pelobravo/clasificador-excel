@@ -4420,8 +4420,8 @@ if st.session_state.seccion_activa == "consolidado":
 
    # 4. BDV
     if archivo_venezuela:
-    st.session_state.saldo_venezuela = 0.0
-    st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 NUEVO: Inicializar
+        st.session_state.saldo_venezuela = 0.0
+        st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 NUEVO: Inicializar
     
     for idx, arch in enumerate(archivo_venezuela, 1):
         try:
