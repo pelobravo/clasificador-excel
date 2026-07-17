@@ -4419,7 +4419,7 @@ if st.session_state.seccion_activa == "consolidado":
         saldos_detalle_excel.append(("Mercantil", 0.0))
 
    # 4. BDV
-   if archivo_venezuela:
+    if archivo_venezuela:
     st.session_state.saldo_venezuela = 0.0
     st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 NUEVO: Inicializar
     
