@@ -1762,16 +1762,24 @@ def procesar_banco_activo(df):
         st.write("👁️ **Primeras 15 filas del archivo:**")
         st.dataframe(df_filtrado.head(15))
         
-        # Verificar que tenemos suficientes columnas
-        if df_filtrado.shape[1] < 7:
-            st.error("❌ El archivo no tiene el número esperado de columnas (7).")
-            return pd.DataFrame()
-        
         # Saltar la primera fila (Número de Cuenta) y empezar desde la fila 1
         df_datos = df_filtrado.iloc[1:].copy().reset_index(drop=True)
         
-        # Asignar nombres de columnas
-        df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO"]
+        # 🔥 DETECTAR EL NÚMERO DE COLUMNAS Y ASIGNAR NOMBRES CORRECTAMENTE
+        num_columnas = df_datos.shape[1]
+        st.write(f"📋 **El archivo tiene {num_columnas} columnas**")
+        
+        if num_columnas == 8:
+            # Si tiene 8 columnas, la columna extra probablemente es una columna vacía o de índice
+            # Asignamos nombres y luego eliminamos la columna extra o la ignoramos
+            df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO", "EXTRA"]
+            # Eliminar la columna extra
+            df_datos = df_datos.drop(columns=["EXTRA"])
+        elif num_columnas == 7:
+            df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO"]
+        else:
+            st.error(f"❌ El archivo tiene {num_columnas} columnas, se esperaban 7 u 8.")
+            return pd.DataFrame()
         
         st.write("📋 **Estructura de datos asignada:**")
         st.write(f"- Columnas: {df_datos.columns.tolist()}")
@@ -1827,7 +1835,6 @@ def procesar_banco_activo(df):
         df_datos["DESCRIPCION"] = df_datos["DESCRIPCION"].astype(str).str.strip()
         
         # 🔥 DETECTAR COMISIONES DE BANCO ACTIVO
-        # Las comisiones suelen tener palabras clave como "CARGO", "MANTENIMIENTO", "COMISION"
         palabras_comision = [
             "CARGO POR MANTENIMIENTO",
             "CARGO EMISION EDO DE CUENTA",
