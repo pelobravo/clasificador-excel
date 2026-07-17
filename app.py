@@ -43,6 +43,7 @@ if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
+if "total_creditos_raw_venezuela" not in st.session_state: st.session_state.total_creditos_raw_venezuela = 0.0
 
 # =========================================================
 # ESTILOS
@@ -287,56 +288,114 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
     - **Fecha predominante: {fecha_pred.strftime('%d/%m/%Y')}** ({porcentaje:.1f}% de los movimientos)
     """)
     
-    # Función para comparar fechas
-    def es_fecha_predominante(valor):
+    # 🔥 IDENTIFICAR FILAS QUE SERÁN EXCLUIDAS
+    filas_excluidas = []
+    filas_con_fecha_correcta = []
+    
+    for idx in range(len(df_raw)):
         try:
+            valor = df_raw.iloc[idx, columna_fecha_idx]
             if pd.isna(valor):
-                return False
-            valor_str = str(valor).strip()
-            if not valor_str:
-                return False
+                filas_excluidas.append({
+                    'indice': idx,
+                    'razon': 'Fecha vacía o NaN',
+                    'fila': df_raw.iloc[idx].tolist()
+                })
+                continue
+            
+            fecha_str = str(valor).strip()
+            if not fecha_str or fecha_str.lower() == 'nan':
+                filas_excluidas.append({
+                    'indice': idx,
+                    'razon': 'Fecha vacía o NaN',
+                    'fila': df_raw.iloc[idx].tolist()
+                })
+                continue
+            
+            # Verificar si es encabezado
+            es_encabezado = False
+            try:
+                fila_completa = " ".join([str(v) for v in df_raw.iloc[idx].tolist()]).upper()
+                palabras_excluir = [
+                    "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
+                    "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
+                    "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
+                    "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITO", "DÉBITO", "DEBITO", "CREDITO"
+                ]
+                for palabra in palabras_excluir:
+                    if palabra in fila_completa:
+                        es_encabezado = True
+                        break
+            except:
+                pass
+            
+            if es_encabezado:
+                filas_excluidas.append({
+                    'indice': idx,
+                    'razon': 'Es encabezado o total',
+                    'fila': df_raw.iloc[idx].tolist()
+                })
+                continue
             
             # Intentar convertir a fecha
-            fecha_dt = pd.to_datetime(valor_str, dayfirst=True, errors='coerce')
+            fecha_dt = pd.to_datetime(fecha_str, dayfirst=True, errors='coerce')
             if pd.isna(fecha_dt):
-                return False
+                filas_excluidas.append({
+                    'indice': idx,
+                    'razon': f'Fecha no reconocida: {fecha_str}',
+                    'fila': df_raw.iloc[idx].tolist()
+                })
+                continue
             
-            # Comparar solo la fecha (sin hora)
-            return fecha_dt.date() == fecha_pred
-        except:
-            return False
+            # Si la fecha no coincide con la predominante
+            if fecha_dt.date() != fecha_pred:
+                filas_excluidas.append({
+                    'indice': idx,
+                    'razon': f'Fecha diferente: {fecha_dt.strftime("%d/%m/%Y")} (predominante: {fecha_pred.strftime("%d/%m/%Y")})',
+                    'fila': df_raw.iloc[idx].tolist()
+                })
+            else:
+                filas_con_fecha_correcta.append(idx)
+                
+        except Exception as e:
+            filas_excluidas.append({
+                'indice': idx,
+                'razon': f'Error al procesar: {str(e)}',
+                'fila': df_raw.iloc[idx].tolist()
+            })
     
-    # Aplicar filtro
-    mask = df_raw.iloc[:, columna_fecha_idx].apply(es_fecha_predominante)
-    df_filtrado = df_raw[mask].copy()
-    
-    # Mostrar resumen del filtrado
-    registros_filtrados = len(df_filtrado)
-    total_filas_original = len(df_raw)
-    registros_excluidos = total_filas_original - registros_filtrados
-    
-    if registros_excluidos > 0:
-        # Identificar qué fechas fueron excluidas
-        fechas_excluidas = []
-        for fecha, count in dict_conteo.items():
-            if fecha != fecha_pred.strftime("%d/%m/%Y"):
-                fechas_excluidas.append(f"{fecha} ({count} registros)")
+    # 🔥 MOSTRAR DETALLE DE FILAS EXCLUIDAS
+    if filas_excluidas:
+        st.warning(f"⚠️ **{nombre_banco}: Se encontraron {len(filas_excluidas)} filas que no son movimientos válidos**")
         
-        # También contar filas que no tenían fecha válida
-        filas_sin_fecha = total_filas_original - total_filas_validas
-        if filas_sin_fecha > 0:
-            fechas_excluidas.append(f"Sin fecha válida ({filas_sin_fecha} registros)")
+        # Mostrar tabla de filas excluidas
+        datos_excluidos = []
+        for item in filas_excluidas:
+            # Crear una representación legible de la fila
+            fila_str = " | ".join([str(v) for v in item['fila'][:8]])  # Mostrar primeras 8 columnas
+            datos_excluidos.append({
+                'Fila': item['indice'],
+                'Razón': item['razon'],
+                'Contenido': fila_str[:100] + "..." if len(fila_str) > 100 else fila_str
+            })
         
-        st.warning(f"""
-        ⚠️ **{nombre_banco}: Se excluyeron {registros_excluidos} registros** 
-        que no corresponden a la fecha predominante ({fecha_pred.strftime('%d/%m/%Y')}).
+        df_excluidos = pd.DataFrame(datos_excluidos)
+        st.dataframe(df_excluidos, use_container_width=True)
         
-        Detalle: {', '.join(fechas_excluidas) if fechas_excluidas else 'Todos los registros son de la fecha predominante'}
+        st.info(f"""
+        **Detalle de exclusión:**
+        - Total de filas en el archivo: {len(df_raw)}
+        - Filas con fecha válida: {len(filas_con_fecha_correcta)}
+        - Filas excluidas: {len(filas_excluidas)}
+        - **Registros a procesar: {len(filas_con_fecha_correcta)}**
         """)
     else:
-        st.success(f"✅ {nombre_banco}: Todos los {registros_filtrados} registros son de la fecha {fecha_pred.strftime('%d/%m/%Y')}")
+        st.success(f"✅ {nombre_banco}: Todas las {len(df_raw)} filas son movimientos válidos con fecha {fecha_pred.strftime('%d/%m/%Y')}")
     
-    return df_filtrado, fecha_pred, dict_conteo, total_filas_validas, registros_excluidos
+    # Filtrar solo las filas con fecha correcta
+    df_filtrado = df_raw.iloc[filas_con_fecha_correcta].copy()
+    
+    return df_filtrado, fecha_pred, dict_conteo, len(filas_con_fecha_correcta), len(filas_excluidas)
 
 # =========================================================
 # 🔥 NUEVAS FUNCIONES PARA CONCILIACIÓN MULTIBANCO
@@ -4199,7 +4258,11 @@ if st.session_state.seccion_activa == "consolidado":
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
     
-    total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
+    # 🔥 USAR EL TOTAL DE CRÉDITOS DEL ARCHIVO ORIGINAL PARA LOS KPIs
+    total_ingresos_ves = st.session_state.get('total_creditos_raw_venezuela', 0.0)
+    # Si no hay créditos raw (otro banco), usar el calculado por el procesamiento
+    if total_ingresos_ves == 0.0:
+        total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
     total_ingresos_usd = total_ingresos_ves / tasa_dia if tasa_dia > 0 else 0.0
     
     total_egresos_ves = st.session_state.get("total_egresos_ipago_ves", 0.0)
@@ -4418,56 +4481,56 @@ if st.session_state.seccion_activa == "consolidado":
     else:
         saldos_detalle_excel.append(("Mercantil", 0.0))
 
-   # 4. BDV
+    # 4. BDV
     if archivo_venezuela:
-    st.session_state.saldo_venezuela = 0.0
-    st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 Inicializar
-    
-    for idx, arch in enumerate(archivo_venezuela, 1):
-        try:
-            df_raw = leer_excel_sin_encabezados(arch)
-            
-            # 🔥 Calcular total de créditos del archivo original
-            total_creditos_raw = 0.0
-            col_credito = 5  # Columna de créditos en BDV (índice 5)
-            
-            # Empezar desde la fila 1 (saltar encabezados)
-            for i in range(1, len(df_raw)):
-                try:
-                    fila = df_raw.iloc[i]
-                    # Verificar si la columna de crédito tiene valor
-                    if pd.notna(fila[col_credito]):
-                        valor_str = str(fila[col_credito]).strip()
-                        # Limpiar formato: quitar puntos de miles, convertir coma a punto
-                        valor_str = valor_str.replace(".", "").replace(",", ".")
-                        if valor_str and valor_str != "0" and valor_str != "0.0":
-                            valor = float(valor_str)
-                            if valor > 0:
-                                total_creditos_raw += valor
-                except:
-                    continue
-            
-            # Guardar el total de créditos en session_state
-            st.session_state.total_creditos_raw_venezuela += total_creditos_raw
-            st.info(f"📊 BDV - Total de créditos del archivo original: {total_creditos_raw:,.2f} Bs.")
-            
-            # Calcular saldo
-            saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
-            st.session_state.saldo_venezuela += saldo_arch
-            
-            nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
-            saldos_detalle_excel.append((nombre_banco, saldo_arch))
-            
-            df_normalizado = procesar_venezuela_simple(df_raw)
-            df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
-            if not df_convertido.empty:
-                list_df_convertidos.append(df_convertido)
-                if "Venezuela" not in bancos_procesados:
-                    bancos_procesados.append("Venezuela")
-        except Exception as e:
-            st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
-else:
-    saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
+        st.session_state.saldo_venezuela = 0.0
+        st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 Inicializar
+        
+        for idx, arch in enumerate(archivo_venezuela, 1):
+            try:
+                df_raw = leer_excel_sin_encabezados(arch)
+                
+                # 🔥 Calcular total de créditos del archivo original
+                total_creditos_raw = 0.0
+                col_credito = 5  # Columna de créditos en BDV (índice 5)
+                
+                # Empezar desde la fila 1 (saltar encabezados)
+                for i in range(1, len(df_raw)):
+                    try:
+                        fila = df_raw.iloc[i]
+                        # Verificar si la columna de crédito tiene valor
+                        if pd.notna(fila[col_credito]):
+                            valor_str = str(fila[col_credito]).strip()
+                            # Limpiar formato: quitar puntos de miles, convertir coma a punto
+                            valor_str = valor_str.replace(".", "").replace(",", ".")
+                            if valor_str and valor_str != "0" and valor_str != "0.0":
+                                valor = float(valor_str)
+                                if valor > 0:
+                                    total_creditos_raw += valor
+                    except:
+                        continue
+                
+                # Guardar el total de créditos en session_state
+                st.session_state.total_creditos_raw_venezuela += total_creditos_raw
+                st.info(f"📊 BDV - Total de créditos del archivo original: {total_creditos_raw:,.2f} Bs.")
+                
+                # Calcular saldo
+                saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
+                st.session_state.saldo_venezuela += saldo_arch
+                
+                nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
+                saldos_detalle_excel.append((nombre_banco, saldo_arch))
+                
+                df_normalizado = procesar_venezuela_simple(df_raw)
+                df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
+                if not df_convertido.empty:
+                    list_df_convertidos.append(df_convertido)
+                    if "Venezuela" not in bancos_procesados:
+                        bancos_procesados.append("Venezuela")
+            except Exception as e:
+                st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
+    else:
+        saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
 
     # 5. Provincial
     if archivo_provincial:
@@ -4669,9 +4732,12 @@ else:
             
             df_original = df_original[(fechas_convertidas >= fecha_inicio_dt) & (fechas_convertidas <= fecha_fin_dt)]
             
-            # Calcular la suma de ingresos de los archivos consolidados
-            total_ingresos_ves_calc = 0.0
-            if not df_original.empty:
+            # 🔥 MODIFICAR: Calcular la suma de ingresos para los KPIs
+            # Usar el total de créditos del archivo original si existe
+            total_ingresos_ves_calc = st.session_state.get('total_creditos_raw_venezuela', 0.0)
+            
+            # Si no hay créditos raw (otro banco o falló), usar el cálculo del procesamiento
+            if total_ingresos_ves_calc == 0.0 and not df_original.empty:
                 tipos_ingresos = ["NC", "C", "CREDITO", "ABONO", "DP", "DEP"]
                 tipo_col = df_original.iloc[:, 5].astype(str).str.strip().str.upper()
                 ingresos_filas = df_original[tipo_col.isin(tipos_ingresos)]
@@ -4692,6 +4758,7 @@ else:
                             total_ingresos_ves_calc += abs(float(val_str))
                     except:
                         pass
+            
             st.session_state.total_ingresos_consolidado = total_ingresos_ves_calc
             
             # Calcular la suma de egresos del archivo iPago
