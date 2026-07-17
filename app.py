@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime
 import unicodedata
+from collections import Counter
 
 from openpyxl.styles import Font
 from openpyxl.styles import PatternFill
@@ -41,6 +42,7 @@ if "saldo_efectivo" not in st.session_state: st.session_state.saldo_efectivo = 0
 if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
+if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
 
 # =========================================================
 # ESTILOS
@@ -138,6 +140,163 @@ h1, h2, h3, h4, h5, h6 {
 
 </style>
 """, unsafe_allow_html=True)
+
+# =========================================================
+# 🔥 VALIDACIÓN DE FECHAS - DETECCIÓN DE FECHA PREDOMINANTE
+# =========================================================
+
+def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
+    """
+    Detecta la fecha más frecuente en un archivo de estado de cuenta.
+    
+    Args:
+        df_raw: DataFrame con los datos del banco
+        columna_fecha_idx: Índice de la columna donde están las fechas (por defecto 0)
+    
+    Returns:
+        tuple: (fecha_predominante, dict_conteo_fechas, porcentaje_predominante)
+    """
+    try:
+        # Extraer todas las fechas de la columna especificada
+        fechas = []
+        for idx in range(len(df_raw)):
+            try:
+                valor = df_raw.iloc[idx, columna_fecha_idx]
+                if pd.isna(valor):
+                    continue
+                
+                # Convertir a string y limpiar
+                fecha_str = str(valor).strip()
+                if not fecha_str or fecha_str.lower() == 'nan':
+                    continue
+                
+                # Intentar parsear la fecha
+                fecha_dt = None
+                
+                # Intentar diferentes formatos
+                formatos = [
+                    "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y",
+                    "%Y/%m/%d", "%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"
+                ]
+                
+                for fmt in formatos:
+                    try:
+                        fecha_dt = pd.to_datetime(fecha_str, format=fmt)
+                        break
+                    except:
+                        continue
+                
+                if fecha_dt is None:
+                    # Último intento con dayfirst=True
+                    fecha_dt = pd.to_datetime(fecha_str, dayfirst=True, errors='coerce')
+                
+                if pd.notna(fecha_dt):
+                    # Normalizar a solo fecha (sin hora)
+                    fechas.append(fecha_dt.date())
+            except:
+                continue
+        
+        if not fechas:
+            return None, {}, 0.0
+        
+        # Contar frecuencias de cada fecha
+        conteo = Counter(fechas)
+        
+        # Ordenar por frecuencia (descendente)
+        fechas_ordenadas = conteo.most_common()
+        
+        if not fechas_ordenadas:
+            return None, {}, 0.0
+        
+        # Fecha predominante
+        fecha_predominante = fechas_ordenadas[0][0]
+        total_filas = len(fechas)
+        cantidad_predominante = fechas_ordenadas[0][1]
+        porcentaje = (cantidad_predominante / total_filas) * 100
+        
+        # Crear diccionario con todas las fechas y sus conteos
+        dict_conteo = {fecha.strftime("%d/%m/%Y"): count for fecha, count in conteo.items()}
+        
+        return fecha_predominante, dict_conteo, porcentaje
+        
+    except Exception as e:
+        st.warning(f"⚠️ Error al detectar fechas predominantes: {str(e)}")
+        return None, {}, 0.0
+
+def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="banco"):
+    """
+    Filtra el DataFrame para conservar solo los registros de la fecha predominante.
+    
+    Args:
+        df_raw: DataFrame original
+        columna_fecha_idx: Índice de la columna de fechas
+        nombre_banco: Nombre del banco para mensajes
+    
+    Returns:
+        tuple: (df_filtrado, fecha_predominante, dict_conteo, total_filas_original, registros_excluidos)
+    """
+    # Detectar fecha predominante
+    fecha_pred, dict_conteo, porcentaje = detectar_fecha_predominante(df_raw, columna_fecha_idx)
+    
+    if fecha_pred is None:
+        st.warning(f"⚠️ {nombre_banco}: No se pudieron detectar fechas válidas. Se procesará todo el archivo.")
+        return df_raw, None, {}, len(df_raw), 0
+    
+    # Mostrar información al usuario
+    total_filas = len(df_raw)
+    fechas_texto = ", ".join([f"{fecha}: {count} registros" for fecha, count in sorted(dict_conteo.items())])
+    
+    st.info(f"""
+    📅 **{nombre_banco} - Análisis de fechas:**
+    - Total de registros: {total_filas}
+    - Fechas encontradas: {fechas_texto}
+    - **Fecha predominante: {fecha_pred.strftime('%d/%m/%Y')}** ({porcentaje:.1f}% de los registros)
+    """)
+    
+    # Función para comparar fechas
+    def es_fecha_predominante(valor):
+        try:
+            if pd.isna(valor):
+                return False
+            valor_str = str(valor).strip()
+            if not valor_str:
+                return False
+            
+            # Intentar convertir a fecha
+            fecha_dt = pd.to_datetime(valor_str, dayfirst=True, errors='coerce')
+            if pd.isna(fecha_dt):
+                return False
+            
+            # Comparar solo la fecha (sin hora)
+            return fecha_dt.date() == fecha_pred
+        except:
+            return False
+    
+    # Aplicar filtro
+    mask = df_raw.iloc[:, columna_fecha_idx].apply(es_fecha_predominante)
+    df_filtrado = df_raw[mask].copy()
+    
+    # Mostrar resumen del filtrado
+    registros_filtrados = len(df_filtrado)
+    registros_excluidos = total_filas - registros_filtrados
+    
+    if registros_excluidos > 0:
+        # Identificar qué fechas fueron excluidas
+        fechas_excluidas = []
+        for fecha, count in dict_conteo.items():
+            if fecha != fecha_pred.strftime("%d/%m/%Y"):
+                fechas_excluidas.append(f"{fecha} ({count} registros)")
+        
+        st.warning(f"""
+        ⚠️ **{nombre_banco}: Se excluyeron {registros_excluidos} registros** 
+        que no corresponden a la fecha predominante ({fecha_pred.strftime('%d/%m/%Y')}).
+        
+        Fechas excluidas: {', '.join(fechas_excluidas)}
+        """)
+    
+    st.success(f"✅ {nombre_banco}: {registros_filtrados} registros procesados para la fecha {fecha_pred.strftime('%d/%m/%Y')}")
+    
+    return df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos
 
 # =========================================================
 # 🔥 NUEVAS FUNCIONES PARA CONCILIACIÓN MULTIBANCO
@@ -525,7 +684,6 @@ def normalizar_texto(texto):
 # HEADER
 # =========================================================
 
-
 def leer_excel_sin_encabezados(archivo):
     """Lee archivo Excel sin encabezados detectando el engine correcto"""
     nombre = archivo.name.lower()
@@ -891,18 +1049,38 @@ def enriquecer_egresos_con_ipago(df_egresos, df_ipago):
 def procesar_banesco(df):
     st.info("Procesando Banesco...")
     try:
-        df.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
-        df.columns = [str(c).strip().upper() for c in df.columns]
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Banesco"
+        )
+        
+        # Si no se pudo filtrar o está vacío, usar el df original
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Banesco: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        # Guardar información de fechas en session_state
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Banesco"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
+        df_filtrado.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
+        df_filtrado.columns = [str(c).strip().upper() for c in df_filtrado.columns]
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             c = str(col).lower()
             if "fecha" in c: rename_map[col] = "FECHA"
             elif "referencia" in c: rename_map[col] = "REFERENCIA"
             elif "descrip" in c: rename_map[col] = "DESCRIPCION"
             elif "monto" in c: rename_map[col] = "MONTO_RAW"
-        df = df.rename(columns=rename_map)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
         for col in ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW"]:
-            if col not in df.columns:
+            if col not in df_filtrado.columns:
                 st.error(f"No existe columna: {col}")
                 return pd.DataFrame()
         # Convertir fechas de manera robusta
@@ -914,20 +1092,20 @@ def procesar_banesco(df):
                 return pd.to_datetime(val_str, dayfirst=False, errors="coerce")
             return pd.to_datetime(val_str, dayfirst=True, errors="coerce")
 
-        df["FECHA"] = df["FECHA"].apply(parse_banesco_date)
-        df = df[df["FECHA"].notna()]
-        df["TIPO"] = df["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
-        df["MONTO"] = (df["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
+        df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parse_banesco_date)
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+        df_filtrado["TIPO"] = df_filtrado["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
+        df_filtrado["MONTO"] = (df_filtrado["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
                        .str.replace("-", "", regex=False)
                        .str.replace(".", "", regex=False)
                        .str.replace(",", ".", regex=False)
                        .str.strip())
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
-        df = df[df["MONTO"].notna()]
-        df = df[df["MONTO"] > 0]
-        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
-        st.success(f"Banesco OK: {len(df)} movimientos")
-        return df
+        df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
+        df_filtrado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Banesco OK: {len(df_filtrado)} movimientos")
+        return df_filtrado
     except Exception as e:
         st.error(f"Error Banesco: {str(e)}")
         return pd.DataFrame()
@@ -935,9 +1113,27 @@ def procesar_banesco(df):
 def procesar_provincial(df):
     st.info("🔍 Procesando archivo de Provincial...")
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE (Provincial tiene fechas en varias columnas, usamos la primera)
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Provincial"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Provincial: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Provincial"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         encabezado_idx = None
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i]
+        for i in range(min(30, len(df_filtrado))):
+            fila = df_filtrado.iloc[i]
             fila_str = [str(val) for val in fila.tolist()]
             texto_fila = " ".join(fila_str).upper()
             if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
@@ -946,7 +1142,7 @@ def procesar_provincial(df):
         if encabezado_idx is None:
             st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
             return pd.DataFrame()
-        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
         rename_map = {}
         for col in headers:
             col_clean = str(col).strip().upper()
@@ -956,32 +1152,32 @@ def procesar_provincial(df):
             elif "Nº. DOC" in col_clean or "NRO DOC" in col_clean or "DOC" in col_clean: rename_map[col] = "REFERENCIA"
             elif "CONCEPTO" in col_clean: rename_map[col] = "DESCRIPCION"
             elif "IMPORTE" in col_clean: rename_map[col] = "MONTO"
-        df.columns = headers
-        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
-        df = df.rename(columns=rename_map)
-        if "FECHA" in df.columns:
-            df["FECHA"] = df["FECHA"].astype(str).str.strip()
-            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
-            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
-            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-            df = df[df["FECHA"].notna()]
+        df_filtrado.columns = headers
+        df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
+        if "FECHA" in df_filtrado.columns:
+            df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
+            df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
+            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         else:
             return pd.DataFrame()
-        if "MONTO" in df.columns:
-            df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace("'", "", regex=False)
-            df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
-            df = df[df["MONTO"].notna()]
-            df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
-            df["MONTO"] = df["MONTO"].abs()
-            df = df[df["MONTO"] > 0]
+        if "MONTO" in df_filtrado.columns:
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace("'", "", regex=False)
+            df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
+            df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+            df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
         else:
             return pd.DataFrame()
-        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
-        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
-        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
-        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        if "REFERENCIA" not in df_filtrado.columns: df_filtrado["REFERENCIA"] = ""
+        else: df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df_filtrado.columns: df_filtrado["DESCRIPCION"] = ""
+        else: df_filtrado["DESCRIPCION"] = df_filtrado["DESCRIPCION"].astype(str).str.strip()
+        df_filtrado["ES_COMISION"] = df_filtrado["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
+        df_resultado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         st.success(f"✅ Provincial OK: {len(df_resultado)} movimientos")
         return df_resultado
     except Exception as e:
@@ -991,9 +1187,27 @@ def procesar_provincial(df):
 def procesar_bnc(df):
     st.info("Procesando archivo BNC...")
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="BNC"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ BNC: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["BNC"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         encabezado = None
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i].fillna("").astype(str)
+        for i in range(min(30, len(df_filtrado))):
+            fila = df_filtrado.iloc[i].fillna("").astype(str)
             texto = " ".join(fila.tolist()).lower()
             if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
                 encabezado = i
@@ -1001,7 +1215,7 @@ def procesar_bnc(df):
         if encabezado is None:
             return pd.DataFrame()
         headers = []
-        for idx, col in enumerate(df.iloc[encabezado]):
+        for idx, col in enumerate(df_filtrado.iloc[encabezado]):
             col = str(col).strip().replace("\n", " ")
             if col == "" or col.lower() == "nan": col = f"COLUMNA_{idx}"
             headers.append(col)
@@ -1015,28 +1229,28 @@ def procesar_bnc(df):
                 contador[h] = 0
                 nuevo = h
             headers_unicos.append(nuevo)
-        df.columns = headers_unicos
-        df = df.iloc[encabezado + 1:].reset_index(drop=True)
+        df_filtrado.columns = headers_unicos
+        df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             col_str = str(col).strip().lower()
             if "fecha" in col_str: rename_map[col] = "FECHA"
             elif "descripcion" in col_str or "descripción" in col_str or "concepto" in col_str: rename_map[col] = "DESCRIPCION"
             elif "referencia" in col_str: rename_map[col] = "REFERENCIA"
             elif "credito" in col_str or "haber" in col_str: rename_map[col] = "CREDITO"
             elif "debito" in col_str or "debe" in col_str: rename_map[col] = "DEBITO"
-        df = df.rename(columns=rename_map)
-        if "FECHA" in df.columns:
-            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-            df = df[df["FECHA"].notna()]
-        df["CREDITO"] = pd.to_numeric(df.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df.columns else 0
-        df["DEBITO"] = pd.to_numeric(df.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df.columns else 0
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
-        df["MONTO"] = df["MONTO"].abs()
-        df = df[df["MONTO"] != 0]
-        st.success(f"Registros BNC OK: {len(df)}")
-        return df
+        df_filtrado = df_filtrado.rename(columns=rename_map)
+        if "FECHA" in df_filtrado.columns:
+            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+        df_filtrado["CREDITO"] = pd.to_numeric(df_filtrado.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df_filtrado.columns else 0
+        df_filtrado["DEBITO"] = pd.to_numeric(df_filtrado.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df_filtrado.columns else 0
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] != 0]
+        st.success(f"Registros BNC OK: {len(df_filtrado)}")
+        return df_filtrado
     except Exception as e:
         st.error(f"Error BNC: {e}")
         return pd.DataFrame()
@@ -1044,20 +1258,38 @@ def procesar_bnc(df):
 def procesar_tesoro(df):
     st.info("Procesando Banco del Tesoro...")
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Tesoro"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Tesoro: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Tesoro"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         encabezado = None
-        for i in range(min(20, len(df))):
-            fila = df.iloc[i].astype(str)
+        for i in range(min(20, len(df_filtrado))):
+            fila = df_filtrado.iloc[i].astype(str)
             texto = " ".join(map(str, fila.tolist())).lower()
             if "fecha" in texto and "referencia" in texto and "concepto" in texto:
                 encabezado = i
                 break
         if encabezado is None:
             return pd.DataFrame()
-        df.columns = df.iloc[encabezado]
-        df = df.iloc[encabezado + 1:].reset_index(drop=True)
-        df.columns = [str(c).strip() for c in df.columns]
+        df_filtrado.columns = df_filtrado.iloc[encabezado]
+        df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
+        df_filtrado.columns = [str(c).strip() for c in df_filtrado.columns]
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             c = str(col).strip().lower()
             if "fecha" in c: rename_map[col] = "FECHA"
             elif "referencia" in c: rename_map[col] = "REFERENCIA"
@@ -1065,23 +1297,23 @@ def procesar_tesoro(df):
             elif "débito" in c or "debito" in c: rename_map[col] = "DEBITO"
             elif "crédito" in c or "credito" in c: rename_map[col] = "CREDITO"
             elif "código" in c or "codigo" in c: rename_map[col] = "TIPO"
-        df = df.rename(columns=rename_map)
-        if "FECHA" not in df.columns: return pd.DataFrame()
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        df = df[df["FECHA"].notna()]
+        df_filtrado = df_filtrado.rename(columns=rename_map)
+        if "FECHA" not in df_filtrado.columns: return pd.DataFrame()
+        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         def limpiar_numero(valor):
             valor = str(valor).replace(".", "").replace(",", ".")
             try: return float(valor)
             except: return 0
-        df["CREDITO"] = df.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df.columns else 0
-        df["DEBITO"] = df.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df.columns else 0
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
-        df["MONTO"] = df["MONTO"].abs()
-        df = df[df["MONTO"] > 0]
-        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
-        st.success(f"Tesoro OK: {len(df)} registros")
-        return df
+        df_filtrado["CREDITO"] = df_filtrado.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df_filtrado.columns else 0
+        df_filtrado["DEBITO"] = df_filtrado.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df_filtrado.columns else 0
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
+        df_filtrado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Tesoro OK: {len(df_filtrado)} registros")
+        return df_filtrado
     except Exception as e:
         st.error(f"Error Tesoro: {str(e)}")
         return pd.DataFrame()
@@ -1091,25 +1323,44 @@ def procesar_bancamiga(df):
     try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(-1)
-        columnas = [str(c).strip().upper() for c in df.columns]
+        
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=1, nombre_banco="Bancamiga"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Bancamiga: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Bancamiga"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
+        columnas = [str(c).strip().upper() for c in df_filtrado.columns]
         if "FECHA" in columnas and "REFERENCIA" in columnas:
             rename_map = {
                 "NRO.": "NRO", "NRO": "NRO", "FECHA": "FECHA", "REFERENCIA": "REFERENCIA",
                 "CONCEPTO": "DESCRIPCION", "DÉBITO": "DEBITO", "DEBITO": "DEBITO",
                 "CRÉDITO": "CREDITO", "CREDITO": "CREDITO", "SALDO": "SALDO"
             }
-            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df.columns]
+            df_filtrado.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df_filtrado.columns]
         else:
             encabezado_idx = None
-            for i in range(min(30, len(df))):
-                fila = df.iloc[i]
+            for i in range(min(30, len(df_filtrado))):
+                fila = df_filtrado.iloc[i]
                 fila_str = [str(val) for val in fila.tolist()]
                 texto_fila = " ".join(fila_str).upper()
                 if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
                     encabezado_idx = i
                     break
             if encabezado_idx is None: return pd.DataFrame()
-            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
             rename_map = {}
             for col in headers:
                 col_clean = str(col).strip().upper()
@@ -1120,22 +1371,22 @@ def procesar_bancamiga(df):
                 elif "DÉBITO" in col_clean or "DEBITO" in col_clean: rename_map[col] = "DEBITO"
                 elif "CRÉDITO" in col_clean or "CREDITO" in col_clean: rename_map[col] = "CREDITO"
                 elif "SALDO" in col_clean: rename_map[col] = "SALDO"
-            df.columns = headers
-            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
-            df = df.rename(columns=rename_map)
+            df_filtrado.columns = headers
+            df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            df_filtrado = df_filtrado.rename(columns=rename_map)
             
-        if "FECHA" not in df.columns: return pd.DataFrame()
+        if "FECHA" not in df_filtrado.columns: return pd.DataFrame()
         # Filtrar filas que no son movimientos
-        fechas_str_col = df["FECHA"].astype(str).str.strip()
-        df = df[~fechas_str_col.str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
+        fechas_str_col = df_filtrado["FECHA"].astype(str).str.strip()
+        df_filtrado = df_filtrado[~fechas_str_col.str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
         
         # Convertir fechas de manera robusta
-        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        mask = df["FECHA_DT"].isna()
+        df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        mask = df_filtrado["FECHA_DT"].isna()
         if mask.any():
-            df.loc[mask, "FECHA_DT"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
-        df["FECHA"] = df["FECHA_DT"]
-        df = df[df["FECHA"].notna()]
+            df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+        df_filtrado["FECHA"] = df_filtrado["FECHA_DT"]
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         
         def limpiar_monto(val):
             val_str = str(val).strip().replace(" ", "")
@@ -1145,19 +1396,19 @@ def procesar_bancamiga(df):
                 val_str = val_str.replace(".", "").replace(",", ".")
             return pd.to_numeric(val_str, errors="coerce")
 
-        df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0) if "DEBITO" in df.columns else 0.0
-        df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0) if "CREDITO" in df.columns else 0.0
+        df_filtrado["DEBITO"] = df_filtrado["DEBITO"].apply(limpiar_monto).fillna(0) if "DEBITO" in df_filtrado.columns else 0.0
+        df_filtrado["CREDITO"] = df_filtrado["CREDITO"].apply(limpiar_monto).fillna(0) if "CREDITO" in df_filtrado.columns else 0.0
         
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
-        df["MONTO"] = df["MONTO"].abs()
-        df = df[df["MONTO"] > 0]
-        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
-        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
-        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
-        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
+        if "REFERENCIA" not in df_filtrado.columns: df_filtrado["REFERENCIA"] = ""
+        else: df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df_filtrado.columns: df_filtrado["DESCRIPCION"] = ""
+        else: df_filtrado["DESCRIPCION"] = df_filtrado["DESCRIPCION"].astype(str).str.strip()
+        df_filtrado["ES_COMISION"] = df_filtrado["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        df_resultado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         st.success(f"✅ Bancamiga OK: {len(df_resultado)} movimientos")
         return df_resultado
     except Exception as e:
@@ -1167,7 +1418,25 @@ def procesar_bancamiga(df):
 def procesar_banplus(df):
     st.info("🔍 Procesando archivo de BanPlus...")
     try:
-        columnas = [str(c).strip().upper() for c in df.columns]
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="BanPlus"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ BanPlus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["BanPlus"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
+        columnas = [str(c).strip().upper() for c in df_filtrado.columns]
         if "FECHA" in columnas and "REFERENCIA" in columnas:
             rename_map = {
                 "FECHA": "FECHA", "REFERENCIA": "REFERENCIA", "DESCRIPCION": "DESCRIPCION",
@@ -1175,18 +1444,18 @@ def procesar_banplus(df):
                 "DÉBITO": "DEBITO", "CREDITO": "CREDITO", "CREDITOS": "CREDITO",
                 "CRÉDITO": "CREDITO", "SALDO": "SALDO"
             }
-            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df.columns]
+            df_filtrado.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper()) for c in df_filtrado.columns]
         else:
             encabezado_idx = None
-            for i in range(min(30, len(df))):
-                fila = df.iloc[i]
+            for i in range(min(30, len(df_filtrado))):
+                fila = df_filtrado.iloc[i]
                 fila_str = [str(val) for val in fila.tolist()]
                 texto_fila = " ".join(fila_str).upper()
                 if "FECHA" in texto_fila and ("REFERENCIA" in texto_fila or "REF" in texto_fila or "DESCRIPCION" in texto_fila or "CONCEPTO" in texto_fila):
                     encabezado_idx = i
                     break
             if encabezado_idx is None: return pd.DataFrame()
-            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
             rename_map = {}
             for col in headers:
                 col_clean = str(col).strip().upper()
@@ -1196,32 +1465,65 @@ def procesar_banplus(df):
                 elif "DÉBITO" in col_clean or "DEBITO" in col_clean or "EGRESO" in col_clean or "CARGO" in col_clean: rename_map[col] = "DEBITO"
                 elif "CRÉDITO" in col_clean or "CREDITO" in col_clean or "INGRESO" in col_clean or "ABONO" in col_clean: rename_map[col] = "CREDITO"
                 elif "SALDO" in col_clean: rename_map[col] = "SALDO"
-            df.columns = headers
-            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
-            df = df.rename(columns=rename_map)
+            df_filtrado.columns = headers
+            df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            df_filtrado = df_filtrado.rename(columns=rename_map)
             
-        if "FECHA" not in df.columns: return pd.DataFrame()
-        df["FECHA"] = df["FECHA"].astype(str).str.strip()
-        df = df[~df["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
-        df["FECHA"] = pd.to_datetime(df["FECHA"], format="%d/%m/%Y", errors="coerce")
-        mask = df["FECHA"].isna()
+        if "FECHA" not in df_filtrado.columns: return pd.DataFrame()
+        df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
+        df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
+        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], format="%d/%m/%Y", errors="coerce")
+        mask = df_filtrado["FECHA"].isna()
         if mask.any():
-            df.loc[mask, "FECHA"] = pd.to_datetime(df.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
-        df = df[df["FECHA"].notna()]
+            df_filtrado.loc[mask, "FECHA"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         
-        df["DEBITO"] = df["DEBITO"].apply(mono_limpiar_monto_banplus) if "DEBITO" in df.columns else 0.0
-        df["CREDITO"] = df["CREDITO"].apply(mono_limpiar_monto_banplus) if "CREDITO" in df.columns else 0.0
+        def mono_limpiar_monto_banplus(valor):
+            if valor is None or pd.isna(valor):
+                return 0.0
+            if isinstance(valor, (int, float)):
+                return float(valor)
+            valor_str = str(valor).strip()
+            if not valor_str:
+                return 0.0
+            valor_str = valor_str.replace('$', '').replace('Bs.', '').replace('Bs', '').replace(' ', '').strip()
+            try:
+                return float(valor_str)
+            except ValueError:
+                pass
+            has_comma = ',' in valor_str
+            has_dot = '.' in valor_str
+            if has_comma and has_dot:
+                pos_comma = valor_str.rfind(',')
+                pos_dot = valor_str.rfind('.')
+                if pos_dot > pos_comma:
+                    valor_limpio = valor_str.replace(',', '')
+                else:
+                    valor_limpio = valor_str.replace('.', '').replace(',', '.')
+            elif has_comma:
+                valor_limpio = valor_str.replace(',', '.')
+            elif has_dot:
+                valor_limpio = valor_str
+            else:
+                valor_limpio = valor_str
+            try:
+                return float(valor_limpio)
+            except ValueError:
+                return 0.0
         
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
-        df["MONTO"] = df["MONTO"].abs()
-        df = df[df["MONTO"] > 0]
-        if "REFERENCIA" not in df.columns: df["REFERENCIA"] = ""
-        else: df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
-        if "DESCRIPCION" not in df.columns: df["DESCRIPCION"] = ""
-        else: df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi|sms|servicio sms|sms plus", case=False, na=False)
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_filtrado["DEBITO"] = df_filtrado["DEBITO"].apply(mono_limpiar_monto_banplus) if "DEBITO" in df_filtrado.columns else 0.0
+        df_filtrado["CREDITO"] = df_filtrado["CREDITO"].apply(mono_limpiar_monto_banplus) if "CREDITO" in df_filtrado.columns else 0.0
+        
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
+        if "REFERENCIA" not in df_filtrado.columns: df_filtrado["REFERENCIA"] = ""
+        else: df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].astype(str).str.strip().str.replace("'", "", regex=False)
+        if "DESCRIPCION" not in df_filtrado.columns: df_filtrado["DESCRIPCION"] = ""
+        else: df_filtrado["DESCRIPCION"] = df_filtrado["DESCRIPCION"].astype(str).str.strip()
+        df_filtrado["ES_COMISION"] = df_filtrado["DESCRIPCION"].str.contains("Comisi|sms|servicio sms|sms plus", case=False, na=False)
+        df_resultado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         st.success(f"✅ BanPlus OK: {len(df_resultado)} movimientos")
         return df_resultado
     except Exception as e:
@@ -1231,6 +1533,24 @@ def procesar_banplus(df):
 def procesar_venezuela_simple(df):
     st.info("🔍 Procesando Banco de Venezuela (MODO SIMPLE)...")
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE (BDV tiene fechas en columna 3)
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=3, nombre_banco="Banco de Venezuela"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Banco de Venezuela: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Banco de Venezuela"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         col_fecha = 3
         col_ref = 1
         col_desc = 2
@@ -1239,9 +1559,9 @@ def procesar_venezuela_simple(df):
         col_debito = 6
         
         movimientos = []
-        for idx in range(1, len(df)):
+        for idx in range(1, len(df_filtrado)):
             try:
-                fila = df.iloc[idx]
+                fila = df_filtrado.iloc[idx]
                 if pd.isna(fila[col_fecha]): continue
                 fecha_raw = str(fila[col_fecha]).strip()
                 fecha_val = pd.to_datetime(fecha_raw, format="%d/%m/%Y", errors="coerce")
@@ -1316,26 +1636,40 @@ def procesar_banco_activo(df):
     st.info("🔍 Procesando archivo de Banco Activo...")
     
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE (Banco Activo tiene fechas en columna 0)
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Banco Activo"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Banco Activo: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Banco Activo"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
-        st.write(f"- Número de filas: {len(df)}")
-        st.write(f"- Número de columnas: {len(df.columns)}")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
         
         # Mostrar primeras filas para debug
         st.write("👁️ **Primeras 15 filas del archivo:**")
-        st.dataframe(df.head(15))
-        
-        # 🔥 NUEVO: El archivo tiene los encabezados en la fila 0 con "Número de Cuenta"
-        # Pero los datos están en las filas siguientes sin encabezados de columna
-        # Así que vamos a usar índices fijos: columna 0 = Fecha, 1 = Fecha Valor, 2 = Concepto, 3 = #, 4 = Débito, 5 = Crédito, 6 = Saldo
+        st.dataframe(df_filtrado.head(15))
         
         # Verificar que tenemos suficientes columnas
-        if df.shape[1] < 7:
+        if df_filtrado.shape[1] < 7:
             st.error("❌ El archivo no tiene el número esperado de columnas (7).")
             return pd.DataFrame()
         
         # Saltar la primera fila (Número de Cuenta) y empezar desde la fila 1
-        df_datos = df.iloc[1:].copy().reset_index(drop=True)
+        df_datos = df_filtrado.iloc[1:].copy().reset_index(drop=True)
         
         # Asignar nombres de columnas
         df_datos.columns = ["FECHA", "FECHA_VALOR", "DESCRIPCION", "NRO", "DEBITO", "CREDITO", "SALDO"]
@@ -1535,6 +1869,12 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "22/06/2026": 612.4332, "23/06/2026": 617.6388, "24/06/2026": 621.5299,
         "25/06/2026": 621.5299, "26/06/2026": 622.2135, "27/06/2026": 623.0223,
         "28/06/2026": 623.0223, "29/06/2026": 623.0223, "30/06/2026": 623.0223,
+        "01/07/2026": 633.3644, "02/07/2026": 639.7029, "03/07/2026": 652.9726,
+        "04/07/2026": 667.0500, "05/07/2026": 667.0500, "06/07/2026": 667.0500,
+        "07/07/2026": 674.9305, "08/07/2026": 685.9427, "09/07/2026": 700.2249,
+        "10/07/2026": 709.6935, "11/07/2026": 721.3456, "12/07/2026": 721.3456,
+        "13/07/2026": 721.3456, "14/07/2026": 723.9990, "15/07/2026": 725.7470,
+        "16/07/2026": 727.4512,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
@@ -1664,7 +2004,6 @@ def procesar_archivo(df, usar_api=False, banco=""):
 # INTERFAZ PRINCIPAL - EJECUCIÓN
 # =========================================================
 
-
 # =========================================================
 # 🔥 MONOBANCO FUNCTIONS (NAMESPACED TO AVOID OVERWRITING)
 # =========================================================
@@ -1723,7 +2062,7 @@ def mono_leer_excel_sin_encabezados(archivo):
         st.error(f"No se pudo leer el archivo. Error: {str(e)}")
         st.stop()
 
-def leer_excel_con_encabezados(archivo):
+def mono_leer_excel_con_encabezados(archivo):
     """Lee archivo Excel con encabezados detectando el engine correcto"""
     nombre = archivo.name.lower()
     
@@ -1955,7 +2294,7 @@ def mono_limpiar_monto_banplus(valor):
 # CALCULAR USD SEGÚN TASA
 # =========================================================
 
-def calcular_usd(monto_bs, tasa):
+def mono_calcular_usd(monto_bs, tasa):
     try:
         if monto_bs is None or tasa is None or tasa == 0:
             return None
@@ -2243,11 +2582,29 @@ def mono_enriquecer_egresos_con_ipago(df_egresos, df_ipago):
 def mono_procesar_banesco(df):
     st.info("Procesando Banesco...")
     try:
-        df.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
-        df.columns = [str(c).strip().upper() for c in df.columns]
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Banesco"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Banesco: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Banesco"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
+        df_filtrado.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
+        df_filtrado.columns = [str(c).strip().upper() for c in df_filtrado.columns]
 
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             c = str(col).lower()
             if "fecha" in c:
                 rename_map[col] = "FECHA"
@@ -2258,10 +2615,10 @@ def mono_procesar_banesco(df):
             elif "monto" in c:
                 rename_map[col] = "MONTO_RAW"
 
-        df = df.rename(columns=rename_map)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
 
         for col in ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW"]:
-            if col not in df.columns:
+            if col not in df_filtrado.columns:
                 st.error(f"No existe columna: {col}")
                 return pd.DataFrame()
 
@@ -2274,24 +2631,24 @@ def mono_procesar_banesco(df):
                 return pd.to_datetime(val_str, dayfirst=False, errors="coerce")
             return pd.to_datetime(val_str, dayfirst=True, errors="coerce")
 
-        df["FECHA"] = df["FECHA"].apply(parse_banesco_date)
-        df = df[df["FECHA"].notna()]
+        df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parse_banesco_date)
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
 
-        df["TIPO"] = df["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
-        df["MONTO"] = (df["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
+        df_filtrado["TIPO"] = df_filtrado["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
+        df_filtrado["MONTO"] = (df_filtrado["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
                        .str.replace("-", "", regex=False)
                        .str.replace(".", "", regex=False)
                        .str.replace(",", ".", regex=False)
                        .str.strip())
 
-        df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
-        df = df[df["MONTO"].notna()]
-        df = df[df["MONTO"] > 0]
+        df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
 
-        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
-        st.success(f"Banesco OK: {len(df)} movimientos")
-        st.dataframe(df.head())
-        return df
+        df_filtrado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Banesco OK: {len(df_filtrado)} movimientos")
+        st.dataframe(df_filtrado.head())
+        return df_filtrado
 
     except Exception as e:
         st.error(f"Error Banesco: {str(e)}")
@@ -2310,19 +2667,37 @@ def mono_procesar_provincial(df):
     st.info("🔍 Procesando archivo de Provincial (formato especial)...")
     
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=0, nombre_banco="Provincial"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Provincial: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Provincial"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
-        st.write(f"- Número de filas: {len(df)}")
-        st.write(f"- Número de columnas: {len(df.columns)}")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
         
         # Mostrar primeras filas para debug
         st.write("👁️ **Primeras 15 filas del archivo:**")
-        st.dataframe(df.head(15))
+        st.dataframe(df_filtrado.head(15))
         
         # Buscar la fila que contiene los encabezados
         encabezado_idx = None
-        for i in range(min(30, len(df))):
-            fila = df.iloc[i]
+        for i in range(min(30, len(df_filtrado))):
+            fila = df_filtrado.iloc[i]
             # Convertir TODOS los valores a string para evitar errores
             fila_str = [str(val) for val in fila.tolist()]
             texto_fila = " ".join(fila_str).upper()
@@ -2339,7 +2714,7 @@ def mono_procesar_provincial(df):
         st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
         
         # Obtener los encabezados
-        headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+        headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
         st.write("📋 **Encabezados detectados:**", headers)
         
         # Limpiar y mapear encabezados
@@ -2364,89 +2739,89 @@ def mono_procesar_provincial(df):
         st.write("📋 **Mapeo de columnas:**", rename_map)
         
         # Asignar encabezados al DataFrame
-        df.columns = headers
-        df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        df_filtrado.columns = headers
+        df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
         
         # Renombrar columnas
-        df = df.rename(columns=rename_map)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
         
         # Verificar columnas necesarias
-        if "FECHA" not in df.columns:
+        if "FECHA" not in df_filtrado.columns:
             # Intentar encontrar fecha en otra columna
-            for col in df.columns:
+            for col in df_filtrado.columns:
                 if "FECHA" in str(col).upper():
-                    df = df.rename(columns={col: "FECHA"})
+                    df_filtrado = df_filtrado.rename(columns={col: "FECHA"})
                     break
         
-        if "FECHA" in df.columns:
+        if "FECHA" in df_filtrado.columns:
             # Procesar fechas - convertir a string primero
-            df["FECHA"] = df["FECHA"].astype(str).str.strip()
+            df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
             # Eliminar filas con fechas vacías o que sean encabezados
-            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
+            df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
             # Eliminar filas con fechas que sean números o NaN
-            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
             
             # Convertir fechas (formato DD-MM-YYYY o DD/MM/YYYY)
-            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-            df = df[df["FECHA"].notna()]
+            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         else:
             st.error("❌ No se encontró columna FECHA en el archivo Provincial.")
             return pd.DataFrame()
         
         # Procesar el monto
-        if "MONTO" in df.columns:
+        if "MONTO" in df_filtrado.columns:
             # Limpiar el monto (quitar espacios, puntos, comas) - convertir a string primero
-            df["MONTO"] = df["MONTO"].astype(str).str.replace(" ", "", regex=False)
-            df["MONTO"] = df["MONTO"].str.replace(".", "", regex=False)
-            df["MONTO"] = df["MONTO"].str.replace(",", ".", regex=False)
-            df["MONTO"] = df["MONTO"].str.replace("'", "", regex=False)
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].astype(str).str.replace(" ", "", regex=False)
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].str.replace(".", "", regex=False)
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].str.replace(",", ".", regex=False)
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].str.replace("'", "", regex=False)
             
             # Convertir directamente a numérico (sin filtro regex)
-            df["MONTO"] = pd.to_numeric(df["MONTO"], errors="coerce")
+            df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
             
             # Eliminar filas con monto NaN
-            df = df[df["MONTO"].notna()]
+            df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
             
             # Si el monto es negativo, es un ND (débito), si es positivo es NC (crédito)
-            df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+            df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
             
             # Tomar valor absoluto
-            df["MONTO"] = df["MONTO"].abs()
+            df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
             
             # Eliminar filas con monto 0
-            df = df[df["MONTO"] > 0]
+            df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
         else:
             st.error("❌ No se encontró columna MONTO en el archivo Provincial.")
             return pd.DataFrame()
         
         # Asegurar que existe columna REFERENCIA
-        if "REFERENCIA" not in df.columns:
-            df["REFERENCIA"] = ""
+        if "REFERENCIA" not in df_filtrado.columns:
+            df_filtrado["REFERENCIA"] = ""
         else:
-            df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip()
+            df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].astype(str).str.strip()
             # Limpiar referencias (quitar comillas simples)
-            df["REFERENCIA"] = df["REFERENCIA"].str.replace("'", "", regex=False)
+            df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].str.replace("'", "", regex=False)
         
         # Asegurar que existe columna DESCRIPCION
-        if "DESCRIPCION" not in df.columns:
-            df["DESCRIPCION"] = ""
+        if "DESCRIPCION" not in df_filtrado.columns:
+            df_filtrado["DESCRIPCION"] = ""
         else:
-            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+            df_filtrado["DESCRIPCION"] = df_filtrado["DESCRIPCION"].astype(str).str.strip()
         
         # 🔥 DETECTAR COMISIONES DE PROVINCIAL
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
+        df_filtrado["ES_COMISION"] = df_filtrado["DESCRIPCION"].str.contains("COMIS", case=False, na=False)
         
         # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
-        num_comisiones = df["ES_COMISION"].sum()
+        num_comisiones = df_filtrado["ES_COMISION"].sum()
         st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo Provincial")
         
         # Mostrar las comisiones detectadas
         if num_comisiones > 0:
             st.write("📋 **Comisiones detectadas:**")
-            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+            st.dataframe(df_filtrado[df_filtrado["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
         
         # Seleccionar solo las columnas necesarias
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_resultado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         
         # Mostrar resultados
         st.success(f"✅ Provincial OK: {len(df_resultado)} movimientos detectados")
@@ -2466,10 +2841,29 @@ def mono_procesar_provincial(df):
 
 def mono_procesar_bnc(df):
     st.info("Procesando archivo BNC...")
+    
+    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+        df, columna_fecha_idx=0, nombre_banco="BNC"
+    )
+    
+    if df_filtrado is None or df_filtrado.empty:
+        df_filtrado = df
+        st.warning("⚠️ BNC: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+    
+    if fecha_pred:
+        st.session_state.info_fechas_por_banco["BNC"] = {
+            'fecha': fecha_pred.strftime('%d/%m/%Y'),
+            'registros': len(df_filtrado),
+            'total_original': total_filas,
+            'excluidos': registros_excluidos,
+            'detalle_fechas': dict_conteo
+        }
+    
     encabezado = None
 
-    for i in range(min(30, len(df))):
-        fila = df.iloc[i].fillna("").astype(str)
+    for i in range(min(30, len(df_filtrado))):
+        fila = df_filtrado.iloc[i].fillna("").astype(str)
         texto = " ".join(fila.tolist()).lower()
         if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
             encabezado = i
@@ -2480,7 +2874,7 @@ def mono_procesar_bnc(df):
         return pd.DataFrame()
 
     headers = []
-    for idx, col in enumerate(df.iloc[encabezado]):
+    for idx, col in enumerate(df_filtrado.iloc[encabezado]):
         col = str(col).strip().replace("\n", " ")
         if col == "" or col.lower() == "nan":
             col = f"COLUMNA_{idx}"
@@ -2497,11 +2891,11 @@ def mono_procesar_bnc(df):
             nuevo = h
         headers_unicos.append(nuevo)
 
-    df.columns = headers_unicos
-    df = df.iloc[encabezado + 1:].reset_index(drop=True)
+    df_filtrado.columns = headers_unicos
+    df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
 
     rename_map = {}
-    for col in df.columns:
+    for col in df_filtrado.columns:
         col_str = str(col).strip().lower()
         if "fecha" in col_str:
             rename_map[col] = "FECHA"
@@ -2514,23 +2908,23 @@ def mono_procesar_bnc(df):
         elif "debito" in col_str or "debe" in col_str:
             rename_map[col] = "DEBITO"
 
-    df = df.rename(columns=rename_map)
+    df_filtrado = df_filtrado.rename(columns=rename_map)
 
-    if "FECHA" in df.columns:
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        df = df[df["FECHA"].notna()]
+    if "FECHA" in df_filtrado.columns:
+        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
 
-    df["CREDITO"] = pd.to_numeric(df.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df.columns else 0
-    df["DEBITO"] = pd.to_numeric(df.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df.columns else 0
+    df_filtrado["CREDITO"] = pd.to_numeric(df_filtrado.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df_filtrado.columns else 0
+    df_filtrado["DEBITO"] = pd.to_numeric(df_filtrado.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df_filtrado.columns else 0
 
-    df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-    df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
-    df["MONTO"] = df["MONTO"].abs()
-    df = df[df["MONTO"] != 0]
+    df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+    df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+    df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+    df_filtrado = df_filtrado[df_filtrado["MONTO"] != 0]
 
-    st.success(f"Registros BNC: {len(df)}")
-    st.dataframe(df.head())
-    return df
+    st.success(f"Registros BNC: {len(df_filtrado)}")
+    st.dataframe(df_filtrado.head())
+    return df_filtrado
 
 # =========================================================
 # PROCESAR TESORO
@@ -2538,10 +2932,29 @@ def mono_procesar_bnc(df):
 
 def mono_procesar_tesoro(df):
     st.info("Procesando Banco del Tesoro...")
+    
+    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+        df, columna_fecha_idx=0, nombre_banco="Tesoro"
+    )
+    
+    if df_filtrado is None or df_filtrado.empty:
+        df_filtrado = df
+        st.warning("⚠️ Tesoro: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+    
+    if fecha_pred:
+        st.session_state.info_fechas_por_banco["Tesoro"] = {
+            'fecha': fecha_pred.strftime('%d/%m/%Y'),
+            'registros': len(df_filtrado),
+            'total_original': total_filas,
+            'excluidos': registros_excluidos,
+            'detalle_fechas': dict_conteo
+        }
+    
     try:
         encabezado = None
-        for i in range(min(20, len(df))):
-            fila = df.iloc[i].astype(str)
+        for i in range(min(20, len(df_filtrado))):
+            fila = df_filtrado.iloc[i].astype(str)
             texto = " ".join(map(str, fila.tolist())).lower()
             if "fecha" in texto and "referencia" in texto and "concepto" in texto:
                 encabezado = i
@@ -2551,12 +2964,12 @@ def mono_procesar_tesoro(df):
             st.error("No se encontró encabezado válido en Tesoro")
             return pd.DataFrame()
 
-        df.columns = df.iloc[encabezado]
-        df = df.iloc[encabezado + 1:].reset_index(drop=True)
-        df.columns = [str(c).strip() for c in df.columns]
+        df_filtrado.columns = df_filtrado.iloc[encabezado]
+        df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
+        df_filtrado.columns = [str(c).strip() for c in df_filtrado.columns]
 
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             c = str(col).strip().lower()
             if "fecha" in c:
                 rename_map[col] = "FECHA"
@@ -2571,14 +2984,14 @@ def mono_procesar_tesoro(df):
             elif "código" in c or "codigo" in c:
                 rename_map[col] = "TIPO"
 
-        df = df.rename(columns=rename_map)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
 
-        if "FECHA" not in df.columns:
+        if "FECHA" not in df_filtrado.columns:
             st.error("No existe columna FECHA")
             return pd.DataFrame()
 
-        df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        df = df[df["FECHA"].notna()]
+        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
 
         def limpiar_numero(valor):
             valor = str(valor).replace(".", "").replace(",", ".")
@@ -2587,18 +3000,18 @@ def mono_procesar_tesoro(df):
             except:
                 return 0
 
-        df["CREDITO"] = df.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df.columns else 0
-        df["DEBITO"] = df.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df.columns else 0
+        df_filtrado["CREDITO"] = df_filtrado.get("CREDITO", 0).apply(limpiar_numero) if "CREDITO" in df_filtrado.columns else 0
+        df_filtrado["DEBITO"] = df_filtrado.get("DEBITO", 0).apply(limpiar_numero) if "DEBITO" in df_filtrado.columns else 0
 
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
-        df["MONTO"] = df["MONTO"].abs()
-        df = df[df["MONTO"] > 0]
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
 
-        df = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
-        st.success(f"Tesoro OK: {len(df)} registros")
-        st.dataframe(df.head())
-        return df
+        df_filtrado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
+        st.success(f"Tesoro OK: {len(df_filtrado)} registros")
+        st.dataframe(df_filtrado.head())
+        return df_filtrado
 
     except Exception as e:
         st.error(f"Error Tesoro: {str(e)}")
@@ -2618,17 +3031,36 @@ def mono_procesar_bancamiga(df):
     try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(-1)
+        
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=1, nombre_banco="Bancamiga"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Bancamiga: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Bancamiga"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
-        st.write(f"- Número de filas: {len(df)}")
-        st.write(f"- Número de columnas: {len(df.columns)}")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
         
         # Mostrar primeras filas para debug
         st.write("👁️ **Primeras 15 filas del archivo:**")
-        st.dataframe(df.head(15))
+        st.dataframe(df_filtrado.head(15))
         
         # 🔥 VERIFICAR SI YA TIENE ENCABEZADOS
-        columnas = [str(c).strip().upper() for c in df.columns]
+        columnas = [str(c).strip().upper() for c in df_filtrado.columns]
         
         if "FECHA" in columnas and "REFERENCIA" in columnas:
             st.success("✅ Encabezados ya presentes.")
@@ -2647,16 +3079,16 @@ def mono_procesar_bancamiga(df):
                 "SALDO": "SALDO"
             }
             
-            df.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper())
-                          for c in df.columns]
+            df_filtrado.columns = [rename_map.get(str(c).strip().upper(), str(c).strip().upper())
+                          for c in df_filtrado.columns]
             
         else:
             st.info("🔍 Buscando fila de encabezados...")
             
             # Buscar la fila que contiene los encabezados
             encabezado_idx = None
-            for i in range(min(30, len(df))):
-                fila = df.iloc[i]
+            for i in range(min(30, len(df_filtrado))):
+                fila = df_filtrado.iloc[i]
                 # Convertir TODOS los valores a string para evitar errores
                 fila_str = [str(val) for val in fila.tolist()]
                 texto_fila = " ".join(fila_str).upper()
@@ -2673,7 +3105,7 @@ def mono_procesar_bancamiga(df):
             st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
             
             # Obtener los encabezados
-            headers = df.iloc[encabezado_idx].astype(str).str.strip().tolist()
+            headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
             st.write("📋 **Encabezados detectados:**", headers)
             
             # Limpiar y mapear encabezados
@@ -2698,21 +3130,21 @@ def mono_procesar_bancamiga(df):
             st.write("📋 **Mapeo de columnas:**", rename_map)
             
             # Asignar encabezados al DataFrame
-            df.columns = headers
-            df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+            df_filtrado.columns = headers
+            df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
             
             # Renombrar columnas
-            df = df.rename(columns=rename_map)
+            df_filtrado = df_filtrado.rename(columns=rename_map)
         
         # Verificar columnas necesarias
-        if "FECHA" not in df.columns:
+        if "FECHA" not in df_filtrado.columns:
             st.error("❌ No se encontró columna FECHA en el archivo Bancamiga.")
             return pd.DataFrame()
         
         # 🔥 PROCESAR FECHAS DE BANCAMIGA DE MANERA ROBUSTA
         # Filtrar filas que no son movimientos
-        fechas_str_col = df["FECHA"].astype(str).str.strip()
-        df = df[
+        fechas_str_col = df_filtrado["FECHA"].astype(str).str.strip()
+        df_filtrado = df_filtrado[
             ~fechas_str_col.str.contains(
                 "FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO",
                 case=False,
@@ -2721,16 +3153,16 @@ def mono_procesar_bancamiga(df):
         ]
 
         # Convertir fechas de manera robusta
-        df["FECHA_DT"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-        mask = df["FECHA_DT"].isna()
+        df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        mask = df_filtrado["FECHA_DT"].isna()
         if mask.any():
-            df.loc[mask, "FECHA_DT"] = pd.to_datetime(
-                df.loc[mask, "FECHA"].astype(str).str.strip(),
+            df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(
+                df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(),
                 dayfirst=True,
                 errors="coerce"
             )
         
-        df = df[df["FECHA"].notna()]
+        df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         
         # Procesar débito y crédito
         def limpiar_monto(val):
@@ -2741,53 +3173,53 @@ def mono_procesar_bancamiga(df):
                 val_str = val_str.replace(".", "").replace(",", ".")
             return pd.to_numeric(val_str, errors="coerce")
 
-        if "DEBITO" in df.columns:
-            df["DEBITO"] = df["DEBITO"].apply(limpiar_monto).fillna(0)
+        if "DEBITO" in df_filtrado.columns:
+            df_filtrado["DEBITO"] = df_filtrado["DEBITO"].apply(limpiar_monto).fillna(0)
         else:
-            df["DEBITO"] = 0.0
+            df_filtrado["DEBITO"] = 0.0
         
-        if "CREDITO" in df.columns:
-            df["CREDITO"] = df["CREDITO"].apply(limpiar_monto).fillna(0)
+        if "CREDITO" in df_filtrado.columns:
+            df_filtrado["CREDITO"] = df_filtrado["CREDITO"].apply(limpiar_monto).fillna(0)
         else:
-            df["CREDITO"] = 0.0
+            df_filtrado["CREDITO"] = 0.0
         
         # Determinar tipo y monto
-        df["MONTO"] = df["CREDITO"] - df["DEBITO"]
-        df["TIPO"] = df["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
-        df["MONTO"] = df["MONTO"].abs()
+        df_filtrado["MONTO"] = df_filtrado["CREDITO"] - df_filtrado["DEBITO"]
+        df_filtrado["TIPO"] = df_filtrado["MONTO"].apply(lambda x: "NC" if x > 0 else "ND" if x < 0 else "")
+        df_filtrado["MONTO"] = df_filtrado["MONTO"].abs()
         
         # Eliminar filas con monto 0
-        df = df[df["MONTO"] > 0]
+        df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
         
         # Asegurar que existe columna REFERENCIA
-        if "REFERENCIA" not in df.columns:
-            df["REFERENCIA"] = ""
+        if "REFERENCIA" not in df_filtrado.columns:
+            df_filtrado["REFERENCIA"] = ""
         else:
-            df["REFERENCIA"] = df["REFERENCIA"].astype(str).str.strip()
+            df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].astype(str).str.strip()
             # Limpiar referencias (quitar comillas simples)
-            df["REFERENCIA"] = df["REFERENCIA"].str.replace("'", "", regex=False)
+            df_filtrado["REFERENCIA"] = df_filtrado["REFERENCIA"].str.replace("'", "", regex=False)
         
         # Asegurar que existe columna DESCRIPCION
-        if "DESCRIPCION" not in df.columns:
-            df["DESCRIPCION"] = ""
+        if "DESCRIPCION" not in df_filtrado.columns:
+            df_filtrado["DESCRIPCION"] = ""
         else:
-            df["DESCRIPCION"] = df["DESCRIPCION"].astype(str).str.strip()
+            df_filtrado["DESCRIPCION"] = df_filtrado["DESCRIPCION"].astype(str).str.strip()
         
         # 🔥 DETECTAR COMISIONES DE BANCAMIGA
         # Las comisiones tienen "Comisión" en la descripción
-        df["ES_COMISION"] = df["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
+        df_filtrado["ES_COMISION"] = df_filtrado["DESCRIPCION"].str.contains("Comisi", case=False, na=False)
         
         # 🔥 DEBUG: Mostrar cuántas comisiones se detectaron
-        num_comisiones = df["ES_COMISION"].sum()
+        num_comisiones = df_filtrado["ES_COMISION"].sum()
         st.info(f"💳 Se detectaron {num_comisiones} comisiones en el archivo Bancamiga")
         
         # Mostrar las comisiones detectadas
         if num_comisiones > 0:
             st.write("📋 **Comisiones detectadas:**")
-            st.dataframe(df[df["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
+            st.dataframe(df_filtrado[df_filtrado["ES_COMISION"] == True][["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO"]])
         
         # Seleccionar solo las columnas necesarias
-        df_resultado = df[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
+        df_resultado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO", "ES_COMISION"]].copy()
         
         # Mostrar resultados
         st.success(f"✅ Bancamiga OK: {len(df_resultado)} movimientos detectados")
@@ -2842,7 +3274,7 @@ def mono_obtener_tasa_bcv_fecha(fecha_obj):
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
 
-def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
+def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return mono_obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
@@ -2905,14 +3337,32 @@ def mono_procesar_venezuela_simple(df):
     st.info("🔍 Procesando Banco de Venezuela (MODO SIMPLE)...")
     
     try:
+        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+            df, columna_fecha_idx=3, nombre_banco="Banco de Venezuela"
+        )
+        
+        if df_filtrado is None or df_filtrado.empty:
+            df_filtrado = df
+            st.warning("⚠️ Banco de Venezuela: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+        
+        if fecha_pred:
+            st.session_state.info_fechas_por_banco["Banco de Venezuela"] = {
+                'fecha': fecha_pred.strftime('%d/%m/%Y'),
+                'registros': len(df_filtrado),
+                'total_original': total_filas,
+                'excluidos': registros_excluidos,
+                'detalle_fechas': dict_conteo
+            }
+        
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
-        st.write(f"- Número de filas: {len(df)}")
-        st.write(f"- Número de columnas: {len(df.columns)}")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
         
         # Mostrar primeras filas
         st.write("👁️ **Primeras 10 filas del archivo (sin encabezados):**")
-        st.dataframe(df.head(10))
+        st.dataframe(df_filtrado.head(10))
         
         # Índices fijos para el formato BDV
         col_fecha = 3
@@ -2926,9 +3376,9 @@ def mono_procesar_venezuela_simple(df):
         filas_procesadas = 0
         
         # Empezar desde la fila 1 (saltar encabezados)
-        for idx in range(1, len(df)):
+        for idx in range(1, len(df_filtrado)):
             try:
-                fila = df.iloc[idx]
+                fila = df_filtrado.iloc[idx]
                 
                 # Verificar que existe fecha
                 if pd.isna(fila[col_fecha]):
@@ -3043,7 +3493,6 @@ def mono_procesar_venezuela_simple(df):
         st.code(traceback.format_exc())
         return pd.DataFrame()
 
-
 def mono_convertir_venezuela_a_formato_mercantil(df):
     """Convierte DataFrame de Venezuela al formato Mercantil - SIN AFECTAR A MERCANTIL"""
     datos_convertidos = []
@@ -3106,33 +3555,52 @@ def mono_procesar_banplus(df):
     Columnas: Fecha | Referencia | Descripción | Débito | Crédito | Saldo
     """
     st.info("🔍 Procesando archivo de Banplus...")
+    
+    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+        df, columna_fecha_idx=0, nombre_banco="Banplus"
+    )
+    
+    if df_filtrado is None or df_filtrado.empty:
+        df_filtrado = df
+        st.warning("⚠️ Banplus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+    
+    if fecha_pred:
+        st.session_state.info_fechas_por_banco["Banplus"] = {
+            'fecha': fecha_pred.strftime('%d/%m/%Y'),
+            'registros': len(df_filtrado),
+            'total_original': total_filas,
+            'excluidos': registros_excluidos,
+            'detalle_fechas': dict_conteo
+        }
+    
     try:
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
-        st.write(f"- Número de filas: {len(df)}")
-        st.write(f"- Número de columnas: {len(df.columns)}")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
         
         # Encontrar la fila de encabezados si no está en las columnas
         encabezado_idx = None
-        cols_upper = [str(c).strip().upper() for c in df.columns]
+        cols_upper = [str(c).strip().upper() for c in df_filtrado.columns]
         if "FECHA" in cols_upper and "REFERENCIA" in cols_upper:
             pass
         else:
-            for i in range(min(15, len(df))):
-                fila = df.iloc[i].astype(str).str.strip().str.upper().tolist()
+            for i in range(min(15, len(df_filtrado))):
+                fila = df_filtrado.iloc[i].astype(str).str.strip().str.upper().tolist()
                 fila_str = " ".join(fila)
                 if "FECHA" in fila_str and "REFERENCIA" in fila_str:
                     encabezado_idx = i
                     break
             if encabezado_idx is not None:
-                df.columns = df.iloc[encabezado_idx].tolist()
-                df = df.iloc[encabezado_idx + 1:].reset_index(drop=True)
+                df_filtrado.columns = df_filtrado.iloc[encabezado_idx].tolist()
+                df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
         
         # Limpiar columnas
-        df.columns = [str(c).strip().upper() for c in df.columns]
+        df_filtrado.columns = [str(c).strip().upper() for c in df_filtrado.columns]
         
         rename_map = {}
-        for col in df.columns:
+        for col in df_filtrado.columns:
             col_clean = str(col).strip().upper()
             if "FECHA" in col_clean: rename_map[col] = "FECHA"
             elif "REFERENCIA" in col_clean: rename_map[col] = "REFERENCIA"
@@ -3141,23 +3609,23 @@ def mono_procesar_banplus(df):
             elif "CRÉDITO" in col_clean or "CREDITO" in col_clean or "CRE" in col_clean: rename_map[col] = "CREDITO"
             elif "SALDO" in col_clean: rename_map[col] = "SALDO"
             
-        df = df.rename(columns=rename_map)
+        df_filtrado = df_filtrado.rename(columns=rename_map)
         
         # Filtrar filas vacías o totales
-        if "FECHA" in df.columns:
-            df["FECHA"] = df["FECHA"].astype(str).str.strip()
-            df = df[~df["FECHA"].str.contains("FECHA|SALDO|Período|Total", case=False, na=False)]
-            df = df[df["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
-            df["FECHA"] = pd.to_datetime(df["FECHA"], dayfirst=True, errors="coerce")
-            df = df[df["FECHA"].notna()]
+        if "FECHA" in df_filtrado.columns:
+            df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
+            df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período|Total", case=False, na=False)]
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
+            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
             
         # Reemplazar valores vacíos o nulos en Débito y Crédito
         for col in ["DEBITO", "CREDITO"]:
-            if col in df.columns:
-                df[col] = df[col].apply(mono_limpiar_monto_banplus).fillna(0.0)
+            if col in df_filtrado.columns:
+                df_filtrado[col] = df_filtrado[col].apply(mono_limpiar_monto_banplus).fillna(0.0)
                 
         datos_normalizados = []
-        for idx, fila in df.iterrows():
+        for idx, fila in df_filtrado.iterrows():
             fecha_str = fila["FECHA"].strftime("%d/%m/%Y")
             referencia = str(fila.get("REFERENCIA", "")).strip().replace("'", "")
             descripcion = str(fila.get("DESCRIPCION", "")).strip()
@@ -3242,11 +3710,11 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
             if fecha_key in cache_tasas:
                 tasa = cache_tasas[fecha_key]
             else:
-                tasa = obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
+                tasa = mono_obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
                 if tasa is not None:
                     cache_tasas[fecha_key] = tasa
 
-            monto_usd = calcular_usd(monto_bs, tasa)
+            monto_usd = mono_calcular_usd(monto_bs, tasa)
             if monto_usd is None:
                 continue
 
@@ -3431,8 +3899,6 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
             continue
 
     return ingresos, egresos, comisiones
-
-# =========================================================
 
 # =========================================================
 # HEADER
@@ -3780,6 +4246,39 @@ if st.session_state.seccion_activa == "consolidado":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # =========================================================
+    # RESUMEN DE FECHAS PROCESADAS
+    # =========================================================
+    if st.session_state.info_fechas_por_banco:
+        with st.expander("📅 Resumen de Fechas Procesadas por Banco", expanded=False):
+            data_fechas = []
+            for banco, info in st.session_state.info_fechas_por_banco.items():
+                fechas_excluidas = []
+                for fecha, count in info.get('detalle_fechas', {}).items():
+                    if fecha != info.get('fecha', ''):
+                        fechas_excluidas.append(f"{fecha} ({count})")
+                
+                data_fechas.append({
+                    "Banco": banco,
+                    "Fecha Procesada": info.get('fecha', 'No detectada'),
+                    "Registros Procesados": info.get('registros', 0),
+                    "Registros Excluidos": info.get('excluidos', 0),
+                    "Total Original": info.get('total_original', 0),
+                    "Fechas Excluidas": ", ".join(fechas_excluidas) or "Ninguna"
+                })
+            
+            df_fechas = pd.DataFrame(data_fechas)
+            st.dataframe(df_fechas, use_container_width=True)
+            
+            # Descargar reporte de fechas
+            csv = df_fechas.to_csv(index=False)
+            st.download_button(
+                label="📥 Descargar Resumen de Fechas (CSV)",
+                data=csv,
+                file_name=f"resumen_fechas_procesadas_{date.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
 
     # =========================================================
     # LEER ARCHIVOS CARGADOS
@@ -4374,6 +4873,52 @@ if st.session_state.seccion_activa == "consolidado":
                         cell_total_egr_usd.fill = amarillo
                         cell_total_egr_usd.alignment = alineacion_derecha
 
+                        # 🔥 SECCIÓN: RESUMEN DE FECHAS PROCESADAS
+                        if st.session_state.info_fechas_por_banco:
+                            fila_r += 2
+                            hoja_resumen.merge_cells(start_row=fila_r, start_column=2, end_row=fila_r, end_column=4)
+                            cell_fechas_titulo = hoja_resumen.cell(row=fila_r, column=2, value="RESUMEN DE FECHAS PROCESADAS POR BANCO")
+                            cell_fechas_titulo.font = Font(bold=True, size=11, color="1E3A5F")
+                            cell_fechas_titulo.alignment = alineacion_centro
+                            fila_r += 1
+                            
+                            # Encabezados de la tabla de fechas
+                            headers_fechas = ["BANCO", "FECHA PROCESADA", "REGISTROS", "EXCLUIDOS", "TOTAL ORIGINAL"]
+                            for col_num, header in enumerate(headers_fechas, 2):
+                                cell = hoja_resumen.cell(row=fila_r, column=col_num)
+                                cell.value = header
+                                cell.fill = azul_oscuro
+                                cell.font = blanco_bold
+                                cell.alignment = alineacion_centro
+                                cell.border = borde_fino
+                            fila_r += 1
+                            
+                            for banco, info in st.session_state.info_fechas_por_banco.items():
+                                hoja_resumen.cell(row=fila_r, column=2, value=banco).border = borde_fino
+                                hoja_resumen.cell(row=fila_r, column=3, value=info.get('fecha', 'No detectada')).border = borde_fino
+                                hoja_resumen.cell(row=fila_r, column=4, value=info.get('registros', 0)).border = borde_fino
+                                hoja_resumen.cell(row=fila_r, column=5, value=info.get('excluidos', 0)).border = borde_fino
+                                hoja_resumen.cell(row=fila_r, column=6, value=info.get('total_original', 0)).border = borde_fino
+                                
+                                # Resaltar filas con exclusiones
+                                if info.get('excluidos', 0) > 0:
+                                    for col in range(2, 7):
+                                        hoja_resumen.cell(row=fila_r, column=col).fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+                                
+                                # Mostrar detalle de fechas excluidas
+                                detalle_fechas = info.get('detalle_fechas', {})
+                                if detalle_fechas:
+                                    fechas_excluidas = [f"{fecha} ({count})" for fecha, count in detalle_fechas.items() if fecha != info.get('fecha', '')]
+                                    if fechas_excluidas:
+                                        fila_r += 1
+                                        for col in range(2, 7):
+                                            hoja_resumen.cell(row=fila_r, column=col).fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                                        hoja_resumen.cell(row=fila_r, column=2, value="  ⚠️ Fechas excluidas:").border = borde_fino
+                                        hoja_resumen.cell(row=fila_r, column=3, value=", ".join(fechas_excluidas)).border = borde_fino
+                                        hoja_resumen.merge_cells(start_row=fila_r, start_column=3, end_row=fila_r, end_column=6)
+                                
+                                fila_r += 1
+
                         for columna in hoja_resumen.columns:
                             max_length = 0
                             try:
@@ -4733,6 +5278,30 @@ else:
                 st.dataframe(df_original.head(20), use_container_width=True)
 
             # =========================================================
+            # RESUMEN DE FECHAS PROCESADAS
+            # =========================================================
+            if st.session_state.info_fechas_por_banco:
+                with st.expander("📅 Resumen de Fechas Procesadas", expanded=False):
+                    data_fechas = []
+                    for banco, info in st.session_state.info_fechas_por_banco.items():
+                        fechas_excluidas = []
+                        for fecha, count in info.get('detalle_fechas', {}).items():
+                            if fecha != info.get('fecha', ''):
+                                fechas_excluidas.append(f"{fecha} ({count})")
+                        
+                        data_fechas.append({
+                            "Banco": banco,
+                            "Fecha Procesada": info.get('fecha', 'No detectada'),
+                            "Registros Procesados": info.get('registros', 0),
+                            "Registros Excluidos": info.get('excluidos', 0),
+                            "Total Original": info.get('total_original', 0),
+                            "Fechas Excluidas": ", ".join(fechas_excluidas) or "Ninguna"
+                        })
+                    
+                    df_fechas = pd.DataFrame(data_fechas)
+                    st.dataframe(df_fechas, use_container_width=True)
+
+            # =========================================================
             # LEER ARCHIVO IPAGO
             # =========================================================
             if archivo_ipago:
@@ -4753,10 +5322,10 @@ else:
 
                         for _, row in df_normalizado.iterrows():
                             fecha_obj = pd.to_datetime(row["FECHA"], dayfirst=True, errors="coerce")
-                            tasa = obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
+                            tasa = mono_obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
 
                             monto_bs = float(row["MONTO"])
-                            monto_usd = calcular_usd(monto_bs, tasa)
+                            monto_usd = mono_calcular_usd(monto_bs, tasa)
 
                             registro = {
                                 "FECHA": row["FECHA"],
