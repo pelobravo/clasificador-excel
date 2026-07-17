@@ -148,26 +148,54 @@ h1, h2, h3, h4, h5, h6 {
 def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
     """
     Detecta la fecha más frecuente en un archivo de estado de cuenta.
+    AHORA EXCLUYE FILAS QUE NO SON MOVIMIENTOS VÁLIDOS.
     
     Args:
         df_raw: DataFrame con los datos del banco
         columna_fecha_idx: Índice de la columna donde están las fechas (por defecto 0)
     
     Returns:
-        tuple: (fecha_predominante, dict_conteo_fechas, porcentaje_predominante)
+        tuple: (fecha_predominante, dict_conteo_fechas, porcentaje_predominante, total_movimientos_validos)
     """
     try:
         # Extraer todas las fechas de la columna especificada
         fechas = []
+        filas_invalidas = 0
+        
         for idx in range(len(df_raw)):
             try:
                 valor = df_raw.iloc[idx, columna_fecha_idx]
                 if pd.isna(valor):
+                    filas_invalidas += 1
                     continue
                 
                 # Convertir a string y limpiar
                 fecha_str = str(valor).strip()
                 if not fecha_str or fecha_str.lower() == 'nan':
+                    filas_invalidas += 1
+                    continue
+                
+                # 🔥 EXCLUIR FILAS QUE NO SON MOVIMIENTOS
+                # Verificar si la fila contiene palabras clave de encabezados/totales
+                es_encabezado = False
+                try:
+                    # Revisar toda la fila para detectar palabras de totales/encabezados
+                    fila_completa = " ".join([str(v) for v in df_raw.iloc[idx].tolist()]).upper()
+                    palabras_excluir = [
+                        "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
+                        "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
+                        "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
+                        "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITO", "DÉBITO", "DEBITO", "CREDITO"
+                    ]
+                    for palabra in palabras_excluir:
+                        if palabra in fila_completa:
+                            es_encabezado = True
+                            break
+                except:
+                    pass
+                
+                if es_encabezado:
+                    filas_invalidas += 1
                     continue
                 
                 # Intentar parsear la fecha
@@ -193,11 +221,15 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
                 if pd.notna(fecha_dt):
                     # Normalizar a solo fecha (sin hora)
                     fechas.append(fecha_dt.date())
-            except:
+                else:
+                    filas_invalidas += 1
+                    
+            except Exception as e:
+                filas_invalidas += 1
                 continue
         
         if not fechas:
-            return None, {}, 0.0
+            return None, {}, 0.0, 0
         
         # Contar frecuencias de cada fecha
         conteo = Counter(fechas)
@@ -206,26 +238,27 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
         fechas_ordenadas = conteo.most_common()
         
         if not fechas_ordenadas:
-            return None, {}, 0.0
+            return None, {}, 0.0, 0
         
         # Fecha predominante
         fecha_predominante = fechas_ordenadas[0][0]
-        total_filas = len(fechas)
+        total_filas_validas = len(fechas)
         cantidad_predominante = fechas_ordenadas[0][1]
-        porcentaje = (cantidad_predominante / total_filas) * 100
+        porcentaje = (cantidad_predominante / total_filas_validas) * 100 if total_filas_validas > 0 else 0.0
         
         # Crear diccionario con todas las fechas y sus conteos
         dict_conteo = {fecha.strftime("%d/%m/%Y"): count for fecha, count in conteo.items()}
         
-        return fecha_predominante, dict_conteo, porcentaje
+        return fecha_predominante, dict_conteo, porcentaje, total_filas_validas
         
     except Exception as e:
         st.warning(f"⚠️ Error al detectar fechas predominantes: {str(e)}")
-        return None, {}, 0.0
+        return None, {}, 0.0, 0
 
 def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="banco"):
     """
     Filtra el DataFrame para conservar solo los registros de la fecha predominante.
+    AHORA EXCLUYE FILAS QUE NO SON MOVIMIENTOS VÁLIDOS.
     
     Args:
         df_raw: DataFrame original
@@ -233,24 +266,25 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
         nombre_banco: Nombre del banco para mensajes
     
     Returns:
-        tuple: (df_filtrado, fecha_predominante, dict_conteo, total_filas_original, registros_excluidos)
+        tuple: (df_filtrado, fecha_predominante, dict_conteo, total_filas_validas, registros_excluidos)
     """
-    # Detectar fecha predominante
-    fecha_pred, dict_conteo, porcentaje = detectar_fecha_predominante(df_raw, columna_fecha_idx)
+    # Detectar fecha predominante (ahora excluye filas inválidas)
+    fecha_pred, dict_conteo, porcentaje, total_filas_validas = detectar_fecha_predominante(
+        df_raw, columna_fecha_idx
+    )
     
     if fecha_pred is None:
         st.warning(f"⚠️ {nombre_banco}: No se pudieron detectar fechas válidas. Se procesará todo el archivo.")
         return df_raw, None, {}, len(df_raw), 0
     
     # Mostrar información al usuario
-    total_filas = len(df_raw)
     fechas_texto = ", ".join([f"{fecha}: {count} registros" for fecha, count in sorted(dict_conteo.items())])
     
     st.info(f"""
     📅 **{nombre_banco} - Análisis de fechas:**
-    - Total de registros: {total_filas}
+    - Total de movimientos válidos: {total_filas_validas}
     - Fechas encontradas: {fechas_texto}
-    - **Fecha predominante: {fecha_pred.strftime('%d/%m/%Y')}** ({porcentaje:.1f}% de los registros)
+    - **Fecha predominante: {fecha_pred.strftime('%d/%m/%Y')}** ({porcentaje:.1f}% de los movimientos)
     """)
     
     # Función para comparar fechas
@@ -278,7 +312,8 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
     
     # Mostrar resumen del filtrado
     registros_filtrados = len(df_filtrado)
-    registros_excluidos = total_filas - registros_filtrados
+    total_filas_original = len(df_raw)
+    registros_excluidos = total_filas_original - registros_filtrados
     
     if registros_excluidos > 0:
         # Identificar qué fechas fueron excluidas
@@ -287,16 +322,21 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
             if fecha != fecha_pred.strftime("%d/%m/%Y"):
                 fechas_excluidas.append(f"{fecha} ({count} registros)")
         
+        # También contar filas que no tenían fecha válida
+        filas_sin_fecha = total_filas_original - total_filas_validas
+        if filas_sin_fecha > 0:
+            fechas_excluidas.append(f"Sin fecha válida ({filas_sin_fecha} registros)")
+        
         st.warning(f"""
         ⚠️ **{nombre_banco}: Se excluyeron {registros_excluidos} registros** 
         que no corresponden a la fecha predominante ({fecha_pred.strftime('%d/%m/%Y')}).
         
-        Fechas excluidas: {', '.join(fechas_excluidas)}
+        Detalle: {', '.join(fechas_excluidas) if fechas_excluidas else 'Todos los registros son de la fecha predominante'}
         """)
+    else:
+        st.success(f"✅ {nombre_banco}: Todos los {registros_filtrados} registros son de la fecha {fecha_pred.strftime('%d/%m/%Y')}")
     
-    st.success(f"✅ {nombre_banco}: {registros_filtrados} registros procesados para la fecha {fecha_pred.strftime('%d/%m/%Y')}")
-    
-    return df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos
+    return df_filtrado, fecha_pred, dict_conteo, total_filas_validas, registros_excluidos
 
 # =========================================================
 # 🔥 NUEVAS FUNCIONES PARA CONCILIACIÓN MULTIBANCO
