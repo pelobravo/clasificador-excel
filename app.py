@@ -43,7 +43,7 @@ if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
-if "total_creditos_raw_venezuela" not in st.session_state: st.session_state.total_creditos_raw_venezuela = 0.0
+if "total_creditos_venezuela" not in st.session_state: st.session_state.total_creditos_venezuela = 0.0
 
 # =========================================================
 # ESTILOS
@@ -3908,13 +3908,28 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
             if banco == "venezuela":
                 descripcion_upper = descripcion.upper()
                 patrones_bdv = [
-                    "COM PAGO OTRAS CTAS", "COMISION PAGO A PROVEEDORES", "COM PAGO OTR BCOS",
-                    "COM PAGO OTRAS CTAS JUR NAT", "COM PAGO OTRAS CTAS JUR JUR", "COMISION POR TRANSFERENCIA",
-                    "COMISION PAGO MOVIL", "COMISIÓN PAGO MOVIL", "COMISION X PAGO DE NOMINA",
-                    "COMISION X PAGO DE NOMINAS", "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO", "MANTENIMIENTO DE CUENTA", "COMISION BANCARIA", "COMISIÓN BANCARIA",
-                    "CARGO POR SERVICIO", "CARGO POR TRANSACCION", "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
+                    "COM PAGO OTRAS CTAS",
+                    "COMISION PAGO A PROVEEDORES",
+                    "COM PAGO OTR BCOS",
+                    "COM PAGO OTRAS CTAS JUR NAT",
+                    "COM PAGO OTRAS CTAS JUR JUR",
+                    "COMISION POR TRANSFERENCIA",
+                    "COMISION PAGO MOVIL",
+                    "COMISIÓN PAGO MOVIL",
+                    "COMISION X PAGO DE NOMINA",
+                    "COMISION X PAGO DE NOMINAS",
+                    "ITF",
+                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                    "CARGO BANCARIO",
+                    "MANTENIMIENTO DE CUENTA",
+                    "COMISION BANCARIA",
+                    "COMISIÓN BANCARIA",
+                    "CARGO POR SERVICIO",
+                    "CARGO POR TRANSACCION",
+                    "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION X PAGO DE NOMINAS MB",
+                    "DOMICILIACION J412438905",
+                    "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
                 if any(p in descripcion_upper for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in descripcion_upper):
@@ -4258,10 +4273,12 @@ if st.session_state.seccion_activa == "consolidado":
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
     
-    # 🔥 USAR EL TOTAL DE CRÉDITOS DEL ARCHIVO ORIGINAL PARA LOS KPIs
-    total_ingresos_ves = st.session_state.get('total_creditos_raw_venezuela', 0.0)
-    # Si no hay créditos raw (otro banco), usar el calculado por el procesamiento
-    if total_ingresos_ves == 0.0:
+    # 🔥 CALCULAR AUTOMÁTICAMENTE los ingresos totales
+    # Si hay archivo de Venezuela, usar el total calculado del archivo original
+    if archivo_venezuela:
+        total_ingresos_ves = st.session_state.get('total_creditos_venezuela', 0.0)
+    else:
+        # Si no hay Venezuela, usar el cálculo del procesamiento
         total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
     total_ingresos_usd = total_ingresos_ves / tasa_dia if tasa_dia > 0 else 0.0
     
@@ -4484,24 +4501,23 @@ if st.session_state.seccion_activa == "consolidado":
     # 4. BDV
     if archivo_venezuela:
         st.session_state.saldo_venezuela = 0.0
-        st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 Inicializar
+        st.session_state.total_creditos_venezuela = 0.0  # 🔥 Inicializar
         
         for idx, arch in enumerate(archivo_venezuela, 1):
             try:
                 df_raw = leer_excel_sin_encabezados(arch)
                 
-                # 🔥 Calcular total de créditos del archivo original
+                # 🔥 CALCULAR AUTOMÁTICAMENTE los créditos del archivo original
                 total_creditos_raw = 0.0
-                col_credito = 5  # Columna de créditos en BDV (índice 5)
+                col_credito = 5  # Columna de créditos en BDV
                 
-                # Empezar desde la fila 1 (saltar encabezados)
+                # Recorrer todas las filas del archivo original
                 for i in range(1, len(df_raw)):
                     try:
                         fila = df_raw.iloc[i]
-                        # Verificar si la columna de crédito tiene valor
                         if pd.notna(fila[col_credito]):
                             valor_str = str(fila[col_credito]).strip()
-                            # Limpiar formato: quitar puntos de miles, convertir coma a punto
+                            # Limpiar formato
                             valor_str = valor_str.replace(".", "").replace(",", ".")
                             if valor_str and valor_str != "0" and valor_str != "0.0":
                                 valor = float(valor_str)
@@ -4510,9 +4526,8 @@ if st.session_state.seccion_activa == "consolidado":
                     except:
                         continue
                 
-                # Guardar el total de créditos en session_state
-                st.session_state.total_creditos_raw_venezuela += total_creditos_raw
-                st.info(f"📊 BDV - Total de créditos del archivo original: {total_creditos_raw:,.2f} Bs.")
+                # Acumular en session_state
+                st.session_state.total_creditos_venezuela += total_creditos_raw
                 
                 # Calcular saldo
                 saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
@@ -4734,7 +4749,7 @@ if st.session_state.seccion_activa == "consolidado":
             
             # 🔥 MODIFICAR: Calcular la suma de ingresos para los KPIs
             # Usar el total de créditos del archivo original si existe
-            total_ingresos_ves_calc = st.session_state.get('total_creditos_raw_venezuela', 0.0)
+            total_ingresos_ves_calc = st.session_state.get('total_creditos_venezuela', 0.0)
             
             # Si no hay créditos raw (otro banco o falló), usar el cálculo del procesamiento
             if total_ingresos_ves_calc == 0.0 and not df_original.empty:
