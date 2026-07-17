@@ -4418,28 +4418,56 @@ if st.session_state.seccion_activa == "consolidado":
     else:
         saldos_detalle_excel.append(("Mercantil", 0.0))
 
-    # 4. BDV
-    if archivo_venezuela:
-        st.session_state.saldo_venezuela = 0.0
-        for idx, arch in enumerate(archivo_venezuela, 1):
-            try:
-                df_raw = leer_excel_sin_encabezados(arch)
-                saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
-                st.session_state.saldo_venezuela += saldo_arch
+   # 4. BDV
+   if archivo_venezuela:
+    st.session_state.saldo_venezuela = 0.0
+    st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 NUEVO: Inicializar
+    
+    for idx, arch in enumerate(archivo_venezuela, 1):
+        try:
+            df_raw = leer_excel_sin_encabezados(arch)
             
-                nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            # 🔥 NUEVO: Calcular total de créditos del archivo original
+            total_creditos_raw = 0.0
+            col_credito = 5  # Columna de créditos en BDV (índice 5)
             
-                df_normalizado = procesar_venezuela_simple(df_raw)
-                df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
-                if not df_convertido.empty:
-                    list_df_convertidos.append(df_convertido)
-                    if "Venezuela" not in bancos_procesados:
-                        bancos_procesados.append("Venezuela")
-            except Exception as e:
-                st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
-    else:
-        saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
+            # Empezar desde la fila 1 (saltar encabezados)
+            for i in range(1, len(df_raw)):
+                try:
+                    fila = df_raw.iloc[i]
+                    # Verificar si la columna de crédito tiene valor
+                    if pd.notna(fila[col_credito]):
+                        valor_str = str(fila[col_credito]).strip()
+                        # Limpiar formato: quitar puntos de miles, convertir coma a punto
+                        valor_str = valor_str.replace(".", "").replace(",", ".")
+                        if valor_str and valor_str != "0" and valor_str != "0.0":
+                            valor = float(valor_str)
+                            if valor > 0:
+                                total_creditos_raw += valor
+                except:
+                    continue
+            
+            # Guardar el total de créditos en session_state
+            st.session_state.total_creditos_raw_venezuela += total_creditos_raw
+            st.info(f"📊 BDV - Total de créditos del archivo original: {total_creditos_raw:,.2f} Bs.")
+            
+            # Calcular saldo
+            saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
+            st.session_state.saldo_venezuela += saldo_arch
+            
+            nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
+            saldos_detalle_excel.append((nombre_banco, saldo_arch))
+            
+            df_normalizado = procesar_venezuela_simple(df_raw)
+            df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
+            if not df_convertido.empty:
+                list_df_convertidos.append(df_convertido)
+                if "Venezuela" not in bancos_procesados:
+                    bancos_procesados.append("Venezuela")
+        except Exception as e:
+            st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
+else:
+    saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
 
     # 5. Provincial
     if archivo_provincial:
