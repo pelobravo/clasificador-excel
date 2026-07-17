@@ -4420,14 +4420,14 @@ if st.session_state.seccion_activa == "consolidado":
 
    # 4. BDV
     if archivo_venezuela:
-        st.session_state.saldo_venezuela = 0.0
-        st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 NUEVO: Inicializar
+    st.session_state.saldo_venezuela = 0.0
+    st.session_state.total_creditos_raw_venezuela = 0.0  # 🔥 Inicializar
     
     for idx, arch in enumerate(archivo_venezuela, 1):
         try:
             df_raw = leer_excel_sin_encabezados(arch)
             
-            # 🔥 NUEVO: Calcular total de créditos del archivo original
+            # 🔥 Calcular total de créditos del archivo original
             total_creditos_raw = 0.0
             col_credito = 5  # Columna de créditos en BDV (índice 5)
             
