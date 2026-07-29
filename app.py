@@ -1658,6 +1658,10 @@ def procesar_venezuela_simple(df):
         col_debito = 6
         
         movimientos = []
+        # [CAMBIO 1] Añadir contadores
+        ingresos_contador = 0
+        egresos_contador = 0
+        
         for idx in range(1, len(df_filtrado)):
             try:
                 fila = df_filtrado.iloc[idx]
@@ -1692,16 +1696,24 @@ def procesar_venezuela_simple(df):
                 if tipo_mov == "NC":
                     monto = abs(val_credito)
                     tipo = "NC"
+                    # [CAMBIO 1] Incrementar contador de ingresos
+                    ingresos_contador += 1
                 elif tipo_mov == "ND":
                     monto = abs(val_debito)
                     tipo = "ND"
+                    # [CAMBIO 1] Incrementar contador de egresos
+                    egresos_contador += 1
                 else:
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
+                        # [CAMBIO 1] Incrementar contador de ingresos
+                        ingresos_contador += 1
                     elif abs(val_debito) > 0:
                         monto = abs(val_debito)
                         tipo = "ND"
+                        # [CAMBIO 1] Incrementar contador de egresos
+                        egresos_contador += 1
                     else: continue
                 
                 if monto <= 0: continue
@@ -1715,6 +1727,13 @@ def procesar_venezuela_simple(df):
                 })
             except:
                 continue
+        
+        # [CAMBIO 1] Mostrar resumen de procesamiento
+        st.write(f"📊 **Resumen de procesamiento:**")
+        st.write(f"- Total movimientos: {len(movimientos)}")
+        st.write(f"- Ingresos (NC): {ingresos_contador}")
+        st.write(f"- Egresos (ND): {egresos_contador}")
+        
         df_resultado = pd.DataFrame(movimientos)
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos")
         return df_resultado
@@ -2086,6 +2105,13 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
+                # [CAMBIO 4] REGLA 3: Si el monto es pequeño y la descripción tiene "COM" o "PAGO OTR"
+                monto_bs_abs = abs(monto_bs)
+                if not es_comision_banco and monto_bs_abs < 10000:
+                    descripcion_upper = descripcion.upper()
+                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
+                        es_comision_banco = True
+                # [FIN CAMBIO 4]
                 if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
                     es_comision_banco = True
             elif banco == "tesoro":
@@ -3480,6 +3506,9 @@ def mono_procesar_venezuela_simple(df):
         
         movimientos = []
         filas_procesadas = 0
+        # [CAMBIO 2] Añadir contadores
+        ingresos_contador = 0
+        egresos_contador = 0
         
         # Empezar desde la fila 1 (saltar encabezados)
         for idx in range(1, len(df_filtrado)):
@@ -3546,17 +3575,25 @@ def mono_procesar_venezuela_simple(df):
                 if tipo_mov == "NC":
                     monto = abs(val_credito)
                     tipo = "NC"
+                    # [CAMBIO 2] Incrementar contador de ingresos
+                    ingresos_contador += 1
                 elif tipo_mov == "ND":
                     monto = abs(val_debito)
                     tipo = "ND"
+                    # [CAMBIO 2] Incrementar contador de egresos
+                    egresos_contador += 1
                 else:
                     # Si no tiene tipo definido, determinar por crédito/débito
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
+                        # [CAMBIO 2] Incrementar contador de ingresos
+                        ingresos_contador += 1
                     elif abs(val_debito) > 0:
                         monto = abs(val_debito)
                         tipo = "ND"
+                        # [CAMBIO 2] Incrementar contador de egresos
+                        egresos_contador += 1
                     else:
                         continue
                 
@@ -3580,6 +3617,12 @@ def mono_procesar_venezuela_simple(df):
                 
             except Exception as e:
                 continue
+        
+        # [CAMBIO 2] Mostrar resumen de procesamiento
+        st.write(f"📊 **Resumen de procesamiento:**")
+        st.write(f"- Total movimientos: {len(movimientos)}")
+        st.write(f"- Ingresos (NC): {ingresos_contador}")
+        st.write(f"- Egresos (ND): {egresos_contador}")
         
         st.write(f"📊 **Filas procesadas exitosamente:** {filas_procesadas}")
         
@@ -3939,6 +3982,12 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
+                # [CAMBIO 3] REGLA 3: Si el monto es pequeño y la descripción tiene "COM" o "PAGO OTR"
+                monto_bs_abs = abs(monto_bs)
+                if not es_comision_bdv and monto_bs_abs < 10000:
+                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
+                        es_comision_bdv = True
+                # [FIN CAMBIO 3]
                 if any(p in descripcion_upper for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in descripcion_upper):
                     es_comision_bdv = True
 
