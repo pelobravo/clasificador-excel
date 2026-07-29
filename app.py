@@ -1696,6 +1696,7 @@ def procesar_venezuela_simple(df):
                     monto = abs(val_debito)
                     tipo = "ND"
                 else:
+                    # 🔥 CORREGIDO: Si no tiene tipo definido, determinar por crédito/débito
                     if abs(val_credito) > 0:
                         monto = abs(val_credito)
                         tipo = "NC"
@@ -1989,7 +1990,7 @@ def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
-# 🔥 PROCESAMIENTO PRINCIPAL - CLASIFICACIÓN
+# 🔥 PROCESAMIENTO PRINCIPAL - CLASIFICACIÓN (CORREGIDO PARA BDV)
 # =========================================================
 
 def procesar_archivo(df, usar_api=False, banco=""):
@@ -2045,11 +2046,136 @@ def procesar_archivo(df, usar_api=False, banco=""):
             if clave in registros_procesados: continue
             registros_procesados.add(clave)
 
-            # Reglas específicas por banco
+            # 🔥 DETECCIÓN DE COMISIONES POR BANCO
             es_comision_banco = False
-            if banco == "provincial" and "COMIS" in texto: es_comision_banco = True
-            elif banco == "bancamiga" and "COMISI" in texto: es_comision_banco = True
+            
+            # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
+            if banco == "venezuela":
+                descripcion_upper = descripcion.upper()
+                referencia_upper = referencia.upper()
+                tipo_upper = tipo.upper()
+                
+                # 🔥 REGLA 1: Detectar por descripción (comisiones de BDV)
+                patrones_bdv = [
+                    "COM PAGO OTRAS CTAS",
+                    "COMISION PAGO A PROVEEDORES",
+                    "COM PAGO OTR BCOS",
+                    "COM PAGO OTRAS CTAS JUR NAT",
+                    "COM PAGO OTRAS CTAS JUR JUR",
+                    "COMISION POR TRANSFERENCIA",
+                    "COMISION PAGO MOVIL",
+                    "COMISIÓN PAGO MOVIL",
+                    "COMISION X PAGO DE NOMINA",
+                    "COMISION X PAGO DE NOMINAS",
+                    "ITF",
+                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                    "CARGO BANCARIO",
+                    "MANTENIMIENTO DE CUENTA",
+                    "COMISION BANCARIA",
+                    "COMISIÓN BANCARIA",
+                    "CARGO POR SERVICIO",
+                    "CARGO POR TRANSACCION",
+                    "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION X PAGO DE NOMINAS MB",
+                    "DOMICILIACION J412438905",
+                    "DISTRIBUIDORA GLOBAL",
+                    "DOMICILIACION"
+                ]
+                
+                # Verificar si la descripción coincide con alguna comisión
+                for patron in patrones_bdv:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
+                
+                # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
+                if not es_comision_banco:
+                    # Las comisiones de BDV suelen tener referencias que comienzan con 970, 972, 067
+                    if referencia_upper.startswith(("970", "972", "067")):
+                        # Verificar si la descripción contiene palabras clave de comisión
+                        if any(palabra in descripcion_upper for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
+                            es_comision_banco = True
+                
+                # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
+                if not es_comision_banco and tipo_upper == "ND":
+                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
+                        es_comision_banco = True
+                
+                # 🔥 REGLA 4: Comisiones específicas de BDV por monto pequeño
+                if not es_comision_banco and tipo_upper == "ND":
+                    # Montos típicos de comisiones de BDV (montos pequeños)
+                    if monto_bs < 1000 and ("COM" in descripcion_upper or "PAGO OTR" in descripcion_upper):
+                        es_comision_banco = True
+            
+            # BANESCO - REGLAS ESPECÍFICAS
+            elif banco == "banesco":
+                # Banesco tiene comisiones específicas
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]):
+                    es_comision_banco = True
+            
+            # BNC - REGLAS ESPECÍFICAS
+            elif banco == "bnc":
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF"]):
+                    es_comision_banco = True
+            
+            # PROVINCIAL - REGLAS ESPECÍFICAS
+            elif banco == "provincial":
+                descripcion_upper = descripcion.upper()
+                if "COMIS" in descripcion_upper:
+                    es_comision_banco = True
+            
+            # BANCAMIGA - REGLAS ESPECÍFICAS
+            elif banco == "bancamiga":
+                descripcion_upper = descripcion.upper()
+                if "COMISI" in descripcion_upper:
+                    es_comision_banco = True
+            
+            # MERCANTIL - REGLAS ESPECÍFICAS
+            elif banco == "mercantil":
+                descripcion_upper = descripcion.upper()
+                patrones_mercantil = [
+                    "OP.CRED.DIRT. CLTE-CLTE",
+                    "OP CRED DIRT CLTE CLTE",
+                    "COMISION PAGO MOVIL COMERCIAL",
+                    "COMISION POR TRANSFERENCIA DE FONDOS",
+                    "COMISION X PAGO DE NOMINAS",
+                    "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO",
+                    "COMISION X PAGO DE NOMINAS MB",
+                    "ITF",
+                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+                    "CARGO BANCARIO",
+                    "MANTENIMIENTO DE CUENTA",
+                    "COMISION POR TRANSFERENCIA",
+                    "EMISION EDO",
+                    "RETENCION DE IMPUESTO"
+                ]
+                for patron in patrones_mercantil:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
+            
+            # TESORO - REGLAS ESPECÍFICAS
+            elif banco == "tesoro":
+                descripcion_upper = descripcion.upper()
+                patrones_tesoro = [
+                    "BELOW MINIMUM BALANCE CHARGES",
+                    "STAMENT SERVICE",
+                    "STATEMENT SERVICE",
+                    "COMIS",
+                    "COMISION",
+                    "CARGO BANCARIO",
+                    "CARGO POR SERVICIO"
+                ]
+                for patron in patrones_tesoro:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
+            
+            # ACTIVO - REGLAS ESPECÍFICAS
             elif banco == "activo":
+                descripcion_upper = descripcion.upper()
                 patrones_activo = [
                     "CARGO POR MANTENIMIENTO",
                     "CARGO EMISION EDO DE CUENTA",
@@ -2062,46 +2188,34 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COM EDO",
                     "COM MOV"
                 ]
-                if any(p in texto for p in patrones_activo):
-                    es_comision_banco = True
-            elif banco == "mercantil":
-                patrones = [
-                    "OP.CRED.DIRT. CLTE-CLTE", "OP CRED DIRT CLTE CLTE", "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION POR TRANSFERENCIA DE FONDOS", "COMISION X PAGO DE NOMINAS",
-                    "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO", "COMISION X PAGO DE NOMINAS MB",
-                    "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS", "CARGO BANCARIO",
-                    "MANTENIMIENTO DE CUENTA", "COMISION POR TRANSFERENCIA"
-                ]
-                if any(p in texto for p in patrones): es_comision_banco = True
+                for patron in patrones_activo:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
             
-            # BDV / Venezuela comisiones por descripción o referencia
-            if banco == "venezuela":
-                patrones_bdv = [
-                    "COM PAGO OTRAS CTAS", "COMISION PAGO A PROVEEDORES", "COM PAGO OTR BCOS",
-                    "COM PAGO OTRAS CTAS JUR NAT", "COM PAGO OTRAS CTAS JUR JUR", "COMISION POR TRANSFERENCIA",
-                    "COMISION PAGO MOVIL", "COMISIÓN PAGO MOVIL", "COMISION X PAGO DE NOMINA",
-                    "COMISION X PAGO DE NOMINAS", "ITF", "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO", "MANTENIMIENTO DE CUENTA", "COMISION BANCARIA", "COMISIÓN BANCARIA",
-                    "CARGO POR SERVICIO", "CARGO POR TRANSACCION", "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
-                    "DOMICILIACION"
-                ]
-                if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
-                    es_comision_banco = True
-            elif banco == "tesoro":
-                patrones_tesoro = [
-                    "BELOW MINIMUM BALANCE CHARGES", "STAMENT SERVICE", "STATEMENT SERVICE",
-                    "COMIS", "COMISION", "CARGO BANCARIO", "CARGO POR SERVICIO"
-                ]
-                if any(p in texto for p in patrones_tesoro):
+            # BANPLUS - REGLAS ESPECÍFICAS
+            elif banco == "banplus":
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "SMS", "CARGO", "MANTENIMIENTO"]):
                     es_comision_banco = True
 
-            if es_comision_banco or es_comision(descripcion):
+            # Si es comisión del banco, clasificar como comisión
+            if es_comision_banco:
                 comisiones.append(registro)
+            # Si es comisión bancaria detectada por función genérica
+            elif es_comision(descripcion):
+                comisiones.append(registro)
+            # Clasificar por tipo de movimiento
             elif tipo in tipos_ingresos:
                 ingresos.append(registro)
             elif tipo in tipos_egresos:
                 egresos.append(registro)
+            else:
+                # 🔥 NUEVO: Si no tiene tipo definido, clasificar por monto (crédito = ingreso, débito = egreso)
+                if monto_bs > 0:
+                    ingresos.append(registro)
+                else:
+                    egresos.append(registro)
         except:
             continue
     return ingresos, egresos, comisiones
@@ -3847,73 +3961,16 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 continue
             registros_procesados.add(clave)
 
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA BANCO ACTIVO - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_activo = False
+            # 🔥 DETECCIÓN DE COMISIONES POR BANCO (CORREGIDO)
+            es_comision_banco = False
             
-            if banco == "activo":
-                descripcion_upper = descripcion.upper()
-                patrones_activo = [
-                    "CARGO POR MANTENIMIENTO",
-                    "CARGO EMISION EDO DE CUENTA",
-                    "CARGO SERVICIO SMS",
-                    "COMISION",
-                    "COMISIÓN",
-                    "MANTENIMIENTO",
-                    "SMS",
-                    "EMISION EDO",
-                    "COM EDO",
-                    "COM MOV"
-                ]
-                for patron in patrones_activo:
-                    if patron in descripcion_upper:
-                        es_comision_activo = True
-                        break
-                
-                if es_comision_activo:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA PROVINCIAL - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_provincial = False
-            
-            if banco == "provincial":
-                descripcion_upper = descripcion.upper()
-                # Detectar comisiones de Provincial por "COMIS" en la descripción
-                if "COMIS" in descripcion_upper:
-                    es_comision_provincial = True
-                    st.write(f"🔍 Comisión Provincial detectada: {descripcion} - Monto: {monto_bs}")
-                
-                if es_comision_provincial:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA BANCAMIGA - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_bancamiga = False
-            
-            if banco == "bancamiga":
-                descripcion_upper = descripcion.upper()
-                # Detectar comisiones de Bancamiga por "COMISI" en la descripción
-                if "COMISI" in descripcion_upper:
-                    es_comision_bancamiga = True
-                    st.write(f"🔍 Comisión Bancamiga detectada: {descripcion} - Monto: {monto_bs}")
-                
-                if es_comision_bancamiga:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA VENEZUELA - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_bdv = False
-
+            # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
             if banco == "venezuela":
                 descripcion_upper = descripcion.upper()
+                referencia_upper = referencia.upper()
+                tipo_upper = tipo.upper()
+                
+                # 🔥 REGLA 1: Detectar por descripción (comisiones de BDV)
                 patrones_bdv = [
                     "COM PAGO OTRAS CTAS",
                     "COMISION PAGO A PROVEEDORES",
@@ -3939,23 +3996,60 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
-                if any(p in descripcion_upper for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in descripcion_upper):
-                    es_comision_bdv = True
-
-                if es_comision_bdv:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA MERCANTIL - TODAS LAS COMISIONES
-            # =========================================================
-            es_comision_mercantil = False
-            
-            if banco == "mercantil":
-                descripcion_upper = descripcion.upper()
                 
-                # 🔥 Lista completa de patrones de comisiones de Mercantil
-                patrones_comision_mercantil = [
+                # Verificar si la descripción coincide con alguna comisión
+                for patron in patrones_bdv:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
+                
+                # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
+                if not es_comision_banco:
+                    # Las comisiones de BDV suelen tener referencias que comienzan con 970, 972, 067
+                    if referencia_upper.startswith(("970", "972", "067")):
+                        # Verificar si la descripción contiene palabras clave de comisión
+                        if any(palabra in descripcion_upper for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
+                            es_comision_banco = True
+                
+                # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
+                if not es_comision_banco and tipo_upper == "ND":
+                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
+                        es_comision_banco = True
+                
+                # 🔥 REGLA 4: Comisiones específicas de BDV por monto pequeño
+                if not es_comision_banco and tipo_upper == "ND":
+                    # Montos típicos de comisiones de BDV (montos pequeños)
+                    if monto_bs < 1000 and ("COM" in descripcion_upper or "PAGO OTR" in descripcion_upper):
+                        es_comision_banco = True
+            
+            # BANESCO - REGLAS ESPECÍFICAS
+            elif banco == "banesco":
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]):
+                    es_comision_banco = True
+            
+            # BNC - REGLAS ESPECÍFICAS
+            elif banco == "bnc":
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF"]):
+                    es_comision_banco = True
+            
+            # PROVINCIAL - REGLAS ESPECÍFICAS
+            elif banco == "provincial":
+                descripcion_upper = descripcion.upper()
+                if "COMIS" in descripcion_upper:
+                    es_comision_banco = True
+            
+            # BANCAMIGA - REGLAS ESPECÍFICAS
+            elif banco == "bancamiga":
+                descripcion_upper = descripcion.upper()
+                if "COMISI" in descripcion_upper:
+                    es_comision_banco = True
+            
+            # MERCANTIL - REGLAS ESPECÍFICAS
+            elif banco == "mercantil":
+                descripcion_upper = descripcion.upper()
+                patrones_mercantil = [
                     "OP.CRED.DIRT. CLTE-CLTE",
                     "OP CRED DIRT CLTE CLTE",
                     "COMISION PAGO MOVIL COMERCIAL",
@@ -3971,23 +4065,13 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     "EMISION EDO",
                     "RETENCION DE IMPUESTO"
                 ]
-                
-                for patron in patrones_comision_mercantil:
+                for patron in patrones_mercantil:
                     if patron in descripcion_upper:
-                        es_comision_mercantil = True
+                        es_comision_banco = True
                         break
-                
-                # Si es comisión de Mercantil, la clasificamos como tal
-                if es_comision_mercantil:
-                    comisiones.append(registro)
-                    continue
-
-            # =========================================================
-            # 🔥 REGLA ESPECIAL PARA TESORO - DETECCIÓN DIRECTA
-            # =========================================================
-            es_comision_tesoro = False
             
-            if banco == "tesoro":
+            # TESORO - REGLAS ESPECÍFICAS
+            elif banco == "tesoro":
                 descripcion_upper = descripcion.upper()
                 patrones_tesoro = [
                     "BELOW MINIMUM BALANCE CHARGES",
@@ -4000,21 +4084,52 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 ]
                 for patron in patrones_tesoro:
                     if patron in descripcion_upper:
-                        es_comision_tesoro = True
+                        es_comision_banco = True
                         break
-                
-                if es_comision_tesoro:
-                    comisiones.append(registro)
-                    continue
+            
+            # ACTIVO - REGLAS ESPECÍFICAS
+            elif banco == "activo":
+                descripcion_upper = descripcion.upper()
+                patrones_activo = [
+                    "CARGO POR MANTENIMIENTO",
+                    "CARGO EMISION EDO DE CUENTA",
+                    "CARGO SERVICIO SMS",
+                    "COMISION",
+                    "COMISIÓN",
+                    "MANTENIMIENTO",
+                    "SMS",
+                    "EMISION EDO",
+                    "COM EDO",
+                    "COM MOV"
+                ]
+                for patron in patrones_activo:
+                    if patron in descripcion_upper:
+                        es_comision_banco = True
+                        break
+            
+            # BANPLUS - REGLAS ESPECÍFICAS
+            elif banco == "banplus":
+                descripcion_upper = descripcion.upper()
+                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "SMS", "CARGO", "MANTENIMIENTO"]):
+                    es_comision_banco = True
 
-            # 🔥 PASAR EL PROVEEDOR A LA FUNCIÓN es_comision
-            proveedor = fila.get("Proveedor") if isinstance(fila, dict) else None
-            if mono_es_comision(descripcion, proveedor):
+            # Si es comisión del banco, clasificar como comisión
+            if es_comision_banco:
                 comisiones.append(registro)
+            # Si es comisión bancaria detectada por función genérica
+            elif mono_es_comision(descripcion):
+                comisiones.append(registro)
+            # Clasificar por tipo de movimiento
             elif tipo in tipos_ingresos:
                 ingresos.append(registro)
             elif tipo in tipos_egresos:
                 egresos.append(registro)
+            else:
+                # 🔥 NUEVO: Si no tiene tipo definido, clasificar por monto (crédito = ingreso, débito = egreso)
+                if monto_bs > 0:
+                    ingresos.append(registro)
+                else:
+                    egresos.append(registro)
 
         except Exception as e:
             continue
@@ -5472,101 +5587,8 @@ else:
 
             if procesar:
                 with st.spinner("Procesando archivo con tasas BCV..."):
-                    if banco == "venezuela":
-                        ingresos = []
-                        egresos = []
-                        comisiones = []
-
-                        for _, row in df_normalizado.iterrows():
-                            fecha_obj = pd.to_datetime(row["FECHA"], dayfirst=True, errors="coerce")
-                            tasa = mono_obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
-
-                            monto_bs = float(row["MONTO"])
-                            monto_usd = mono_calcular_usd(monto_bs, tasa)
-
-                            registro = {
-                                "FECHA": row["FECHA"],
-                                "REFERENCIA": row["REFERENCIA"],
-                                "DESCRIPCIÓN": row["DESCRIPCION"],
-                                "MONTO BS": monto_bs,
-                                "TASA BCV": tasa,
-                                "MONTO USD": monto_usd,
-                                "STATUS": "",
-                                "OBSERVACIÓN": "",
-                                "TIPO_PAGO": "",
-                                "PROVEEDOR_IPAGO": "",
-                                "DESCRIPCION_ORIGINAL": ""
-                            }
-
-                            tipo = str(row["TIPO"]).strip().upper()
-                            descripcion = str(row["DESCRIPCION"]).strip().upper()
-                            referencia = str(row["REFERENCIA"]).strip()
-                        
-                            # 🔥 DETECCIÓN MEJORADA DE COMISIONES PARA VENEZUELA
-                            es_comision_venezuela = False
-                        
-                            # 🔥 REGLA 1: Detectar por descripción
-                            palabras_comision_bdv = [
-                                "COM PAGO OTRAS CTAS",
-                                "COMISION PAGO A PROVEEDORES",
-                                "COM PAGO OTR BCOS",
-                                "COM PAGO OTRAS CTAS JUR NAT",
-                                "COM PAGO OTRAS CTAS JUR JUR",
-                                "COMISION POR TRANSFERENCIA",
-                                "COMISION PAGO MOVIL",
-                                "COMISIÓN PAGO MOVIL",
-                                "COMISION X PAGO DE NOMINA",
-                                "COMISION X PAGO DE NOMINAS",
-                                "ITF",
-                                "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                                "CARGO BANCARIO",
-                                "MANTENIMIENTO DE CUENTA",
-                                "COMISION BANCARIA",
-                                "COMISIÓN BANCARIA",
-                                "CARGO POR SERVICIO",
-                                "CARGO POR TRANSACCION",
-                                "COMISION PAGO MOVIL COMERCIAL",
-                                "COMISION X PAGO DE NOMINAS MB",
-                                "DOMICILIACION J412438905",
-                                "DISTRIBUIDORA GLOBAL",
-                                "DOMICILIACION"
-                            ]
-                        
-                            # Verificar si la descripción coincide con alguna comisión
-                            for patron in palabras_comision_bdv:
-                                if patron in descripcion:
-                                    es_comision_venezuela = True
-                                    break
-                        
-                            # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
-                            if not es_comision_venezuela:
-                                # Las comisiones de BDV suelen tener referencias que comienzan con 970 o 972 o 067
-                                if referencia.startswith(("970", "972", "067")):
-                                    # Verificar si la descripción contiene palabras clave de comisión
-                                    if any(palabra in descripcion for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
-                                        es_comision_venezuela = True
-                        
-                            # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
-                            if not es_comision_venezuela and tipo == "ND":
-                                if "COM" in descripcion or "PAGO OTR" in descripcion:
-                                    es_comision_venezuela = True
-                        
-                            # 🔥 REGLA 4: Comisiones específicas de BDV por el monto exacto (189.50, 36.44, etc)
-                            if not es_comision_venezuela and tipo == "ND":
-                                # Montos típicos de comisiones de BDV (montos pequeños)
-                                if monto_bs < 1000 and ("COM" in descripcion or "PAGO OTR" in descripcion):
-                                    es_comision_venezuela = True
-                        
-                            # Si es comisión, agregar a la lista de comisiones
-                            if es_comision_venezuela:
-                                comisiones.append(registro)
-                            elif tipo in ["NC", "C", "CREDITO", "ABONO"]:
-                                ingresos.append(registro)
-                            else:
-                                egresos.append(registro)
-                    else:
-                        # 🔥 PASAR EL NOMBRE DEL BANCO A LA FUNCIÓN
-                        ingresos, egresos, comisiones = mono_procesar_archivo(df_original, usar_api, banco=banco)
+                    # 🔥 USAR LA FUNCIÓN CORREGIDA QUE MANEJA BDV CORRECTAMENTE
+                    ingresos, egresos, comisiones = mono_procesar_archivo(df_original, usar_api, banco=banco)
 
                 df_ingresos = pd.DataFrame(ingresos)
                 df_egresos = pd.DataFrame(egresos)
