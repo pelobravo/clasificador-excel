@@ -1658,7 +1658,6 @@ def procesar_venezuela_simple(df):
         col_debito = 6
         
         movimientos = []
-        
         for idx in range(1, len(df_filtrado)):
             try:
                 fila = df_filtrado.iloc[idx]
@@ -1716,7 +1715,6 @@ def procesar_venezuela_simple(df):
                 })
             except:
                 continue
-        
         df_resultado = pd.DataFrame(movimientos)
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos")
         return df_resultado
@@ -2088,13 +2086,6 @@ def procesar_archivo(df, usar_api=False, banco=""):
                     "COMISION X PAGO DE NOMINAS MB", "DOMICILIACION J412438905", "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
-                # [CAMBIO 4] REGLA 3: Si el monto es pequeño y la descripción tiene "COM" o "PAGO OTR"
-                monto_bs_abs = abs(monto_bs)
-                if not es_comision_banco and monto_bs_abs < 10000:
-                    descripcion_upper = descripcion.upper()
-                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
-                        es_comision_banco = True
-                # [FIN CAMBIO 4]
                 if any(p in texto for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in texto):
                     es_comision_banco = True
             elif banco == "tesoro":
@@ -3470,6 +3461,15 @@ def mono_procesar_venezuela_simple(df):
                 'detalle_fechas': dict_conteo
             }
         
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
+        
+        # Mostrar primeras filas
+        st.write("👁️ **Primeras 10 filas del archivo (sin encabezados):**")
+        st.dataframe(df_filtrado.head(10))
+        
         # Índices fijos para el formato BDV
         col_fecha = 3
         col_ref = 1
@@ -3479,6 +3479,7 @@ def mono_procesar_venezuela_simple(df):
         col_debito = 6
         
         movimientos = []
+        filas_procesadas = 0
         
         # Empezar desde la fila 1 (saltar encabezados)
         for idx in range(1, len(df_filtrado)):
@@ -3562,6 +3563,12 @@ def mono_procesar_venezuela_simple(df):
                 if monto <= 0:
                     continue
                 
+                filas_procesadas += 1
+                
+                # Mostrar primeras 5 filas procesadas
+                if filas_procesadas <= 5:
+                    st.write(f"✅ **Fila {idx} procesada:** Fecha={fecha_val.strftime('%d/%m/%Y')}, Ref={referencia}, Tipo={tipo}, Monto={monto:,.2f}, Desc={descripcion[:50]}")
+                
                 movimientos.append({
                     "FECHA": fecha_val.strftime("%d/%m/%Y"),
                     "FECHA_OBJ": fecha_val,
@@ -3574,6 +3581,8 @@ def mono_procesar_venezuela_simple(df):
             except Exception as e:
                 continue
         
+        st.write(f"📊 **Filas procesadas exitosamente:** {filas_procesadas}")
+        
         df_resultado = pd.DataFrame(movimientos)
         
         if df_resultado.empty:
@@ -3581,12 +3590,175 @@ def mono_procesar_venezuela_simple(df):
             return pd.DataFrame()
         
         st.success(f"✅ Venezuela OK: {len(df_resultado)} movimientos detectados")
+        st.dataframe(df_resultado.head(10))
         return df_resultado
         
     except Exception as e:
         st.error(f"❌ Error general en procesar_venezuela_simple: {str(e)}")
         import traceback
         st.code(traceback.format_exc())
+        return pd.DataFrame()
+
+def mono_convertir_venezuela_a_formato_mercantil(df):
+    """Convierte DataFrame de Venezuela al formato Mercantil - SIN AFECTAR A MERCANTIL"""
+    datos_convertidos = []
+    
+    for idx, fila in df.iterrows():
+        try:
+            # Obtener fecha
+            fecha = None
+            if "FECHA_OBJ" in fila and pd.notna(fila["FECHA_OBJ"]):
+                fecha = fila["FECHA_OBJ"]
+            elif "FECHA" in fila and pd.notna(fila["FECHA"]):
+                fecha = fila["FECHA"]
+            else:
+                continue
+            
+            if pd.isna(fecha):
+                continue
+            
+            # Convertir a string
+            if isinstance(fecha, (pd.Timestamp, datetime)):
+                fecha_str = fecha.strftime("%d/%m/%Y")
+            else:
+                try:
+                    fecha_dt = pd.to_datetime(fecha, dayfirst=True, errors="coerce")
+                    if pd.notna(fecha_dt):
+                        fecha_str = fecha_dt.strftime("%d/%m/%Y")
+                    else:
+                        fecha_str = str(fecha)
+                except:
+                    fecha_str = str(fecha)
+            
+            tipo = fila.get("TIPO", "") or ""
+            descripcion = fila.get("DESCRIPCION", "") or ""
+            referencia = fila.get("REFERENCIA", "") or ""
+            monto = fila.get("MONTO", 0) or 0
+            
+            fila_convertida = [
+                "",           # col0
+                "",           # col1  
+                "",           # col2
+                fecha_str,    # col3 - FECHA
+                referencia,   # col4 - REFERENCIA
+                tipo,         # col5 - TIPO (NC/ND)
+                descripcion,  # col6 - DESCRIPCION
+                monto,        # col7 - MONTO BS
+                "",           # col8
+                False,        # col9 - ES_COMISION (siempre False para Venezuela)
+            ]
+            datos_convertidos.append(fila_convertida)
+            
+        except Exception as e:
+            continue
+    
+    df_convertido = pd.DataFrame(datos_convertidos)
+    return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
+
+def mono_procesar_banplus(df):
+    """
+    Procesa archivo de Banplus con formato HTML/Excel.
+    Columnas: Fecha | Referencia | Descripción | Débito | Crédito | Saldo
+    """
+    st.info("🔍 Procesando archivo de Banplus...")
+    
+    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
+        df, columna_fecha_idx=0, nombre_banco="Banplus"
+    )
+    
+    if df_filtrado is None or df_filtrado.empty:
+        df_filtrado = df
+        st.warning("⚠️ Banplus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
+    
+    if fecha_pred:
+        st.session_state.info_fechas_por_banco["Banplus"] = {
+            'fecha': fecha_pred.strftime('%d/%m/%Y'),
+            'registros': len(df_filtrado),
+            'total_original': total_filas,
+            'excluidos': registros_excluidos,
+            'detalle_fechas': dict_conteo
+        }
+    
+    try:
+        # Mostrar información del archivo
+        st.write("📊 **Información del archivo:**")
+        st.write(f"- Número de filas: {len(df_filtrado)}")
+        st.write(f"- Número de columnas: {len(df_filtrado.columns)}")
+        
+        # Encontrar la fila de encabezados si no está en las columnas
+        encabezado_idx = None
+        cols_upper = [str(c).strip().upper() for c in df_filtrado.columns]
+        if "FECHA" in cols_upper and "REFERENCIA" in cols_upper:
+            pass
+        else:
+            for i in range(min(15, len(df_filtrado))):
+                fila = df_filtrado.iloc[i].astype(str).str.strip().str.upper().tolist()
+                fila_str = " ".join(fila)
+                if "FECHA" in fila_str and "REFERENCIA" in fila_str:
+                    encabezado_idx = i
+                    break
+            if encabezado_idx is not None:
+                df_filtrado.columns = df_filtrado.iloc[encabezado_idx].tolist()
+                df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
+        
+        # Limpiar columnas
+        df_filtrado.columns = [str(c).strip().upper() for c in df_filtrado.columns]
+        
+        rename_map = {}
+        for col in df_filtrado.columns:
+            col_clean = str(col).strip().upper()
+            if "FECHA" in col_clean: rename_map[col] = "FECHA"
+            elif "REFERENCIA" in col_clean: rename_map[col] = "REFERENCIA"
+            elif "DESCRIP" in col_clean: rename_map[col] = "DESCRIPCION"
+            elif "DÉBITO" in col_clean or "DEBITO" in col_clean or "DEB" in col_clean: rename_map[col] = "DEBITO"
+            elif "CRÉDITO" in col_clean or "CREDITO" in col_clean or "CRE" in col_clean: rename_map[col] = "CREDITO"
+            elif "SALDO" in col_clean: rename_map[col] = "SALDO"
+            
+        df_filtrado = df_filtrado.rename(columns=rename_map)
+        
+        # Filtrar filas vacías o totales
+        if "FECHA" in df_filtrado.columns:
+            df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
+            df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período|Total", case=False, na=False)]
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
+            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+            
+        # Reemplazar valores vacíos o nulos en Débito y Crédito
+        for col in ["DEBITO", "CREDITO"]:
+            if col in df_filtrado.columns:
+                df_filtrado[col] = df_filtrado[col].apply(mono_limpiar_monto_banplus).fillna(0.0)
+                
+        datos_normalizados = []
+        for idx, fila in df_filtrado.iterrows():
+            fecha_str = fila["FECHA"].strftime("%d/%m/%Y")
+            referencia = str(fila.get("REFERENCIA", "")).strip().replace("'", "")
+            descripcion = str(fila.get("DESCRIPCION", "")).strip()
+            
+            debito = float(fila.get("DEBITO", 0.0))
+            credito = float(fila.get("CREDITO", 0.0))
+            
+            if credito > 0:
+                tipo = "NC"
+                monto = credito
+            elif debito > 0:
+                tipo = "ND"
+                monto = debito
+            else:
+                continue
+                
+            datos_normalizados.append({
+                "FECHA": fecha_str,
+                "REFERENCIA": referencia,
+                "TIPO": tipo,
+                "DESCRIPCION": descripcion,
+                "MONTO": monto
+            })
+            
+        return pd.DataFrame(datos_normalizados)
+    except Exception as e:
+        st.error(f"❌ Error procesando archivo Banplus: {e}")
         return pd.DataFrame()
 
 # =========================================================
@@ -3767,12 +3939,6 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                     "DISTRIBUIDORA GLOBAL",
                     "DOMICILIACION"
                 ]
-                # [CAMBIO 3] REGLA 3: Si el monto es pequeño y la descripción tiene "COM" o "PAGO OTR"
-                monto_bs_abs = abs(monto_bs)
-                if not es_comision_bdv and monto_bs_abs < 10000:
-                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
-                        es_comision_bdv = True
-                # [FIN CAMBIO 3]
                 if any(p in descripcion_upper for p in patrones_bdv) or referencia.startswith(("970", "972", "067")) or (tipo == "ND" and "COM" in descripcion_upper):
                     es_comision_bdv = True
 
