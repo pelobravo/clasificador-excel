@@ -962,9 +962,24 @@ def calcular_usd(monto_bs, tasa):
         return None
 
 def es_comision(texto, proveedor=None):
+    """
+    Detecta si un movimiento es una comisión bancaria.
+    
+    REGLAS:
+    - Si tiene proveedor asociado → NO es comisión bancaria
+    - Si es pago a personal (nómina, comisiones de ventas) → NO es comisión bancaria
+    - Si es "COMISION PAGO A PROVEEDORES" → NO es comisión bancaria
+    - Si contiene "FACTURA" → NO es comisión bancaria (es pago a proveedor)
+    - Solo son comisiones bancarias: cargos del banco (ITF, mantenimiento, etc.)
+    """
     texto = normalizar_texto(texto).strip()
+    texto_upper = texto.upper()
+    
+    # 🔥 REGLA 1: Si tiene proveedor asociado, NO es comisión bancaria
     if proveedor and str(proveedor).strip():
         return False
+    
+    # 🔥 REGLA 2: COMISIONES PAGADAS A PERSONAL = EGRESO (no comisión bancaria)
     if any(x in texto for x in [
         "comisiones sobre servicios contratados",
         "comision gerente comercial",
@@ -978,6 +993,8 @@ def es_comision(texto, proveedor=None):
         "comisiones comerciales"
     ]):
         return False
+    
+    # 🔥 REGLA 3: NUNCA SON COMISIONES BANCARIAS
     if any(x in texto for x in [
         "pago a proveedores",
         "pago de nomina",
@@ -987,6 +1004,24 @@ def es_comision(texto, proveedor=None):
         "pago movil comercial"
     ]):
         return False
+    
+    # 🔥 REGLA 4: "COMISION PAGO A PROVEEDORES" NO es comisión bancaria
+    if "COMISION PAGO A PROVEEDORES" in texto_upper:
+        return False
+    
+    # 🔥 REGLA 5: Si contiene "PAGO" y "PROVEEDOR" NO es comisión bancaria
+    if "PAGO" in texto_upper and "PROVEEDOR" in texto_upper:
+        return False
+    
+    # 🔥 REGLA 6: Si contiene "FACTURA" NO es comisión bancaria (es pago a proveedor)
+    if "FACTURA" in texto_upper:
+        return False
+    
+    # 🔥 REGLA 7: Si contiene "PAGO" + nombre de empresa/persona NO es comisión bancaria
+    if "PAGO" in texto_upper and any(x in texto_upper for x in ["TRANSPORTE", "CHOFER", "VIATICOS", "MOCASA", "PIOTELLO"]):
+        return False
+    
+    # 🔥 REGLA 8: SOLO SON COMISIONES BANCARIAS si coinciden con estas palabras
     palabras_comision_bancaria = [
         "comision por transferencia",
         "comision pago movil",
@@ -1001,8 +1036,6 @@ def es_comision(texto, proveedor=None):
         "comisión bancaria",
         "cargo por servicio",
         "cargo por transaccion",
-        "comision por",
-        "comisión por",
         "comision pago movil comercial",
         "comision x pago de nominas mb",
         "com pago otras ctas",
@@ -1024,9 +1057,20 @@ def es_comision(texto, proveedor=None):
         "stament service",
         "statement service"
     ]
+    
     for patron in palabras_comision_bancaria:
         if patron in texto:
             return True
+    
+    # 🔥 REGLA 9: Si contiene "COMISION" pero también "PROVEEDOR" o "FACTURA" NO es comisión bancaria
+    if "COMISION" in texto_upper or "COMISIÓN" in texto_upper:
+        if any(x in texto_upper for x in ["PROVEEDOR", "FACTURA", "PAGO A"]):
+            return False
+    
+    # Si contiene "comision" pero no coincide con las reglas anteriores, NO es comisión bancaria
+    if "comision" in texto or "comisión" in texto:
+        return False
+    
     return False
 
 # =========================================================
@@ -2109,7 +2153,6 @@ def procesar_archivo(df, usar_api=False, banco=""):
             
             # BANESCO - REGLAS ESPECÍFICAS
             elif banco == "banesco":
-                # Banesco tiene comisiones específicas
                 descripcion_upper = descripcion.upper()
                 if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]):
                     es_comision_banco = True
@@ -2528,95 +2571,10 @@ def mono_calcular_usd(monto_bs, tasa):
 
 def mono_es_comision(texto, proveedor=None):
     """
+    Versión monobanco de la función es_comision.
     Detecta si un movimiento es una comisión bancaria.
-    
-    REGLAS:
-    - Si tiene proveedor asociado → NO es comisión bancaria (es un pago a terceros)
-    - Si es pago a personal (nómina, comisiones de ventas) → NO es comisión bancaria
-    - Solo son comisiones bancarias: cargos del banco (ITF, mantenimiento, comisión por transferencia, etc.)
     """
-    texto = normalizar_texto(texto).strip()
-    texto_upper = texto.upper()
-    
-    # 🔥 REGLA 1: Si tiene proveedor asociado, NO es comisión bancaria
-    if proveedor and str(proveedor).strip():
-        return False
-    
-    # 🔥 REGLA 2: COMISIONES PAGADAS A PERSONAL = EGRESO (no comisión bancaria)
-    if any(x in texto for x in [
-        "comisiones sobre servicios contratados",
-        "comision gerente comercial",
-        "comision vendedor",
-        "comision asesor",
-        "comision ejecutivo",
-        "comision supervisor",
-        "comision ventas",
-        "comisiones ventas",
-        "comision comercial",
-        "comisiones comerciales"
-    ]):
-        return False
-    
-    # 🔥 REGLA 3: NUNCA SON COMISIONES BANCARIAS
-    if any(x in texto for x in [
-        "pago a proveedores",
-        "pago de nomina",
-        "nomina",
-        "transf entre ctas",
-        "transferencia a terceros",
-        "pago movil comercial"
-    ]):
-        return False
-    
-    # 🔥 REGLA 4: SOLO SON COMISIONES BANCARIAS si coinciden con estas palabras
-    palabras_comision_bancaria = [
-        "comision por transferencia",
-        "comision pago movil",
-        "comisión pago movil",
-        "comision x pago de nomina",
-        "comision x pago de nominas",
-        "itf",
-        "impuesto a las transacciones financieras",
-        "cargo bancario",
-        "mantenimiento de cuenta",
-        "comision bancaria",
-        "comisión bancaria",
-        "cargo por servicio",
-        "cargo por transaccion",
-        "comision por",
-        "comisión por",
-        "comision pago movil comercial",
-        "comision x pago de nominas mb",
-        "com pago otras ctas",
-        "com pago otr bcos",
-        "comis",
-        "comis. cr.i",
-        "sms",
-        "servicio sms",
-        "servicio sms plus",
-        "sms plus",
-        "domiciliacion j412438905",
-        "distribuidora global",
-        "emision edo",
-        "retencion de impuesto",
-        "com. trf",
-        "com.serv",
-        "emision de estado",
-        "below minimum balance charges",
-        "stament service",
-        "statement service"
-    ]
-    
-    # Verificar si coincide con alguna comisión bancaria
-    for patron in palabras_comision_bancaria:
-        if patron in texto:
-            return True
-    
-    # Si contiene "comision" pero no coincide con las reglas anteriores, NO es comisión bancaria
-    if "comision" in texto or "comisión" in texto:
-        return False
-    
-    return False
+    return es_comision(texto, proveedor)
 
 # =========================================================
 # 🔥 FUNCIÓN MEJORADA: ENRIQUECER EGRESOS CON IPAGO (CRUCE FLEXIBLE)
