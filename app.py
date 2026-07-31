@@ -2399,6 +2399,14 @@ def mono_detectar_banco_por_contenido(archivo):
                 return "provincial"
             elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
                 return "venezuela"
+            elif (
+                "TIPO DE MOVIMIENTO" in texto
+                or "TODAL DÉBITO" in texto
+                or "TODAL DEBITO" in texto
+                or "SALDO PROMEDIO" in texto
+            ):
+                # 🔥 Encabezado típico de los estados de cuenta del Banco de Venezuela
+                return "venezuela"
             elif "BNC" in texto or "BANCO NACIONAL DE CREDITO" in texto:
                 return "bnc"
             elif "BANPLUS" in texto or "BAN PLUS" in texto:
@@ -3921,9 +3929,23 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
 
             # 🔥 DETECCIÓN DE COMISIONES POR BANCO (CORREGIDO)
             es_comision_banco = False
+
+            # 🔥 REGLA GENÉRICA: "COMISION PAGO A PROVEEDORES" (y variantes) SIEMPRE
+            # es una comisión bancaria, sin importar el banco detectado. Solo la
+            # capturaba patrones_bdv (Venezuela); en los demás bancos quedaba en
+            # EGRESOS al exportar.
+            descripcion_upper = descripcion.upper()
+            if any(x in descripcion_upper for x in [
+                "COMISION PAGO A PROVEEDORES",
+                "COMISION PAGO A PROVEEDOR",
+                "COM PAGO A PROVEEDORES",
+                "COM. PAGO A PROVEEDORES",
+                "COM PAGO PROVEEDORES"
+            ]):
+                es_comision_banco = True
             
             # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
-            if banco == "venezuela":
+            if banco == "venezuela" and not es_comision_banco:
                 descripcion_upper = descripcion.upper()
                 referencia_upper = referencia.upper()
                 tipo_upper = tipo.upper()
@@ -5610,9 +5632,17 @@ else:
                         desc_original = str(fila.get("DESCRIPCION_ORIGINAL", "") or "")
                         desc_actual = str(fila.get("DESCRIPCIÓN", "") or "")
                         tipo_egreso_ipago = str(fila.get("OBSERVACIÓN", "") or "")
+                        desc_upper = (desc_original or desc_actual).upper()
                         if (
                             mono_es_comision(desc_original)
                             or mono_es_comision(desc_actual)
+                            or any(x in desc_upper for x in [
+                                "COMISION PAGO A PROVEEDORES",
+                                "COMISION PAGO A PROVEEDOR",
+                                "COM PAGO A PROVEEDORES",
+                                "COM. PAGO A PROVEEDORES",
+                                "COM PAGO PROVEEDORES"
+                            ])
                             or "COMISION" in tipo_egreso_ipago.upper()
                             or "COMISIÓN" in tipo_egreso_ipago.upper()
                         ):
