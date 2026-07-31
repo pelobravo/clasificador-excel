@@ -3554,8 +3554,9 @@ def mono_procesar_venezuela_simple(df):
         movimientos = []
         filas_procesadas = 0
         
-        # Empezar desde la fila 1 (saltar encabezados)
-        for idx in range(1, len(df_filtrado)):
+        # 🔥 CORREGIDO: Empezar desde la fila 0 porque filtrar_por_fecha_predominante
+        # ya eliminó los encabezados. Empezar en 1 perdía siempre el primer movimiento.
+        for idx in range(0, len(df_filtrado)):
             try:
                 fila = df_filtrado.iloc[idx]
                 
@@ -3850,7 +3851,6 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
     ingresos = []
     egresos = []
     comisiones = []
-    registros_procesados = set()
     
     tipos_ingresos = ["NC", "C", "CREDITO", "ABONO", "DP", "DEP"]
     tipos_egresos = ["ND", "D", "DEBITO", "DEBIT"]
@@ -3915,10 +3915,9 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 "DESCRIPCION_ORIGINAL": ""
             }
 
-            clave = (fecha, referencia, descripcion, monto_usd, tipo)
-            if clave in registros_procesados:
-                continue
-            registros_procesados.add(clave)
+            # 🔥 CORREGIDO: Se eliminó la deduplicación por clave, porque descartaba
+            # movimientos legítimos repetidos (mismo monto/referencia/descripción),
+            # causando que ingresos (p. ej. Pago Móvil) no se tomaran todos del archivo.
 
             # 🔥 DETECCIÓN DE COMISIONES POR BANCO (CORREGIDO)
             es_comision_banco = False
@@ -5592,6 +5591,46 @@ else:
                 
                     st.success(f"🎯 Egresos enriquecidos con iPago: {len(df_egresos)} registros")
 
+                # =========================================================
+                # 🔥 BARRIDO FINAL DE COMISIONES (EGRESOS → COMISIONES)
+                # Mueve a la sección COMISIONES cualquier egreso cuya descripción
+                # (original del banco o de iPago) o tipo de egreso iPago indique
+                # una comisión bancaria. Evita que comisiones queden dentro de
+                # EGRESOS al exportar el Excel.
+                # =========================================================
+                if not df_egresos.empty:
+                    columnas_comisiones = [
+                        "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION_ORIGINAL",
+                        "MONTO BS", "TASA BCV", "MONTO USD",
+                        "STATUS", "OBSERVACIÓN", "TIPO_PAGO", "PROVEEDOR_IPAGO"
+                    ]
+                    mascara_comision_final = pd.Series(False, index=df_egresos.index)
+                    for idx in df_egresos.index:
+                        fila = df_egresos.loc[idx]
+                        desc_original = str(fila.get("DESCRIPCION_ORIGINAL", "") or "")
+                        desc_actual = str(fila.get("DESCRIPCIÓN", "") or "")
+                        tipo_egreso_ipago = str(fila.get("OBSERVACIÓN", "") or "")
+                        if (
+                            mono_es_comision(desc_original)
+                            or mono_es_comision(desc_actual)
+                            or "COMISION" in tipo_egreso_ipago.upper()
+                            or "COMISIÓN" in tipo_egreso_ipago.upper()
+                        ):
+                            mascara_comision_final.at[idx] = True
+
+                    if mascara_comision_final.any():
+                        df_comisiones_final = df_egresos[mascara_comision_final].copy()
+                        for col in columnas_comisiones:
+                            if col not in df_comisiones_final.columns:
+                                df_comisiones_final[col] = ""
+                        df_comisiones_final = df_comisiones_final[columnas_comisiones]
+                        if not df_comisiones.empty:
+                            df_comisiones = pd.concat([df_comisiones, df_comisiones_final], ignore_index=True)
+                        else:
+                            df_comisiones = df_comisiones_final
+                        df_egresos = df_egresos[~mascara_comision_final].copy()
+                        st.success(f"💳 Barrido final: {len(df_comisiones_final)} comisiones movidas de EGRESOS a COMISIONES.")
+
                 # Completar columnas vacías obligatorias para el reporte en openpyxl
                 for df_t in [df_ingresos, df_egresos, df_comisiones]:
                     if not df_t.empty:
@@ -5683,23 +5722,26 @@ else:
                         fila_data = fila_header + 1
 
                         for _, row in dataframe.iterrows():
-                            hoja.cell(row=fila_data, column=1).value = row.get("FECHA", "")
-                            hoja.cell(row=fila_data, column=2).value = row.get("REFERENCIA", "")
-                            hoja.cell(row=fila_data, column=3).value = row.get("DESCRIPCIÓN", "")
-                            hoja.cell(row=fila_data, column=4).value = row.get("DESCRIPCION_ORIGINAL", "")
-                            hoja.cell(row=fila_data, column=5).value = row.get("MONTO BS", 0)
-                            hoja.cell(row=fila_data, column=6).value = row.get("TASA BCV", 0)
-                            hoja.cell(row=fila_data, column=7).value = row.get("MONTO USD", 0)
-                            hoja.cell(row=fila_data, column=8).value = row.get("PROVEEDOR_IPAGO", row.get("STATUS", ""))
-                            hoja.cell(row=fila_data, column=9).value = row.get("OBSERVACIÓN", "")
-                            hoja.cell(row=fila_data, column=10).value = row.get("TIPO_PAGO", "")
+                            try:
+                                hoja.cell(row=fila_data, column=1).value = row.get("FECHA", "")
+                                hoja.cell(row=fila_data, column=2).value = row.get("REFERENCIA", "")
+                                hoja.cell(row=fila_data, column=3).value = row.get("DESCRIPCIÓN", "")
+                                hoja.cell(row=fila_data, column=4).value = row.get("DESCRIPCION_ORIGINAL", "")
+                                hoja.cell(row=fila_data, column=5).value = row.get("MONTO BS", 0)
+                                hoja.cell(row=fila_data, column=6).value = row.get("TASA BCV", 0)
+                                hoja.cell(row=fila_data, column=7).value = row.get("MONTO USD", 0)
+                                hoja.cell(row=fila_data, column=8).value = row.get("PROVEEDOR_IPAGO", row.get("STATUS", ""))
+                                hoja.cell(row=fila_data, column=9).value = row.get("OBSERVACIÓN", "")
+                                hoja.cell(row=fila_data, column=10).value = row.get("TIPO_PAGO", "")
 
-                            hoja.cell(row=fila_data, column=5).number_format = '#,##0.00'
-                            hoja.cell(row=fila_data, column=6).number_format = '#,##0.0000'
-                            hoja.cell(row=fila_data, column=7).number_format = '$#,##0.00'
+                                hoja.cell(row=fila_data, column=5).number_format = '#,##0.00'
+                                hoja.cell(row=fila_data, column=6).number_format = '#,##0.0000'
+                                hoja.cell(row=fila_data, column=7).number_format = '$#,##0.00'
 
-                            for col in range(1, 11):
-                                hoja.cell(row=fila_data, column=col).border = borde
+                                for col in range(1, 11):
+                                    hoja.cell(row=fila_data, column=col).border = borde
+                            except Exception:
+                                pass
 
                             fila_data += 1
 
@@ -5707,13 +5749,15 @@ else:
                         total_cell.value = f"TOTAL {titulo}"
                         total_cell.font = Font(bold=True)
 
+                        # 🔥 CORREGIDO: Convertir a numérico antes de sumar para que
+                        # una celda en formato texto no produzca totales erróneos
                         total_bs_cell = hoja.cell(row=fila_data, column=5)
-                        total_bs_cell.value = dataframe["MONTO BS"].sum() if not dataframe.empty else 0
+                        total_bs_cell.value = pd.to_numeric(dataframe["MONTO BS"], errors="coerce").sum() if not dataframe.empty else 0
                         total_bs_cell.number_format = '#,##0.00'
                         total_bs_cell.fill = color_total
 
                         monto_total = hoja.cell(row=fila_data, column=7)
-                        monto_total.value = dataframe["MONTO USD"].sum() if not dataframe.empty else 0
+                        monto_total.value = pd.to_numeric(dataframe["MONTO USD"], errors="coerce").sum() if not dataframe.empty else 0
                         monto_total.number_format = '$#,##0.00'
                         monto_total.fill = color_total
 
