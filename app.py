@@ -3448,6 +3448,7 @@ def mono_obtener_tasa_bcv_fecha(fecha_obj):
         "28/07/2026": 742.8105,
         "29/07/2026": 744.2264,
         "30/07/2026": 745.6371,
+        "31/07/2026": 746.6297,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
