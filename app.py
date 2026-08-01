@@ -186,7 +186,9 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
                         "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
                         "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
                         "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
-                        "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITO", "DÉBITO", "DEBITO", "CREDITO"
+                        "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITOS:", "CREDITOS:",
+                        "DÉBITOS:", "DEBITOS:", "TOTAL CREDITOS", "TOTAL DEBITOS",
+                        "TOTAL CRÉDITOS", "TOTAL DÉBITOS"
                     ]
                     for palabra in palabras_excluir:
                         if palabra in fila_completa:
@@ -320,7 +322,9 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
                     "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
                     "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
                     "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
-                    "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITO", "DÉBITO", "DEBITO", "CREDITO"
+                    "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITOS:", "CREDITOS:",
+                    "DÉBITOS:", "DEBITOS:", "TOTAL CREDITOS", "TOTAL DEBITOS",
+                    "TOTAL CRÉDITOS", "TOTAL DÉBITOS"
                 ]
                 for palabra in palabras_excluir:
                     if palabra in fila_completa:
@@ -802,7 +806,12 @@ def leer_excel_sin_encabezados(archivo):
                 except Exception:
                     pass
                 archivo.seek(0)
-                contenido = archivo.read().decode("utf-8", errors="ignore")
+                contenido = archivo.read()
+                try:
+                    contenido = contenido.decode("utf-8")
+                except UnicodeDecodeError:
+                    archivo.seek(0)
+                    contenido = archivo.read().decode("latin-1")
                 lineas = contenido.split("\n")
                 datos = []
                 for linea in lineas:
@@ -853,9 +862,12 @@ def detectar_banco_por_contenido(archivo):
         archivo.seek(0)
         try:
             df_temp = pd.read_excel(archivo, nrows=20, header=None, engine='openpyxl')
-            texto = " ".join(df_temp.astype(str).values.flatten()).upper()
+            texto = " ".join(df_temp.fillna("").astype(str).values.flatten()).upper()
+            # 🔥 "0171" debe ser un número de cuenta de Banco Activo (20 dígitos aislados),
+            # no cualquier coincidencia dentro de referencias de otros bancos
+            es_cuenta_activo = bool(re.search(r'(?<![\d])0171\d{16}(?!\d)', texto))
             # Buscar específicamente Banco Activo
-            if "BANCO ACTIVO" in texto or "0171" in texto or "NUMERO DE CUENTA" in texto:
+            if "BANCO ACTIVO" in texto or es_cuenta_activo or "NUMERO DE CUENTA" in texto:
                 # Verificar si tiene el formato de Banco Activo (fechas en columna 0, conceptos en columna 2)
                 if df_temp.shape[1] >= 7:
                     # Intentar detectar el patrón de Banco Activo
@@ -1051,11 +1063,17 @@ def es_comision(texto, proveedor=None):
         "emision edo",
         "retencion de impuesto",
         "com. trf",
+        "com trf",
         "com.serv",
         "emision de estado",
         "below minimum balance charges",
         "stament service",
-        "statement service"
+        "statement service",
+        "descuento de tarjeta",
+        "descuento tarjeta",
+        "desc. tarjeta",
+        "desc tarjeta",
+        "descuento tarjeta credito"
     ]
     
     for patron in palabras_comision_bancaria:
@@ -1237,13 +1255,37 @@ def procesar_banesco(df):
 
         df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parse_banesco_date)
         df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
-        df_filtrado["TIPO"] = df_filtrado["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
-        df_filtrado["MONTO"] = (df_filtrado["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
-                       .str.replace("-", "", regex=False)
-                       .str.replace(".", "", regex=False)
-                       .str.replace(",", ".", regex=False)
-                       .str.strip())
-        df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
+        
+        # 🔥 PARSING DE MONTO ROBUSTO: soporta positivos sin "+", punto decimal
+        # (345570.17), coma decimal venezolana (345.570,17) y enteros (316000)
+        def limpiar_monto_banesco(valor):
+            if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+                return None
+            if isinstance(valor, (int, float, np.integer, np.floating)):
+                return float(valor)
+            val_str = str(valor).strip().replace(" ", "")
+            if not val_str or val_str.lower() == "nan":
+                return None
+            es_negativo = val_str.startswith("-")
+            val_str = val_str.lstrip("+-")
+            if "," in val_str and "." in val_str:
+                if val_str.rfind(",") > val_str.rfind("."):
+                    val_str = val_str.replace(".", "").replace(",", ".")
+                else:
+                    val_str = val_str.replace(",", "")
+            elif "," in val_str:
+                val_str = val_str.replace(",", ".")
+            try:
+                numero = float(val_str)
+            except ValueError:
+                return None
+            return -abs(numero) if es_negativo else numero
+        
+        df_filtrado["MONTO_LIMPIO"] = df_filtrado["MONTO_RAW"].apply(limpiar_monto_banesco)
+        df_filtrado["TIPO"] = df_filtrado["MONTO_LIMPIO"].apply(
+            lambda x: "NC" if x is not None and x > 0 else "ND" if x is not None else "ND"
+        )
+        df_filtrado["MONTO"] = df_filtrado["MONTO_LIMPIO"].abs()
         df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
         df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
         df_filtrado = df_filtrado[["FECHA", "REFERENCIA", "DESCRIPCION", "TIPO", "MONTO"]]
@@ -1256,13 +1298,28 @@ def procesar_banesco(df):
 def procesar_provincial(df):
     st.info("🔍 Procesando archivo de Provincial...")
     try:
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE (Provincial tiene fechas en varias columnas, usamos la primera)
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i]
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
+                encabezado_idx = i
+                break
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
+            return pd.DataFrame()
+        fila_encabezado = df.iloc[[encabezado_idx]].copy()
+        df_datos = df.iloc[encabezado_idx + 1:].copy()
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS (post-encabezado)
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=0, nombre_banco="Provincial"
+            df_datos, columna_fecha_idx=0, nombre_banco="Provincial"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ Provincial: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -1274,17 +1331,9 @@ def procesar_provincial(df):
                 'detalle_fechas': dict_conteo
             }
         
-        encabezado_idx = None
-        for i in range(min(30, len(df_filtrado))):
-            fila = df_filtrado.iloc[i]
-            fila_str = [str(val) for val in fila.tolist()]
-            texto_fila = " ".join(fila_str).upper()
-            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
-                encabezado_idx = i
-                break
-        if encabezado_idx is None:
-            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
-            return pd.DataFrame()
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+        encabezado_idx = 0
         headers = df_filtrado.iloc[encabezado_idx].astype(str).str.strip().tolist()
         rename_map = {}
         for col in headers:
@@ -1330,13 +1379,28 @@ def procesar_provincial(df):
 def procesar_bnc(df):
     st.info("Procesando archivo BNC...")
     try:
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+                encabezado = i
+                break
+        if encabezado is not None:
+            fila_encabezado = df.iloc[[encabezado]].copy()
+            df_datos = df.iloc[encabezado + 1:].copy()
+        else:
+            df_datos = df.copy()
+            st.warning("⚠️ BNC: No se encontró la fila de encabezados, se procesará todo el archivo.")
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=0, nombre_banco="BNC"
+            df_datos, columna_fecha_idx=0, nombre_banco="BNC"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ BNC: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -1348,16 +1412,13 @@ def procesar_bnc(df):
                 'detalle_fechas': dict_conteo
             }
         
-        encabezado = None
-        for i in range(min(30, len(df_filtrado))):
-            fila = df_filtrado.iloc[i].fillna("").astype(str)
-            texto = " ".join(fila.tolist()).lower()
-            if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
-                encabezado = i
-                break
-        if encabezado is None:
-            return pd.DataFrame()
-        headers = []
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        if encabezado is not None:
+            df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+            encabezado = 0
+        
+        if encabezado is not None:
+            headers = []
         for idx, col in enumerate(df_filtrado.iloc[encabezado]):
             col = str(col).strip().replace("\n", " ")
             if col == "" or col.lower() == "nan": col = f"COLUMNA_{idx}"
@@ -1401,13 +1462,26 @@ def procesar_bnc(df):
 def procesar_tesoro(df):
     st.info("Procesando Banco del Tesoro...")
     try:
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado = None
+        for i in range(min(20, len(df))):
+            fila = df.iloc[i].astype(str)
+            texto = " ".join(map(str, fila.tolist())).lower()
+            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
+                encabezado = i
+                break
+        if encabezado is None:
+            return pd.DataFrame()
+        fila_encabezado = df.iloc[[encabezado]].copy()
+        df_datos = df.iloc[encabezado + 1:].copy()
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS (fechas en columna 1)
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=0, nombre_banco="Tesoro"
+            df_datos, columna_fecha_idx=1, nombre_banco="Tesoro"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ Tesoro: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -1419,15 +1493,9 @@ def procesar_tesoro(df):
                 'detalle_fechas': dict_conteo
             }
         
-        encabezado = None
-        for i in range(min(20, len(df_filtrado))):
-            fila = df_filtrado.iloc[i].astype(str)
-            texto = " ".join(map(str, fila.tolist())).lower()
-            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
-                encabezado = i
-                break
-        if encabezado is None:
-            return pd.DataFrame()
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+        encabezado = 0
         df_filtrado.columns = df_filtrado.iloc[encabezado]
         df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
         df_filtrado.columns = [str(c).strip() for c in df_filtrado.columns]
@@ -1467,13 +1535,36 @@ def procesar_bancamiga(df):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(-1)
         
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        columnas = [str(c).strip().upper() for c in df.columns]
+        tiene_encabezados = "FECHA" in columnas and "REFERENCIA" in columnas
+        
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado_idx = None
+        if not tiene_encabezados:
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
+                    encabezado_idx = i
+                    break
+        
+        if tiene_encabezados:
+            df_datos = df.copy()
+        elif encabezado_idx is not None:
+            fila_encabezado = df.iloc[[encabezado_idx]].copy()
+            df_datos = df.iloc[encabezado_idx + 1:].copy()
+        else:
+            df_datos = df.copy()
+            st.warning("⚠️ Bancamiga: No se encontró la fila de encabezados, se procesará todo el archivo.")
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=1, nombre_banco="Bancamiga"
+            df_datos, columna_fecha_idx=1, nombre_banco="Bancamiga"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ Bancamiga: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -1484,6 +1575,10 @@ def procesar_bancamiga(df):
                 'excluidos': registros_excluidos,
                 'detalle_fechas': dict_conteo
             }
+        
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        if not tiene_encabezados and encabezado_idx is not None:
+            df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
         
         columnas = [str(c).strip().upper() for c in df_filtrado.columns]
         if "FECHA" in columnas and "REFERENCIA" in columnas:
@@ -1561,13 +1656,36 @@ def procesar_bancamiga(df):
 def procesar_banplus(df):
     st.info("🔍 Procesando archivo de BanPlus...")
     try:
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        columnas = [str(c).strip().upper() for c in df.columns]
+        tiene_encabezados = "FECHA" in columnas and "REFERENCIA" in columnas
+        
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado_idx = None
+        if not tiene_encabezados:
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                if "FECHA" in texto_fila and ("REFERENCIA" in texto_fila or "REF" in texto_fila or "DESCRIPCION" in texto_fila or "CONCEPTO" in texto_fila):
+                    encabezado_idx = i
+                    break
+        
+        if tiene_encabezados:
+            df_datos = df.copy()
+        elif encabezado_idx is not None:
+            fila_encabezado = df.iloc[[encabezado_idx]].copy()
+            df_datos = df.iloc[encabezado_idx + 1:].copy()
+        else:
+            df_datos = df.copy()
+            st.warning("⚠️ BanPlus: No se encontró la fila de encabezados, se procesará todo el archivo.")
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=0, nombre_banco="BanPlus"
+            df_datos, columna_fecha_idx=0, nombre_banco="BanPlus"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ BanPlus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -1578,6 +1696,10 @@ def procesar_banplus(df):
                 'excluidos': registros_excluidos,
                 'detalle_fechas': dict_conteo
             }
+        
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        if not tiene_encabezados and encabezado_idx is not None:
+            df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
         
         columnas = [str(c).strip().upper() for c in df_filtrado.columns]
         if "FECHA" in columnas and "REFERENCIA" in columnas:
@@ -2034,6 +2156,151 @@ def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
+# 🔥 DETECCIÓN DE COMISIONES POR BANCO (FUNCIÓN ÚNICA)
+# =========================================================
+
+def patrones_comision_por_banco(banco):
+    """Devuelve la lista de patrones de comisión de texto para un banco"""
+    if banco == "venezuela":
+        return [
+            "COM PAGO OTRAS CTAS",
+            "COMISION PAGO A PROVEEDORES",
+            "COM PAGO OTR BCOS",
+            "COM PAGO OTRAS CTAS JUR NAT",
+            "COM PAGO OTRAS CTAS JUR JUR",
+            "COMISION POR TRANSFERENCIA",
+            "COMISION PAGO MOVIL",
+            "COMISIÓN PAGO MOVIL",
+            "COMISION X PAGO DE NOMINA",
+            "COMISION X PAGO DE NOMINAS",
+            "ITF",
+            "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+            "CARGO BANCARIO",
+            "MANTENIMIENTO DE CUENTA",
+            "COMISION BANCARIA",
+            "COMISIÓN BANCARIA",
+            "CARGO POR SERVICIO",
+            "CARGO POR TRANSACCION",
+            "COMISION PAGO MOVIL COMERCIAL",
+            "COMISION X PAGO DE NOMINAS MB",
+            "DOMICILIACION J412438905",
+            "DISTRIBUIDORA GLOBAL",
+            "DOMICILIACION"
+        ]
+    elif banco == "banesco":
+        return ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]
+    elif banco == "bnc":
+        return ["COMISION", "COMIS", "CARGO", "ITF"]
+    elif banco == "provincial":
+        return ["COMIS", "COM TRF", "COM TRF TERCERO", "COMISION COBRADA", "COMISION POR"]
+    elif banco == "bancamiga":
+        return ["COMISI"]
+    elif banco == "mercantil":
+        return [
+            "OP.CRED.DIRT. CLTE-CLTE",
+            "OP CRED DIRT CLTE CLTE",
+            "COMISION PAGO MOVIL COMERCIAL",
+            "COMISION POR TRANSFERENCIA DE FONDOS",
+            "COMISION X PAGO DE NOMINAS",
+            "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO",
+            "COMISION X PAGO DE NOMINAS MB",
+            "ITF",
+            "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
+            "CARGO BANCARIO",
+            "MANTENIMIENTO DE CUENTA",
+            "COMISION POR TRANSFERENCIA",
+            "EMISION EDO",
+            "RETENCION DE IMPUESTO",
+            "DESCUENTO DE TARJETA",
+            "DESC. TARJETA",
+            "DESCUENTO TARJETA",
+            "DESCUENTO TARJETA CREDITO",
+            "DESC TARJETA"
+        ]
+    elif banco == "tesoro":
+        return [
+            "BELOW MINIMUM BALANCE CHARGES",
+            "STAMENT SERVICE",
+            "STATEMENT SERVICE",
+            "COMIS",
+            "COMISION",
+            "CARGO BANCARIO",
+            "CARGO POR SERVICIO"
+        ]
+    elif banco == "activo":
+        return [
+            "CARGO POR MANTENIMIENTO",
+            "CARGO EMISION EDO DE CUENTA",
+            "CARGO SERVICIO SMS",
+            "COMISION",
+            "COMISIÓN",
+            "MANTENIMIENTO",
+            "SMS",
+            "EMISION EDO",
+            "COM EDO",
+            "COM MOV"
+        ]
+    elif banco == "banplus":
+        return ["COMISION", "COMIS", "SMS", "CARGO", "MANTENIMIENTO"]
+    return []
+
+def detectar_comision_por_banco(descripcion, referencia="", tipo="", monto_bs=0, banco=""):
+    """
+    Detecta si un movimiento es comisión bancaria según reglas específicas del banco.
+    En modo multibanco se aplica la unión de patrones de TODOS los bancos.
+    """
+    descripcion_upper = str(descripcion or "").upper()
+    referencia_upper = str(referencia or "").upper()
+    tipo_upper = str(tipo or "").upper()
+
+    # 🔥 REGLA GENÉRICA: "COMISION PAGO A PROVEEDORES" (y variantes) SIEMPRE
+    # es una comisión bancaria, sin importar el banco.
+    if any(x in descripcion_upper for x in [
+        "COMISION PAGO A PROVEEDORES",
+        "COMISION PAGO A PROVEEDOR",
+        "COM PAGO A PROVEEDORES",
+        "COM. PAGO A PROVEEDORES",
+        "COM PAGO PROVEEDORES"
+    ]):
+        return True
+
+    if banco == "multibanco":
+        for b in ["venezuela", "banesco", "bnc", "provincial", "bancamiga", "mercantil", "tesoro", "activo", "banplus"]:
+            for patron in patrones_comision_por_banco(b):
+                if patron in descripcion_upper:
+                    return True
+        return False
+
+    # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
+    if banco == "venezuela":
+        # 🔥 REGLA 1: Detectar por descripción (comisiones de BDV)
+        for patron in patrones_comision_por_banco("venezuela"):
+            if patron in descripcion_upper:
+                return True
+
+        # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
+        if referencia_upper.startswith(("970", "972", "067")):
+            if any(palabra in descripcion_upper for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
+                return True
+
+        # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
+        if tipo_upper == "ND":
+            if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
+                return True
+
+        # 🔥 REGLA 4: Comisiones específicas de BDV por monto pequeño
+        if tipo_upper == "ND":
+            if monto_bs < 1000 and ("COM" in descripcion_upper or "PAGO OTR" in descripcion_upper):
+                return True
+
+    # Resto de bancos: matching de patrones de texto
+    for patron in patrones_comision_por_banco(banco):
+        if patron in descripcion_upper:
+            return True
+
+    return False
+
+# =========================================================
 # 🔥 PROCESAMIENTO PRINCIPAL - CLASIFICACIÓN (CORREGIDO PARA BDV)
 # =========================================================
 
@@ -2090,157 +2357,10 @@ def procesar_archivo(df, usar_api=False, banco=""):
             if clave in registros_procesados: continue
             registros_procesados.add(clave)
 
-            # 🔥 DETECCIÓN DE COMISIONES POR BANCO
-            es_comision_banco = False
-            
-            # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
-            if banco == "venezuela":
-                descripcion_upper = descripcion.upper()
-                referencia_upper = referencia.upper()
-                tipo_upper = tipo.upper()
-                
-                # 🔥 REGLA 1: Detectar por descripción (comisiones de BDV)
-                patrones_bdv = [
-                    "COM PAGO OTRAS CTAS",
-                    "COMISION PAGO A PROVEEDORES",
-                    "COM PAGO OTR BCOS",
-                    "COM PAGO OTRAS CTAS JUR NAT",
-                    "COM PAGO OTRAS CTAS JUR JUR",
-                    "COMISION POR TRANSFERENCIA",
-                    "COMISION PAGO MOVIL",
-                    "COMISIÓN PAGO MOVIL",
-                    "COMISION X PAGO DE NOMINA",
-                    "COMISION X PAGO DE NOMINAS",
-                    "ITF",
-                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO",
-                    "MANTENIMIENTO DE CUENTA",
-                    "COMISION BANCARIA",
-                    "COMISIÓN BANCARIA",
-                    "CARGO POR SERVICIO",
-                    "CARGO POR TRANSACCION",
-                    "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION X PAGO DE NOMINAS MB",
-                    "DOMICILIACION J412438905",
-                    "DISTRIBUIDORA GLOBAL",
-                    "DOMICILIACION"
-                ]
-                
-                # Verificar si la descripción coincide con alguna comisión
-                for patron in patrones_bdv:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-                
-                # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
-                if not es_comision_banco:
-                    # Las comisiones de BDV suelen tener referencias que comienzan con 970, 972, 067
-                    if referencia_upper.startswith(("970", "972", "067")):
-                        # Verificar si la descripción contiene palabras clave de comisión
-                        if any(palabra in descripcion_upper for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
-                            es_comision_banco = True
-                
-                # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
-                if not es_comision_banco and tipo_upper == "ND":
-                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
-                        es_comision_banco = True
-                
-                # 🔥 REGLA 4: Comisiones específicas de BDV por monto pequeño
-                if not es_comision_banco and tipo_upper == "ND":
-                    # Montos típicos de comisiones de BDV (montos pequeños)
-                    if monto_bs < 1000 and ("COM" in descripcion_upper or "PAGO OTR" in descripcion_upper):
-                        es_comision_banco = True
-            
-            # BANESCO - REGLAS ESPECÍFICAS
-            elif banco == "banesco":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]):
-                    es_comision_banco = True
-            
-            # BNC - REGLAS ESPECÍFICAS
-            elif banco == "bnc":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF"]):
-                    es_comision_banco = True
-            
-            # PROVINCIAL - REGLAS ESPECÍFICAS
-            elif banco == "provincial":
-                descripcion_upper = descripcion.upper()
-                if "COMIS" in descripcion_upper:
-                    es_comision_banco = True
-            
-            # BANCAMIGA - REGLAS ESPECÍFICAS
-            elif banco == "bancamiga":
-                descripcion_upper = descripcion.upper()
-                if "COMISI" in descripcion_upper:
-                    es_comision_banco = True
-            
-            # MERCANTIL - REGLAS ESPECÍFICAS
-            elif banco == "mercantil":
-                descripcion_upper = descripcion.upper()
-                patrones_mercantil = [
-                    "OP.CRED.DIRT. CLTE-CLTE",
-                    "OP CRED DIRT CLTE CLTE",
-                    "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION POR TRANSFERENCIA DE FONDOS",
-                    "COMISION X PAGO DE NOMINAS",
-                    "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO",
-                    "COMISION X PAGO DE NOMINAS MB",
-                    "ITF",
-                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO",
-                    "MANTENIMIENTO DE CUENTA",
-                    "COMISION POR TRANSFERENCIA",
-                    "EMISION EDO",
-                    "RETENCION DE IMPUESTO"
-                ]
-                for patron in patrones_mercantil:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # TESORO - REGLAS ESPECÍFICAS
-            elif banco == "tesoro":
-                descripcion_upper = descripcion.upper()
-                patrones_tesoro = [
-                    "BELOW MINIMUM BALANCE CHARGES",
-                    "STAMENT SERVICE",
-                    "STATEMENT SERVICE",
-                    "COMIS",
-                    "COMISION",
-                    "CARGO BANCARIO",
-                    "CARGO POR SERVICIO"
-                ]
-                for patron in patrones_tesoro:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # ACTIVO - REGLAS ESPECÍFICAS
-            elif banco == "activo":
-                descripcion_upper = descripcion.upper()
-                patrones_activo = [
-                    "CARGO POR MANTENIMIENTO",
-                    "CARGO EMISION EDO DE CUENTA",
-                    "CARGO SERVICIO SMS",
-                    "COMISION",
-                    "COMISIÓN",
-                    "MANTENIMIENTO",
-                    "SMS",
-                    "EMISION EDO",
-                    "COM EDO",
-                    "COM MOV"
-                ]
-                for patron in patrones_activo:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # BANPLUS - REGLAS ESPECÍFICAS
-            elif banco == "banplus":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "SMS", "CARGO", "MANTENIMIENTO"]):
-                    es_comision_banco = True
+            # 🔥 DETECCIÓN DE COMISIONES POR BANCO (función única con soporte multibanco)
+            es_comision_banco = detectar_comision_por_banco(
+                descripcion, referencia, tipo, monto_bs, banco
+            )
 
             # Si es comisión del banco, clasificar como comisión
             if es_comision_banco:
@@ -2298,7 +2418,12 @@ def mono_leer_excel_sin_encabezados(archivo):
                 
                 archivo.seek(0)
                 
-                contenido = archivo.read().decode("utf-8", errors="ignore")
+                contenido = archivo.read()
+                try:
+                    contenido = contenido.decode("utf-8")
+                except UnicodeDecodeError:
+                    archivo.seek(0)
+                    contenido = archivo.read().decode("latin-1")
                 
                 lineas = contenido.split("\n")
                 
@@ -2381,7 +2506,10 @@ def mono_detectar_banco_por_contenido(archivo):
             archivo.seek(pos)
             
             # Detectar por contenido - Banco Activo primero
-            if "BANCO ACTIVO" in texto or "0171" in texto or "NUMERO DE CUENTA" in texto:
+            # 🔥 "0171" debe ser un número de cuenta de Banco Activo (20 dígitos aislados),
+            # no cualquier coincidencia dentro de referencias de otros bancos
+            es_cuenta_activo = bool(re.search(r'(?<![\d])0171\d{16}(?!\d)', texto))
+            if "BANCO ACTIVO" in texto or es_cuenta_activo or "NUMERO DE CUENTA" in texto:
                 # Verificar si tiene el formato de Banco Activo
                 if df_temp.shape[1] >= 7:
                     for i in range(min(10, len(df_temp))):
@@ -2820,14 +2948,36 @@ def mono_procesar_banesco(df):
         df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parse_banesco_date)
         df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
 
-        df_filtrado["TIPO"] = df_filtrado["MONTO_RAW"].astype(str).apply(lambda x: "NC" if "+" in x else "ND")
-        df_filtrado["MONTO"] = (df_filtrado["MONTO_RAW"].astype(str).str.replace("+", "", regex=False)
-                       .str.replace("-", "", regex=False)
-                       .str.replace(".", "", regex=False)
-                       .str.replace(",", ".", regex=False)
-                       .str.strip())
-
-        df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
+        # 🔥 PARSING DE MONTO ROBUSTO: soporta positivos sin "+", punto decimal
+        # (345570.17), coma decimal venezolana (345.570,17) y enteros (316000)
+        def limpiar_monto_banesco(valor):
+            if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+                return None
+            if isinstance(valor, (int, float, np.integer, np.floating)):
+                return float(valor)
+            val_str = str(valor).strip().replace(" ", "")
+            if not val_str or val_str.lower() == "nan":
+                return None
+            es_negativo = val_str.startswith("-")
+            val_str = val_str.lstrip("+-")
+            if "," in val_str and "." in val_str:
+                if val_str.rfind(",") > val_str.rfind("."):
+                    val_str = val_str.replace(".", "").replace(",", ".")
+                else:
+                    val_str = val_str.replace(",", "")
+            elif "," in val_str:
+                val_str = val_str.replace(",", ".")
+            try:
+                numero = float(val_str)
+            except ValueError:
+                return None
+            return -abs(numero) if es_negativo else numero
+        
+        df_filtrado["MONTO_LIMPIO"] = df_filtrado["MONTO_RAW"].apply(limpiar_monto_banesco)
+        df_filtrado["TIPO"] = df_filtrado["MONTO_LIMPIO"].apply(
+            lambda x: "NC" if x is not None and x > 0 else "ND" if x is not None else "ND"
+        )
+        df_filtrado["MONTO"] = df_filtrado["MONTO_LIMPIO"].abs()
         df_filtrado = df_filtrado[df_filtrado["MONTO"].notna()]
         df_filtrado = df_filtrado[df_filtrado["MONTO"] > 0]
 
@@ -2853,13 +3003,30 @@ def mono_procesar_provincial(df):
     st.info("🔍 Procesando archivo de Provincial (formato especial)...")
     
     try:
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado_idx = None
+        for i in range(min(30, len(df))):
+            fila = df.iloc[i]
+            fila_str = [str(val) for val in fila.tolist()]
+            texto_fila = " ".join(fila_str).upper()
+            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
+                encabezado_idx = i
+                break
+        
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
+            return pd.DataFrame()
+        
+        fila_encabezado = df.iloc[[encabezado_idx]].copy()
+        df_datos = df.iloc[encabezado_idx + 1:].copy()
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS (post-encabezado)
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=0, nombre_banco="Provincial"
+            df_datos, columna_fecha_idx=0, nombre_banco="Provincial"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ Provincial: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -2871,6 +3038,10 @@ def mono_procesar_provincial(df):
                 'detalle_fechas': dict_conteo
             }
         
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+        encabezado_idx = 0
+        
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
         st.write(f"- Número de filas: {len(df_filtrado)}")
@@ -2879,23 +3050,6 @@ def mono_procesar_provincial(df):
         # Mostrar primeras filas para debug
         st.write("👁️ **Primeras 15 filas del archivo:**")
         st.dataframe(df_filtrado.head(15))
-        
-        # Buscar la fila que contiene los encabezados
-        encabezado_idx = None
-        for i in range(min(30, len(df_filtrado))):
-            fila = df_filtrado.iloc[i]
-            # Convertir TODOS los valores a string para evitar errores
-            fila_str = [str(val) for val in fila.tolist()]
-            texto_fila = " ".join(fila_str).upper()
-            
-            # Buscar columnas que contengan "F. Operación" o "Concepto" o "Importe"
-            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
-                encabezado_idx = i
-                break
-        
-        if encabezado_idx is None:
-            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
-            return pd.DataFrame()
         
         st.write(f"✅ Encabezados encontrados en la fila {encabezado_idx}")
         
@@ -3028,13 +3182,29 @@ def mono_procesar_provincial(df):
 def mono_procesar_bnc(df):
     st.info("Procesando archivo BNC...")
     
-    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+    encabezado = None
+    for i in range(min(30, len(df))):
+        fila = df.iloc[i].fillna("").astype(str)
+        texto = " ".join(fila.tolist()).lower()
+        if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+            encabezado = i
+            break
+
+    if encabezado is not None:
+        fila_encabezado = df.iloc[[encabezado]].copy()
+        df_datos = df.iloc[encabezado + 1:].copy()
+    else:
+        df_datos = df.copy()
+        st.warning("⚠️ BNC: No se encontró la fila de encabezados, se procesará todo el archivo.")
+    
+    # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
     df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-        df, columna_fecha_idx=0, nombre_banco="BNC"
+        df_datos, columna_fecha_idx=0, nombre_banco="BNC"
     )
     
     if df_filtrado is None or df_filtrado.empty:
-        df_filtrado = df
+        df_filtrado = df_datos
         st.warning("⚠️ BNC: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
     
     if fecha_pred:
@@ -3046,14 +3216,18 @@ def mono_procesar_bnc(df):
             'detalle_fechas': dict_conteo
         }
     
-    encabezado = None
-
-    for i in range(min(30, len(df_filtrado))):
-        fila = df_filtrado.iloc[i].fillna("").astype(str)
-        texto = " ".join(fila.tolist()).lower()
-        if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
-            encabezado = i
-            break
+    # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+    if encabezado is not None:
+        df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+        encabezado = 0
+    else:
+        encabezado = None
+        for i in range(min(30, len(df_filtrado))):
+            fila = df_filtrado.iloc[i].fillna("").astype(str)
+            texto = " ".join(fila.tolist()).lower()
+            if "fecha" in texto and ("descripcion" in texto or "descripción" in texto):
+                encabezado = i
+                break
 
     if encabezado is None:
         st.error("No se encontró encabezado válido en BNC")
@@ -3119,13 +3293,32 @@ def mono_procesar_bnc(df):
 def mono_procesar_tesoro(df):
     st.info("Procesando Banco del Tesoro...")
     
-    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    try:
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado = None
+        for i in range(min(20, len(df))):
+            fila = df.iloc[i].astype(str)
+            texto = " ".join(map(str, fila.tolist())).lower()
+            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
+                encabezado = i
+                break
+
+        if encabezado is None:
+            st.error("No se encontró encabezado válido en Tesoro")
+            return pd.DataFrame()
+        fila_encabezado = df.iloc[[encabezado]].copy()
+        df_datos = df.iloc[encabezado + 1:].copy()
+    except Exception:
+        fila_encabezado = df.iloc[[0]].copy()
+        df_datos = df.iloc[1:].copy()
+    
+    # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS (fechas en columna 1)
     df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-        df, columna_fecha_idx=0, nombre_banco="Tesoro"
+        df_datos, columna_fecha_idx=1, nombre_banco="Tesoro"
     )
     
     if df_filtrado is None or df_filtrado.empty:
-        df_filtrado = df
+        df_filtrado = df_datos
         st.warning("⚠️ Tesoro: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
     
     if fecha_pred:
@@ -3137,19 +3330,11 @@ def mono_procesar_tesoro(df):
             'detalle_fechas': dict_conteo
         }
     
+    # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+    df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
+    
     try:
-        encabezado = None
-        for i in range(min(20, len(df_filtrado))):
-            fila = df_filtrado.iloc[i].astype(str)
-            texto = " ".join(map(str, fila.tolist())).lower()
-            if "fecha" in texto and "referencia" in texto and "concepto" in texto:
-                encabezado = i
-                break
-
-        if encabezado is None:
-            st.error("No se encontró encabezado válido en Tesoro")
-            return pd.DataFrame()
-
+        encabezado = 0
         df_filtrado.columns = df_filtrado.iloc[encabezado]
         df_filtrado = df_filtrado.iloc[encabezado + 1:].reset_index(drop=True)
         df_filtrado.columns = [str(c).strip() for c in df_filtrado.columns]
@@ -3218,13 +3403,36 @@ def mono_procesar_bancamiga(df):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(-1)
         
-        # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+        columnas_orig = [str(c).strip().upper() for c in df.columns]
+        tiene_encabezados = "FECHA" in columnas_orig and "REFERENCIA" in columnas_orig
+        
+        # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        encabezado_idx = None
+        if not tiene_encabezados:
+            for i in range(min(30, len(df))):
+                fila = df.iloc[i]
+                fila_str = [str(val) for val in fila.tolist()]
+                texto_fila = " ".join(fila_str).upper()
+                if "NRO" in texto_fila and "FECHA" in texto_fila and "REFERENCIA" in texto_fila:
+                    encabezado_idx = i
+                    break
+        
+        if tiene_encabezados:
+            df_datos = df.copy()
+        elif encabezado_idx is not None:
+            fila_encabezado = df.iloc[[encabezado_idx]].copy()
+            df_datos = df.iloc[encabezado_idx + 1:].copy()
+        else:
+            df_datos = df.copy()
+            st.warning("⚠️ Bancamiga: No se encontró la fila de encabezados, se procesará todo el archivo.")
+        
+        # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
         df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-            df, columna_fecha_idx=1, nombre_banco="Bancamiga"
+            df_datos, columna_fecha_idx=1, nombre_banco="Bancamiga"
         )
         
         if df_filtrado is None or df_filtrado.empty:
-            df_filtrado = df
+            df_filtrado = df_datos
             st.warning("⚠️ Bancamiga: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
@@ -3235,6 +3443,10 @@ def mono_procesar_bancamiga(df):
                 'excluidos': registros_excluidos,
                 'detalle_fechas': dict_conteo
             }
+        
+        # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+        if not tiene_encabezados and encabezado_idx is not None:
+            df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
         
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
@@ -3744,13 +3956,31 @@ def mono_procesar_banplus(df):
     """
     st.info("🔍 Procesando archivo de Banplus...")
     
-    # 🔥 APLICAR FILTRO DE FECHA PREDOMINANTE
+    # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+    encabezado_idx = None
+    cols_upper = [str(c).strip().upper() for c in df.columns]
+    if not ("FECHA" in cols_upper and "REFERENCIA" in cols_upper):
+        for i in range(min(15, len(df))):
+            fila = df.iloc[i].astype(str).str.strip().str.upper().tolist()
+            fila_str = " ".join(fila)
+            if "FECHA" in fila_str and "REFERENCIA" in fila_str:
+                encabezado_idx = i
+                break
+    
+    if encabezado_idx is not None:
+        fila_encabezado = df.iloc[[encabezado_idx]].copy()
+        df_datos = df.iloc[encabezado_idx + 1:].copy()
+    else:
+        df_datos = df.copy()
+        st.warning("⚠️ Banplus: No se encontró la fila de encabezados, se procesará todo el archivo.")
+    
+    # 🔥 2. APLICAR FILTRO DE FECHA PREDOMINANTE SOLO A LAS FILAS DE DATOS
     df_filtrado, fecha_pred, dict_conteo, total_filas, registros_excluidos = filtrar_por_fecha_predominante(
-        df, columna_fecha_idx=0, nombre_banco="Banplus"
+        df_datos, columna_fecha_idx=0, nombre_banco="Banplus"
     )
     
     if df_filtrado is None or df_filtrado.empty:
-        df_filtrado = df
+        df_filtrado = df_datos
         st.warning("⚠️ Banplus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
     
     if fecha_pred:
@@ -3761,6 +3991,10 @@ def mono_procesar_banplus(df):
             'excluidos': registros_excluidos,
             'detalle_fechas': dict_conteo
         }
+    
+    # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
+    if encabezado_idx is not None:
+        df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
     
     try:
         # Mostrar información del archivo
@@ -3927,171 +4161,10 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
             # movimientos legítimos repetidos (mismo monto/referencia/descripción),
             # causando que ingresos (p. ej. Pago Móvil) no se tomaran todos del archivo.
 
-            # 🔥 DETECCIÓN DE COMISIONES POR BANCO (CORREGIDO)
-            es_comision_banco = False
-
-            # 🔥 REGLA GENÉRICA: "COMISION PAGO A PROVEEDORES" (y variantes) SIEMPRE
-            # es una comisión bancaria, sin importar el banco detectado. Solo la
-            # capturaba patrones_bdv (Venezuela); en los demás bancos quedaba en
-            # EGRESOS al exportar.
-            descripcion_upper = descripcion.upper()
-            if any(x in descripcion_upper for x in [
-                "COMISION PAGO A PROVEEDORES",
-                "COMISION PAGO A PROVEEDOR",
-                "COM PAGO A PROVEEDORES",
-                "COM. PAGO A PROVEEDORES",
-                "COM PAGO PROVEEDORES"
-            ]):
-                es_comision_banco = True
-            
-            # BANCO DE VENEZUELA - REGLAS ESPECÍFICAS
-            if banco == "venezuela" and not es_comision_banco:
-                descripcion_upper = descripcion.upper()
-                referencia_upper = referencia.upper()
-                tipo_upper = tipo.upper()
-                
-                # 🔥 REGLA 1: Detectar por descripción (comisiones de BDV)
-                patrones_bdv = [
-                    "COM PAGO OTRAS CTAS",
-                    "COMISION PAGO A PROVEEDORES",
-                    "COM PAGO OTR BCOS",
-                    "COM PAGO OTRAS CTAS JUR NAT",
-                    "COM PAGO OTRAS CTAS JUR JUR",
-                    "COMISION POR TRANSFERENCIA",
-                    "COMISION PAGO MOVIL",
-                    "COMISIÓN PAGO MOVIL",
-                    "COMISION X PAGO DE NOMINA",
-                    "COMISION X PAGO DE NOMINAS",
-                    "ITF",
-                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO",
-                    "MANTENIMIENTO DE CUENTA",
-                    "COMISION BANCARIA",
-                    "COMISIÓN BANCARIA",
-                    "CARGO POR SERVICIO",
-                    "CARGO POR TRANSACCION",
-                    "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION X PAGO DE NOMINAS MB",
-                    "DOMICILIACION J412438905",
-                    "DISTRIBUIDORA GLOBAL",
-                    "DOMICILIACION"
-                ]
-                
-                # Verificar si la descripción coincide con alguna comisión
-                for patron in patrones_bdv:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-                
-                # 🔥 REGLA 2: Detectar por referencia (comisiones de BDV tienen referencias específicas)
-                if not es_comision_banco:
-                    # Las comisiones de BDV suelen tener referencias que comienzan con 970, 972, 067
-                    if referencia_upper.startswith(("970", "972", "067")):
-                        # Verificar si la descripción contiene palabras clave de comisión
-                        if any(palabra in descripcion_upper for palabra in ["COM", "PAGO OTRAS", "PAGO OTR", "COMISION"]):
-                            es_comision_banco = True
-                
-                # 🔥 REGLA 3: Si el tipo es ND y la descripción contiene "COM" es una comisión
-                if not es_comision_banco and tipo_upper == "ND":
-                    if "COM" in descripcion_upper or "PAGO OTR" in descripcion_upper:
-                        es_comision_banco = True
-                
-                # 🔥 REGLA 4: Comisiones específicas de BDV por monto pequeño
-                if not es_comision_banco and tipo_upper == "ND":
-                    # Montos típicos de comisiones de BDV (montos pequeños)
-                    if monto_bs < 1000 and ("COM" in descripcion_upper or "PAGO OTR" in descripcion_upper):
-                        es_comision_banco = True
-            
-            # BANESCO - REGLAS ESPECÍFICAS
-            elif banco == "banesco":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]):
-                    es_comision_banco = True
-            
-            # BNC - REGLAS ESPECÍFICAS
-            elif banco == "bnc":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "CARGO", "ITF"]):
-                    es_comision_banco = True
-            
-            # PROVINCIAL - REGLAS ESPECÍFICAS
-            elif banco == "provincial":
-                descripcion_upper = descripcion.upper()
-                if "COMIS" in descripcion_upper:
-                    es_comision_banco = True
-            
-            # BANCAMIGA - REGLAS ESPECÍFICAS
-            elif banco == "bancamiga":
-                descripcion_upper = descripcion.upper()
-                if "COMISI" in descripcion_upper:
-                    es_comision_banco = True
-            
-            # MERCANTIL - REGLAS ESPECÍFICAS
-            elif banco == "mercantil":
-                descripcion_upper = descripcion.upper()
-                patrones_mercantil = [
-                    "OP.CRED.DIRT. CLTE-CLTE",
-                    "OP CRED DIRT CLTE CLTE",
-                    "COMISION PAGO MOVIL COMERCIAL",
-                    "COMISION POR TRANSFERENCIA DE FONDOS",
-                    "COMISION X PAGO DE NOMINAS",
-                    "COMISION PAGO MOVIL COMERCIAL INTERBANCARIO",
-                    "COMISION X PAGO DE NOMINAS MB",
-                    "ITF",
-                    "IMPUESTO A LAS TRANSACCIONES FINANCIERAS",
-                    "CARGO BANCARIO",
-                    "MANTENIMIENTO DE CUENTA",
-                    "COMISION POR TRANSFERENCIA",
-                    "EMISION EDO",
-                    "RETENCION DE IMPUESTO"
-                ]
-                for patron in patrones_mercantil:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # TESORO - REGLAS ESPECÍFICAS
-            elif banco == "tesoro":
-                descripcion_upper = descripcion.upper()
-                patrones_tesoro = [
-                    "BELOW MINIMUM BALANCE CHARGES",
-                    "STAMENT SERVICE",
-                    "STATEMENT SERVICE",
-                    "COMIS",
-                    "COMISION",
-                    "CARGO BANCARIO",
-                    "CARGO POR SERVICIO"
-                ]
-                for patron in patrones_tesoro:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # ACTIVO - REGLAS ESPECÍFICAS
-            elif banco == "activo":
-                descripcion_upper = descripcion.upper()
-                patrones_activo = [
-                    "CARGO POR MANTENIMIENTO",
-                    "CARGO EMISION EDO DE CUENTA",
-                    "CARGO SERVICIO SMS",
-                    "COMISION",
-                    "COMISIÓN",
-                    "MANTENIMIENTO",
-                    "SMS",
-                    "EMISION EDO",
-                    "COM EDO",
-                    "COM MOV"
-                ]
-                for patron in patrones_activo:
-                    if patron in descripcion_upper:
-                        es_comision_banco = True
-                        break
-            
-            # BANPLUS - REGLAS ESPECÍFICAS
-            elif banco == "banplus":
-                descripcion_upper = descripcion.upper()
-                if any(x in descripcion_upper for x in ["COMISION", "COMIS", "SMS", "CARGO", "MANTENIMIENTO"]):
-                    es_comision_banco = True
+            # 🔥 DETECCIÓN DE COMISIONES POR BANCO (función única con soporte multibanco)
+            es_comision_banco = detectar_comision_por_banco(
+                descripcion, referencia, tipo, monto_bs, banco
+            )
 
             # Si es comisión del banco, clasificar como comisión
             if es_comision_banco:
