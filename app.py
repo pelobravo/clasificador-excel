@@ -3647,11 +3647,14 @@ def mono_procesar_bancamiga(df):
 
 @st.cache_data(ttl=3600)
 def mono_obtener_tasa_bcv_fecha(fecha_obj):
-    # Usa el mismo diccionario unificado (junio + julio + agosto)
+    # ✅ USA EL MISMO DICCIONARIO QUE EL MODO CONSOLIDADO
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
-    return mono_obtener_tasa_bcv_fecha(fecha_obj)
+    tasa = mono_obtener_tasa_bcv_fecha(fecha_obj)
+    if tasa is None:
+        tasa = 764.3486  # 🔥 FALLBACK CON LA TASA MÁS RECIENTE
+    return tasa
 
 # =========================================================
 # CONVERTIR A FORMATO MERCANTIL - INCLUYE FLAG DE COMISIONES
