@@ -2188,7 +2188,6 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "04/08/2026": 752.0943, "05/08/2026": 755.1552, "06/08/2026": 755.9001,
         "07/08/2026": 756.7083, "08/08/2026": 757.5406, "09/08/2026": 757.5406,
         "10/08/2026": 757.5406, "11/08/2026": 761.2167, "12/08/2026": 764.3486,
-        "13/08/2026": 766.8603,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
@@ -4908,6 +4907,13 @@ if st.session_state.seccion_activa == "consolidado":
                     # Si es numérico de 8 dígitos (formato Mercantil ddmmyyyy)
                     if len(val_str) == 8 and val_str.isdigit():
                         dt = pd.to_datetime(val_str, format="%d%m%Y", errors="coerce")
+                        if pd.notna(dt):
+                            fechas.append(dt)
+                            continue
+
+                    # 🔧 CORRECCIÓN (2026-08-13): numérico de 7 dígitos (Mercantil compacto "6082026" -> 06/08/2026)
+                    if len(val_str) == 7 and val_str.isdigit():
+                        dt = pd.to_datetime(val_str.zfill(8), format="%d%m%Y", errors="coerce")
                         if pd.notna(dt):
                             fechas.append(dt)
                             continue
