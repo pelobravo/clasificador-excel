@@ -44,6 +44,36 @@ if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
 if "total_creditos_venezuela" not in st.session_state: st.session_state.total_creditos_venezuela = 0.0
+if "creditos_por_banco" not in st.session_state: st.session_state.creditos_por_banco = {}
+
+def _sumar_creditos_convertidos(df_convertido):
+    """Suma los ingresos (créditos) de un dataframe convertido al formato estándar.
+    Usa la misma clasificación que procesar_archivo: TIPO en tipos de ingreso,
+    excluye comisiones (col 9) y filas de encabezados/saldos."""
+    total = 0.0
+    if df_convertido is None or getattr(df_convertido, "empty", True):
+        return total
+    tipos_ing = {"NC", "C", "CREDITO", "ABONO", "DP", "DEP"}
+    excluir_texto = {"SALDO", "DESCRIPCION", "DESCRIPCIÓN", "REFERENCIA", "MOVIMIENTO", "FECHA", "SALDO INICIAL", "SALDO FINAL"}
+    for _, fila in df_convertido.iterrows():
+        try:
+            if len(fila) > 9 and bool(fila[9]):
+                continue
+            tipo = str(fila[5]).strip().upper()
+            if tipo not in tipos_ing:
+                continue
+            desc = str(fila[6]).strip().upper()
+            if desc in excluir_texto:
+                continue
+            try:
+                m = float(str(fila[7]).replace(",", ""))
+            except Exception:
+                m = 0.0
+            if m > 0:
+                total += m
+        except Exception:
+            continue
+    return total
 
 # =========================================================
 # ESTILOS
@@ -4429,12 +4459,9 @@ if st.session_state.seccion_activa == "consolidado":
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
     
     # 🔥 CALCULAR AUTOMÁTICAMENTE los ingresos totales
-    # Si hay archivo de Venezuela, usar el total calculado del archivo original
-    if archivo_venezuela:
-        total_ingresos_ves = st.session_state.get('total_creditos_venezuela', 0.0)
-    else:
-        # Si no hay Venezuela, usar el cálculo del procesamiento
-        total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
+    # 🔧 CORRECCIÓN (2026-08-13): usar el total consolidado real de TODOS los bancos
+    # (antes priorizaba solo los créditos del archivo de Venezuela, dejando fuera los demás bancos)
+    total_ingresos_ves = st.session_state.get("total_ingresos_consolidado", 0.0)
     total_ingresos_usd = total_ingresos_ves / tasa_dia if tasa_dia > 0 else 0.0
     
     total_egresos_ves = st.session_state.get("total_egresos_ipago_ves", 0.0)
@@ -4571,6 +4598,9 @@ if st.session_state.seccion_activa == "consolidado":
     bancos_procesados = []
     saldos_detalle_excel = []
 
+    # 🔧 CORRECCIÓN (2026-08-13): reiniciar acumulador de ingresos por banco en cada procesamiento
+    st.session_state.creditos_por_banco = {}
+
     # 1. Banesco
     if archivo_banesco:
         st.session_state.saldo_banesco = 0.0
@@ -4592,6 +4622,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["banesco"] = st.session_state.creditos_por_banco.get("banesco", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Banesco" not in bancos_procesados:
                         bancos_procesados.append("Banesco")
             except Exception as e:
@@ -4623,6 +4654,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["bnc"] = st.session_state.creditos_por_banco.get("bnc", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "BNC" not in bancos_procesados:
                         bancos_procesados.append("BNC")
             except Exception as e:
@@ -4646,6 +4678,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_raw, "mercantil")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["mercantil"] = st.session_state.creditos_por_banco.get("mercantil", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Mercantil" not in bancos_procesados:
                         bancos_procesados.append("Mercantil")
             except Exception as e:
@@ -4695,6 +4728,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["venezuela"] = st.session_state.creditos_por_banco.get("venezuela", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Venezuela" not in bancos_procesados:
                         bancos_procesados.append("Venezuela")
             except Exception as e:
@@ -4718,6 +4752,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["provincial"] = st.session_state.creditos_por_banco.get("provincial", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Provincial" not in bancos_procesados:
                         bancos_procesados.append("Provincial")
             except Exception as e:
@@ -4753,6 +4788,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["bancamiga"] = st.session_state.creditos_por_banco.get("bancamiga", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Bancamiga" not in bancos_procesados:
                         bancos_procesados.append("Bancamiga")
             except Exception as e:
@@ -4785,6 +4821,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "banplus")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["banplus"] = st.session_state.creditos_por_banco.get("banplus", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "BanPlus" not in bancos_procesados:
                         bancos_procesados.append("BanPlus")
             except Exception as e:
@@ -4820,6 +4857,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "activo")
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
+                    st.session_state.creditos_por_banco["activo"] = st.session_state.creditos_por_banco.get("activo", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Activo" not in bancos_procesados:
                         bancos_procesados.append("Activo")
             except Exception as e:
@@ -4996,6 +5034,10 @@ if st.session_state.seccion_activa == "consolidado":
                                 if col not in df_t.columns: df_t[col] = ""
 
                     total_ingresos = df_ingresos["MONTO USD"].sum() if not df_ingresos.empty else 0
+                    # 🔧 CORRECCIÓN (2026-08-13): TOTAL INGRESOS = suma real de los ingresos de TODOS los bancos
+                    # (antes se usaba solo los créditos del archivo de Venezuela, dejando fuera Bancamiga, BanPlus, etc.)
+                    if not df_ingresos.empty:
+                        st.session_state.total_ingresos_consolidado = float(df_ingresos["MONTO BS"].sum())
                     total_egresos = df_egresos["MONTO USD"].sum() if not df_egresos.empty else 0
                     total_comisiones = df_comisiones["MONTO USD"].sum() if not df_comisiones.empty else 0
                     neto_procesado = total_ingresos - total_egresos - total_comisiones
@@ -5065,8 +5107,8 @@ if st.session_state.seccion_activa == "consolidado":
                         hoja_resumen["F3"].number_format = '#,##0.0000'
                         hoja_resumen["F3"].alignment = alineacion_izquierda
 
-                        # Cabeceras tabla (3 columnas: BANCOS, TOTAL (VES), CONVERSIÓN (USD))
-                        headers_r = ["BANCOS", "TOTAL (VES)", "CONVERSIÓN (USD)"]
+                        # Cabeceras tabla (4 columnas: BANCOS, TOTAL (VES), CONVERSIÓN (USD), INGRESOS (USD))
+                        headers_r = ["BANCOS", "TOTAL (VES)", "CONVERSIÓN (USD)", "INGRESOS (USD)"]
                         for col_num, header in enumerate(headers_r, 2):
                             cell = hoja_resumen.cell(row=8, column=col_num)
                             cell.value = header
@@ -5091,6 +5133,12 @@ if st.session_state.seccion_activa == "consolidado":
                         ])
 
                         fila_r = 9
+                        mapeo_ingresos_banco = {
+                            "Banesco": "banesco", "BNC": "bnc", "Mercantil": "mercantil",
+                            "Banco de Venezuela (BDV)": "venezuela", "Provincial": "provincial",
+                            "Bancamiga": "bancamiga", "BanPlus": "banplus", "Banco Activo": "activo",
+                            "Banco del Tesoro": "tesoro", "Banco Efectivo": "efectivo", "Banco Binance": "binance",
+                        }
                         for banco_n, saldo_v in bancos_data:
                             cell_b = hoja_resumen.cell(row=fila_r, column=2, value=banco_n)
                             cell_b.border = borde_fino
@@ -5106,9 +5154,19 @@ if st.session_state.seccion_activa == "consolidado":
                             cell_u.border = borde_fino
                             cell_u.number_format = '$#,##0.00'
                             cell_u.alignment = alineacion_derecha
+
+                            # 🔧 CORRECCIÓN (2026-08-13): mostrar los INGRESOS (USD) de cada banco
+                            nombre_base = str(banco_n).split(" - Cuenta")[0]
+                            clave_ing = mapeo_ingresos_banco.get(nombre_base, "")
+                            ing_ves = st.session_state.creditos_por_banco.get(clave_ing, 0.0) if clave_ing else 0.0
+                            ing_usd = ing_ves / tasa_dia if tasa_dia > 0 else 0.0
+                            cell_i = hoja_resumen.cell(row=fila_r, column=5, value=ing_usd)
+                            cell_i.border = borde_fino
+                            cell_i.number_format = '$#,##0.00'
+                            cell_i.alignment = alineacion_derecha
                         
                             if fila_r % 2 == 0:
-                                for col in range(2, 5):
+                                for col in range(2, 6):
                                     hoja_resumen.cell(row=fila_r, column=col).fill = gris_claro
                             fila_r += 1
 
