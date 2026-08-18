@@ -915,7 +915,18 @@ def detectar_banco_por_contenido(archivo):
             elif "BANESCO" in texto:
                 archivo.seek(pos)
                 return "banesco"
-            elif "PROVINCIAL" in texto:
+            elif "MERCANTIL" in texto or "105 VEB" in texto:
+                archivo.seek(pos)
+                return "mercantil"
+            elif (
+                "BANCO PROVINCIAL" in texto
+                or "BBVA" in texto
+                or "CÓDIGO DE OPERACIÓN" in texto
+                or "CODIGO DE OPERACION" in texto
+                or "PRIMERA ORDENACIÓN" in texto
+                or "F. OPERACIÓN" in texto
+                or "CUENTA ACTUAL" in texto
+            ):
                 archivo.seek(pos)
                 return "provincial"
             elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
@@ -924,9 +935,6 @@ def detectar_banco_por_contenido(archivo):
             elif "BNC" in texto:
                 archivo.seek(pos)
                 return "bnc"
-            elif "MERCANTIL" in texto:
-                archivo.seek(pos)
-                return "mercantil"
             elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
                 archivo.seek(pos)
                 return "tesoro"
@@ -944,6 +952,8 @@ def detectar_banco_por_nombre(nombre_archivo):
     nombre = nombre_archivo.upper()
     if "ACTIVO" in nombre:
         return "activo"
+    elif "MERCANTIL" in nombre:
+        return "mercantil"
     elif "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
@@ -958,12 +968,10 @@ def detectar_banco_por_nombre(nombre_archivo):
         or "VZLA" in nombre
     ):
         return "venezuela"
-    elif "PROVINCIAL" in nombre or "PROV" in nombre:
+    elif "PROVINCIAL" in nombre or "BBVA" in nombre:
         return "provincial"
     elif "BNC" in nombre:
         return "bnc"
-    elif "MERCANTIL" in nombre:
-        return "mercantil"
     return "mercantil"
 
 # =========================================================
@@ -2565,7 +2573,17 @@ def mono_detectar_banco_por_contenido(archivo):
                 return "bancamiga"
             elif "BANESCO" in texto:
                 return "banesco"
-            elif "PROVINCIAL" in texto or "BBVA" in texto or "OPERACIÓN" in texto or "F. VALOR" in texto or "F.OPERACIÓN" in texto:
+            elif "MERCANTIL" in texto or "105 VEB" in texto:
+                return "mercantil"
+            elif (
+                "BANCO PROVINCIAL" in texto
+                or "BBVA" in texto
+                or "CÓDIGO DE OPERACIÓN" in texto
+                or "CODIGO DE OPERACION" in texto
+                or "PRIMERA ORDENACIÓN" in texto
+                or "F. OPERACIÓN" in texto
+                or "CUENTA ACTUAL" in texto
+            ):
                 return "provincial"
             elif "BANCO DE VENEZUELA" in texto or "BDV" in texto:
                 return "venezuela"
@@ -2581,8 +2599,6 @@ def mono_detectar_banco_por_contenido(archivo):
                 return "bnc"
             elif "BANPLUS" in texto or "BAN PLUS" in texto:
                 return "banplus"
-            elif "MERCANTIL" in texto:
-                return "mercantil"
             elif "TESORO" in texto or "BANCO DEL TESORO" in texto:
                 return "tesoro"
                 
@@ -2627,6 +2643,8 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
 
     if "ACTIVO" in nombre:
         return "activo"
+    elif "MERCANTIL" in nombre:
+        return "mercantil"
     elif "TESORO" in nombre or "TESORERIA" in nombre or "TES" in nombre:
         return "tesoro"
     elif "BANCAMIGA" in nombre or "BANCAAMIGA" in nombre or "AMIGA" in nombre:
@@ -2643,12 +2661,10 @@ def mono_detectar_banco_por_nombre(nombre_archivo):
         or "VZLA" in nombre
     ):
         return "venezuela"
-    elif "PROVINCIAL" in nombre or "PROV" in nombre:
+    elif "PROVINCIAL" in nombre or "BBVA" in nombre:
         return "provincial"
     elif "BNC" in nombre:
         return "bnc"
-    elif "MERCANTIL" in nombre:
-        return "mercantil"
     return "mercantil"
 
 # =========================================================
@@ -3683,10 +3699,8 @@ def mono_obtener_tasa_bcv_fecha(fecha_obj):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
-    tasa = mono_obtener_tasa_bcv_fecha(fecha_obj)
-    if tasa is None:
-        tasa = 773.3125  # 🔥 FALLBACK CON LA TASA MÁS RECIENTE
-    return tasa
+    # ✅ MISMO SISTEMA QUE MULTIBANCO: devuelve None si la fecha no tiene tasa registrada
+    return mono_obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
 # CONVERTIR A FORMATO MERCANTIL - INCLUYE FLAG DE COMISIONES
@@ -4140,12 +4154,9 @@ def mono_procesar_archivo(df, usar_api=False, banco=""):
                 continue
             
             fecha_key = fecha_obj.strftime("%d/%m/%Y")
-            if fecha_key in cache_tasas:
-                tasa = cache_tasas[fecha_key]
-            else:
-                tasa = mono_obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
-                if tasa is not None:
-                    cache_tasas[fecha_key] = tasa
+            # ✅ MISMA LÓGICA QUE MULTIBANCO (procesar_archivo): tasa por fecha del movimiento
+            tasa = cache_tasas.get(fecha_key) or mono_obtener_tasa_por_fecha(fecha_obj, usar_api) or 1.0
+            cache_tasas[fecha_key] = tasa
 
             monto_usd = mono_calcular_usd(monto_bs, tasa)
             if monto_usd is None:
