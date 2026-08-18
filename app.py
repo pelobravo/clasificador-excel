@@ -3685,7 +3685,7 @@ def mono_obtener_tasa_bcv_fecha(fecha_obj):
 def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
     tasa = mono_obtener_tasa_bcv_fecha(fecha_obj)
     if tasa is None:
-        tasa = 764.3486  # 🔥 FALLBACK CON LA TASA MÁS RECIENTE
+        tasa = 773.3125  # 🔥 FALLBACK CON LA TASA MÁS RECIENTE
     return tasa
 
 # =========================================================
