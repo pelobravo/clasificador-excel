@@ -1102,6 +1102,7 @@ def es_comision(texto, proveedor=None):
         "retencion de impuesto",
         "com. trf",
         "com trf",
+        "com transf",
         "com.serv",
         "emision de estado",
         "below minimum balance charges",
@@ -2235,7 +2236,12 @@ def patrones_comision_por_banco(banco):
             "COMISION X PAGO DE NOMINAS MB",
             "DOMICILIACION J412438905",
             "DISTRIBUIDORA GLOBAL",
-            "DOMICILIACION"
+            "DOMICILIACION",
+            "COM TRANSF LINEA OT BCOS CTA P",
+            "COM TRANSF LINEA OT BCOS",
+            "COM TRANSF LINEA",
+            "COM TRANSF EN LINEA",
+            "COM TRANSF"
         ]
     elif banco == "banesco":
         return ["COMISION", "COMIS", "CARGO", "ITF", "IMPUESTO"]
