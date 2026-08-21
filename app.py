@@ -702,6 +702,33 @@ def obtener_saldo_final_bancamiga(df_raw):
         pass
     return buscar_saldo_en_texto(df_raw)
 
+def extraer_resumen_bancamiga(df_raw):
+    """Extrae datos resumen de filas excluidas (Creditos Total, Debito Total, Saldo Final)"""
+    resumen = {"creditos_total": None, "debitos_total": None, "saldo_final": None}
+    try:
+        for r_idx in range(df_raw.shape[0]):
+            for c_idx in range(df_raw.shape[1]):
+                val_raw = str(df_raw.iloc[r_idx, c_idx]).strip()
+                val_lower = val_raw.lower()
+                if not val_lower or val_lower == "nan":
+                    continue
+                monto = None
+                if ":" in val_raw:
+                    partes = val_raw.split(":")
+                    monto = convertir_monto(partes[-1])
+                if "creditos total" in val_lower or "créditos total" in val_lower:
+                    if monto is not None:
+                        resumen["creditos_total"] = monto
+                elif "debitos total" in val_lower or "débitos total" in val_lower:
+                    if monto is not None:
+                        resumen["debitos_total"] = monto
+                elif "saldo final" in val_lower:
+                    if monto is not None:
+                        resumen["saldo_final"] = monto
+    except:
+        pass
+    return resumen
+
 def encontrar_fila_encabezado(df_raw):
     """Busca en las primeras filas una que contenga 'fecha' y ('descripcion' o 'descripción' o 'referencia')"""
     for i in range(min(40, len(df_raw))):
@@ -1584,6 +1611,19 @@ def procesar_bancamiga(df):
     try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(-1)
+        
+        # 🔥 EXTRAER RESUMEN DEL ARCHIVO (Créditos Total, Débitos Total, Saldo Final)
+        resumen_archivo = extraer_resumen_bancamiga(df)
+        if any(v is not None for v in resumen_archivo.values()):
+            creditos = formato_venezolano(resumen_archivo['creditos_total']) if resumen_archivo['creditos_total'] else "N/A"
+            debitos = formato_venezolano(resumen_archivo['debitos_total']) if resumen_archivo['debitos_total'] else "N/A"
+            saldo = formato_venezolano(resumen_archivo['saldo_final']) if resumen_archivo['saldo_final'] else "N/A"
+            st.info(f"""
+            📊 **Bancamiga - Resumen del archivo:**
+            - Créditos Total (Ingresos): {creditos} BS
+            - Débitos Total (Egresos): {debitos} BS
+            - Saldo Final: {saldo} BS
+            """)
         
         columnas = [str(c).strip().upper() for c in df.columns]
         tiene_encabezados = "FECHA" in columnas and "REFERENCIA" in columnas
