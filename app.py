@@ -400,7 +400,13 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
     
     # 🔥 MOSTRAR DETALLE DE FILAS EXCLUIDAS
     if filas_excluidas:
-        st.warning(f"⚠️ **{nombre_banco}: Se encontraron {len(filas_excluidas)} filas que no son movimientos válidos**")
+        # Resumir razones para que quede claro que NO son ingresos perdidos
+        razones = {}
+        for item in filas_excluidas:
+            raz = str(item.get('razon', '?')).split(' (')[0]
+            razones[raz] = razones.get(raz, 0) + 1
+        detalle_razones = " · ".join([f"{k}: {v}" for k, v in sorted(razones.items())])
+        st.warning(f"⚠️ **{nombre_banco}: Se encontraron {len(filas_excluidas)} filas que no son movimientos válidos** ({detalle_razones}). Estas filas son encabezados, totales o filas sin fecha del archivo — NO son ingresos perdidos.")
         
         # Mostrar tabla de filas excluidas
         datos_excluidos = []
@@ -1389,9 +1395,14 @@ def procesar_provincial(df):
         if "FECHA" in df_filtrado.columns:
             df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
             df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
-            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+            # Convertir fechas de manera robusta (admite dd/mm/yyyy y datetime de Excel)
+            df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            mask = df_filtrado["FECHA_DT"].isna()
+            if mask.any():
+                df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA_DT"].notna()]
+            df_filtrado["FECHA"] = df_filtrado["FECHA_DT"].dt.strftime("%d/%m/%Y")
+            df_filtrado = df_filtrado.drop(columns=["FECHA_DT"])
         else:
             return pd.DataFrame()
         if "MONTO" in df_filtrado.columns:
@@ -3163,12 +3174,14 @@ def mono_procesar_provincial(df):
             df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
             # Eliminar filas con fechas vacías o que sean encabezados
             df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
-            # Eliminar filas con fechas que sean números o NaN
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
-            
-            # Convertir fechas (formato DD-MM-YYYY o DD/MM/YYYY)
-            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+            # Convertir fechas de manera robusta (admite dd/mm/yyyy y datetime de Excel)
+            df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            mask = df_filtrado["FECHA_DT"].isna()
+            if mask.any():
+                df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA_DT"].notna()]
+            df_filtrado["FECHA"] = df_filtrado["FECHA_DT"].dt.strftime("%d/%m/%Y")
+            df_filtrado = df_filtrado.drop(columns=["FECHA_DT"])
         else:
             st.error("❌ No se encontró columna FECHA en el archivo Provincial.")
             return pd.DataFrame()
@@ -4070,9 +4083,14 @@ def mono_procesar_banplus(df):
         if "FECHA" in df_filtrado.columns:
             df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
             df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período|Total", case=False, na=False)]
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].str.match(r'^\d{2}[-/]\d{2}[-/]\d{2,4}$', na=False)]
-            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
-            df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
+            # Convertir fechas de manera robusta (admite dd/mm/yyyy y datetime de Excel)
+            df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            mask = df_filtrado["FECHA_DT"].isna()
+            if mask.any():
+                df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+            df_filtrado = df_filtrado[df_filtrado["FECHA_DT"].notna()]
+            df_filtrado["FECHA"] = df_filtrado["FECHA_DT"].dt.strftime("%d/%m/%Y")
+            df_filtrado = df_filtrado.drop(columns=["FECHA_DT"])
             
         # Reemplazar valores vacíos o nulos en Débito y Crédito
         for col in ["DEBITO", "CREDITO"]:
