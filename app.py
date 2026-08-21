@@ -1986,7 +1986,10 @@ def procesar_venezuela_simple(df):
         col_debito = 6
         
         movimientos = []
-        for idx in range(1, len(df_filtrado)):
+        # 🔧 CORRECCIÓN (2026-08-21): filtrar_por_fecha_predominante YA eliminó el encabezado,
+        # así que el primer registro de datos es la fila 0. Antes se arrancaba en 1 y se perdía
+        # el primer movimiento (p.ej. el PAGO A PROVEEDORES de 14.500,00 del BDV).
+        for idx in range(0, len(df_filtrado)):
             try:
                 fila = df_filtrado.iloc[idx]
                 if pd.isna(fila[col_fecha]): continue
@@ -2251,12 +2254,39 @@ def convertir_a_formato_mercantil(df, banco):
                 fecha = fila.iloc[3]
                 if pd.isna(fecha): continue
                 fecha_str = str(fecha).strip().replace(".0", "")
+                # 🔧 CORRECCIÓN (2026-08-21): el archivo Mercantil trae la fecha como ddmmyyyy
+                # sin separadores y con día de 1-2 dígitos (p.ej. "7082026" = 07/08/2026).
+                # Se normaliza a dd/mm/yyyy para que el movimiento no se pierda en el
+                # consolidado MULTIBANCO.
+                if re.fullmatch(r"\d{7,8}", fecha_str):
+                    anio = fecha_str[-4:]
+                    mes = fecha_str[-6:-4]
+                    dia = fecha_str[:-6].zfill(2)
+                    fecha_str = f"{dia}/{mes}/{anio}"
                 
                 tipo = str(fila.iloc[5]).strip()
                 descripcion = str(fila.iloc[6]).strip()
                 referencia = str(fila.iloc[4]).strip()
                 monto = fila.iloc[7]
-                es_comision_flag = bool(fila.iloc[9]) if len(fila) > 9 else False
+                # 🔧 CORRECCIÓN (2026-08-21): normalizar el monto del Mercantil (formato VES
+                # "136.207,80" → 136207.8) para que _sumar_creditos_convertidos y el REPORTE
+                # consolidado lo usen correctamente.
+                if isinstance(monto, str):
+                    monto_clean = monto.strip().replace(" ", "").replace(".", "").replace(",", ".")
+                    try:
+                        monto = float(monto_clean)
+                    except ValueError:
+                        monto = 0.0
+                else:
+                    try:
+                        monto = float(monto)
+                    except (TypeError, ValueError):
+                        monto = 0.0
+                # 🔧 CORRECCIÓN (2026-08-21): en Mercantil la columna 9 es el Nº de transacción,
+                # NO un indicador de comisión. Usarla como flag hacía que _sumar_creditos_convertidos
+                # descartara TODOS los movimientos (ingresos = 0). La clasificación de comisiones
+                # la hace procesar_archivo con patrones_comision_por_banco("mercantil").
+                es_comision_flag = False
                 
                 fila_convertida = ["", "", "", fecha_str, referencia, tipo, descripcion, monto, "", es_comision_flag]
                 datos_convertidos.append(fila_convertida)
