@@ -5152,8 +5152,8 @@ if st.session_state.seccion_activa == "consolidado":
                         hoja_resumen["F3"].number_format = '#,##0.0000'
                         hoja_resumen["F3"].alignment = alineacion_izquierda
 
-                        # Cabeceras tabla (4 columnas: BANCOS, TOTAL (VES), CONVERSIÓN (USD), INGRESOS (USD))
-                        headers_r = ["BANCOS", "TOTAL (VES)", "CONVERSIÓN (USD)", "INGRESOS (USD)"]
+                        # Cabeceras tabla (5 columnas: BANCOS, TOTAL (VES), CONVERSIÓN (USD), INGRESOS (VES), INGRESOS (USD))
+                        headers_r = ["BANCOS", "TOTAL (VES)", "CONVERSIÓN (USD)", "INGRESOS (VES)", "INGRESOS (USD)"]
                         for col_num, header in enumerate(headers_r, 2):
                             cell = hoja_resumen.cell(row=8, column=col_num)
                             cell.value = header
@@ -5200,18 +5200,23 @@ if st.session_state.seccion_activa == "consolidado":
                             cell_u.number_format = '$#,##0.00'
                             cell_u.alignment = alineacion_derecha
 
-                            # 🔧 CORRECCIÓN (2026-08-13): mostrar los INGRESOS (USD) de cada banco
+                            # 🔧 CORRECCIÓN (2026-08-13): mostrar los INGRESOS de cada banco en VES y USD
                             nombre_base = str(banco_n).split(" - Cuenta")[0]
                             clave_ing = mapeo_ingresos_banco.get(nombre_base, "")
                             ing_ves = st.session_state.creditos_por_banco.get(clave_ing, 0.0) if clave_ing else 0.0
                             ing_usd = ing_ves / tasa_dia if tasa_dia > 0 else 0.0
-                            cell_i = hoja_resumen.cell(row=fila_r, column=5, value=ing_usd)
+                            cell_iv = hoja_resumen.cell(row=fila_r, column=5, value=ing_ves)
+                            cell_iv.border = borde_fino
+                            cell_iv.number_format = '#,##0.00'
+                            cell_iv.alignment = alineacion_derecha
+
+                            cell_i = hoja_resumen.cell(row=fila_r, column=6, value=ing_usd)
                             cell_i.border = borde_fino
                             cell_i.number_format = '$#,##0.00'
                             cell_i.alignment = alineacion_derecha
                         
                             if fila_r % 2 == 0:
-                                for col in range(2, 6):
+                                for col in range(2, 7):
                                     hoja_resumen.cell(row=fila_r, column=col).fill = gris_claro
                             fila_r += 1
 
