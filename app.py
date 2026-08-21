@@ -771,6 +771,66 @@ def obtener_saldo_final_banplus(df_raw):
         st.warning(f"No se pudo extraer el saldo de Banplus: {e}")
     return 0.0
 
+def parsear_fecha_flexible(val):
+    """Parsea fechas en múltiples formatos: ISO con/sin hora, dd/mm/yyyy, etc.
+    Evita el bug de BanPlus donde formato estricto %d/%m/%Y destruía todas las filas."""
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "nat"):
+        return pd.NaT
+    # Formato ISO: 2026-08-07 o 2026-08-07 00:00:00
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', s)
+    if m:
+        try:
+            return pd.to_datetime(f"{m.group(1)}-{m.group(2)}-{m.group(3)}")
+        except Exception:
+            return pd.NaT
+    # Intentar formatos comunes (dayfirst para dd/mm/yyyy)
+    for fmt in ["%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y"]:
+        try:
+            return pd.to_datetime(s, format=fmt)
+        except Exception:
+            continue
+    return pd.to_datetime(s, dayfirst=True, errors="coerce")
+
+def extraer_resumen_banplus(df_raw):
+    """Extrae datos resumen del archivo BanPlus (Saldo Total, Saldo Inicial)"""
+    resumen = {"saldo_total": None, "saldo_inicial": None}
+    try:
+        for r_idx in range(df_raw.shape[0]):
+            for c_idx in range(df_raw.shape[1]):
+                val_raw = str(df_raw.iloc[r_idx, c_idx]).strip()
+                val_lower = val_raw.lower()
+                if not val_lower or val_lower == "nan":
+                    continue
+                # Buscar en la misma celda (ej: "Saldo Total: 198.883,66")
+                if ":" in val_raw:
+                    partes = val_raw.split(":")
+                    monto = convertir_monto(partes[-1])
+                else:
+                    monto = None
+                if "saldo total" in val_lower:
+                    if monto is not None:
+                        resumen["saldo_total"] = monto
+                    else:
+                        # Buscar en celdas a la derecha
+                        for rc in range(c_idx + 1, df_raw.shape[1]):
+                            monto = convertir_monto(df_raw.iloc[r_idx, rc])
+                            if monto is not None:
+                                resumen["saldo_total"] = monto
+                                break
+                elif "saldo inicial" in val_lower:
+                    if monto is not None:
+                        resumen["saldo_inicial"] = monto
+                    else:
+                        for rc in range(c_idx + 1, df_raw.shape[1]):
+                            monto = convertir_monto(df_raw.iloc[r_idx, rc])
+                            if monto is not None:
+                                resumen["saldo_inicial"] = monto
+                                break
+    except:
+        pass
+    return resumen
+
 def obtener_saldo_final_banco_activo(df_raw):
     """
     Extrae el saldo final de Banco Activo.
@@ -1746,6 +1806,17 @@ def procesar_bancamiga(df):
 def procesar_banplus(df):
     st.info("🔍 Procesando archivo de BanPlus...")
     try:
+        # 🔥 EXTRAER RESUMEN DEL ARCHIVO (Saldo Total, Saldo Inicial)
+        resumen_archivo = extraer_resumen_banplus(df)
+        if any(v is not None for v in resumen_archivo.values()):
+            saldo_total = formato_venezolano(resumen_archivo['saldo_total']) if resumen_archivo['saldo_total'] else "N/A"
+            saldo_inicial = formato_venezolano(resumen_archivo['saldo_inicial']) if resumen_archivo['saldo_inicial'] else "N/A"
+            st.info(f"""
+            📊 **BanPlus - Resumen del archivo:**
+            - Saldo Total: {saldo_total} BS
+            - Saldo Inicial: {saldo_inicial} BS
+            """)
+        
         columnas = [str(c).strip().upper() for c in df.columns]
         tiene_encabezados = "FECHA" in columnas and "REFERENCIA" in columnas
         
@@ -1827,10 +1898,11 @@ def procesar_banplus(df):
         if "FECHA" not in df_filtrado.columns: return pd.DataFrame()
         df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
         df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
-        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], format="%d/%m/%Y", errors="coerce")
-        mask = df_filtrado["FECHA"].isna()
-        if mask.any():
-            df_filtrado.loc[mask, "FECHA"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str), dayfirst=True, errors="coerce")
+        # 🔥 FIX (2026-08-21): parseo robusto sin perder filas
+        # El Excel guarda fechas como datetime -> "2026-08-07 00:00:00" (ISO)
+        # El formato estricto "%d/%m/%Y" las convertia a NaT y se perdian TODAS las filas
+        df_filtrado["FECHA_DT"] = df_filtrado["FECHA"].apply(parsear_fecha_flexible)
+        df_filtrado["FECHA"] = df_filtrado["FECHA_DT"]
         df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         
         def mono_limpiar_monto_banplus(valor):
