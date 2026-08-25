@@ -84,6 +84,43 @@ def _acumular_info_fechas(nombre, fecha, registros, total_original, excluidos, d
     info["excluidos"] += excluidos or 0
     for f, c in (detalle_fechas or {}).items():
         info["detalle_fechas"][f] = info["detalle_fechas"].get(f, 0) + (c or 0)
+def _fecha_archivo(nombre_archivo):
+    """Extrae la fecha del nombre del archivo (patrón dd-mm o dd/mm, ej. 'Edo cta Provincial 10-08.xls').
+    Permite ordenar los archivos de un banco y usar el saldo del día más reciente."""
+    try:
+        m = re.search(r"(\d{2})[-/](\d{2})(?:[-/](\d{4}))?", str(nombre_archivo))
+        if not m:
+            return None
+        d, mo = int(m.group(1)), int(m.group(2))
+        y = int(m.group(3)) if m.group(3) else date.today().year
+        return datetime(y, mo, d).date()
+    except Exception:
+        return None
+
+def _fijar_saldo_ultimo_dia(datos):
+    """Regla 'saldo final = último día': para un banco con N archivos (días),
+    el saldo final es el del archivo de fecha MÁS RECIENTE (si 2 archivos comparten
+    la fecha máxima se suman). El saldo inicial del resumen es el del archivo más
+    antiguo y los créditos/débitos totales se suman del período completo."""
+    if not datos:
+        return 0.0, {"saldo_inicial": None, "saldo_final": None, "creditos_total": None, "debitos_total": None}
+    fecha_base = datetime(1900, 1, 1).date()
+    fechas = [(d.get("fecha") or fecha_base) for d in datos]
+    max_fecha = max(fechas)
+    min_fecha = min(fechas)
+    saldo_final = sum(d["saldo"] for d, f in zip(datos, fechas) if f == max_fecha)
+    resumen = {"saldo_inicial": None, "saldo_final": None, "creditos_total": None, "debitos_total": None}
+    for d, f in zip(datos, fechas):
+        r = d.get("resumen") or {}
+        if f == min_fecha and r.get("saldo_inicial"):
+            resumen["saldo_inicial"] = (resumen["saldo_inicial"] or 0) + r["saldo_inicial"]
+        if f == max_fecha and r.get("saldo_final"):
+            resumen["saldo_final"] = (resumen["saldo_final"] or 0) + r["saldo_final"]
+        for k in ("creditos_total", "debitos_total"):
+            if r.get(k):
+                resumen[k] = (resumen[k] or 0) + r[k]
+    return saldo_final, resumen
+
 
 def _sumar_creditos_convertidos(df_convertido):
     """Suma los ingresos (créditos) de un dataframe convertido al formato estándar.
@@ -4952,6 +4989,7 @@ if st.session_state.seccion_activa == "consolidado":
     # 1. Banesco
     if archivo_banesco:
         st.session_state.saldo_banesco = 0.0
+        datos_banesco = []
         for idx, arch in enumerate(archivo_banesco, 1):
             try:
                 nombre = arch.name.lower()
@@ -4961,11 +4999,12 @@ if st.session_state.seccion_activa == "consolidado":
                     df_raw = pd.read_html(arch)[0]
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banesco")
-                st.session_state.saldo_banesco += saldo_arch
-                _acumular_resumen_banco("Banesco", extraer_resumen_banco(df_raw, "banesco"))
+                datos_banesco.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "banesco"),
+                })
             
-                nombre_banco = f"Banesco - Cuenta {idx}" if len(archivo_banesco) > 1 else "Banesco"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_banesco(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "banesco")
@@ -4976,12 +5015,18 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Banesco")
             except Exception as e:
                 st.error(f"❌ Error leyendo Banesco ({arch.name}): {e}")
+        if datos_banesco:
+            saldo_ultimo_banesco, resumen_banesco = _fijar_saldo_ultimo_dia(datos_banesco)
+            st.session_state.saldo_banesco = saldo_ultimo_banesco
+            _acumular_resumen_banco("Banesco", resumen_banesco)
+            saldos_detalle_excel.append(("Banesco", saldo_ultimo_banesco))
     else:
         saldos_detalle_excel.append(("Banesco", 0.0))
 
     # 2. BNC
     if archivo_bnc:
         st.session_state.saldo_bnc = 0.0
+        datos_bnc = []
         for idx, arch in enumerate(archivo_bnc, 1):
             try:
                 df_raw = leer_excel_con_encabezados(arch)
@@ -4994,11 +5039,12 @@ if st.session_state.seccion_activa == "consolidado":
                         break
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bnc", encabezado)
-                st.session_state.saldo_bnc += saldo_arch
-                _acumular_resumen_banco("BNC", extraer_resumen_banco(df_raw, "bnc"))
+                datos_bnc.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "bnc"),
+                })
             
-                nombre_banco = f"BNC - Cuenta {idx}" if len(archivo_bnc) > 1 else "BNC"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_bnc(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "bnc")
@@ -5009,22 +5055,29 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("BNC")
             except Exception as e:
                 st.error(f"❌ Error leyendo BNC ({arch.name}): {e}")
+        if datos_bnc:
+            saldo_ultimo_bnc, resumen_bnc = _fijar_saldo_ultimo_dia(datos_bnc)
+            st.session_state.saldo_bnc = saldo_ultimo_bnc
+            _acumular_resumen_banco("BNC", resumen_bnc)
+            saldos_detalle_excel.append(("BNC", saldo_ultimo_bnc))
     else:
         saldos_detalle_excel.append(("BNC", 0.0))
 
     # 3. Mercantil
     if archivo_mercantil:
         st.session_state.saldo_mercantil = 0.0
+        datos_mercantil = []
         for idx, arch in enumerate(archivo_mercantil, 1):
             try:
                 df_raw = leer_excel_sin_encabezados(arch)
                 df_raw = preparar_df_con_encabezado_dinamico(df_raw)
                 saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
-                st.session_state.saldo_mercantil += saldo_arch
-                _acumular_resumen_banco("Mercantil", extraer_resumen_banco(df_raw, "mercantil"))
+                datos_mercantil.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "mercantil"),
+                })
             
-                nombre_banco = f"Mercantil - Cuenta {idx}" if len(archivo_mercantil) > 1 else "Mercantil"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_convertido = convertir_a_formato_mercantil(df_raw, "mercantil")
                 if not df_convertido.empty:
@@ -5034,6 +5087,11 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Mercantil")
             except Exception as e:
                 st.error(f"❌ Error leyendo Mercantil ({arch.name}): {e}")
+        if datos_mercantil:
+            saldo_ultimo_mercantil, resumen_mercantil = _fijar_saldo_ultimo_dia(datos_mercantil)
+            st.session_state.saldo_mercantil = saldo_ultimo_mercantil
+            _acumular_resumen_banco("Mercantil", resumen_mercantil)
+            saldos_detalle_excel.append(("Mercantil", saldo_ultimo_mercantil))
     else:
         saldos_detalle_excel.append(("Mercantil", 0.0))
 
@@ -5042,6 +5100,7 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_venezuela = 0.0
         st.session_state.total_creditos_venezuela = 0.0  # 🔥 Inicializar
         
+        datos_venezuela = []
         for idx, arch in enumerate(archivo_venezuela, 1):
             try:
                 df_raw = leer_excel_sin_encabezados(arch)
@@ -5070,11 +5129,12 @@ if st.session_state.seccion_activa == "consolidado":
                 
                 # Calcular saldo
                 saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
-                st.session_state.saldo_venezuela += saldo_arch
-                _acumular_resumen_banco("Banco de Venezuela (BDV)", extraer_resumen_banco(df_raw, "venezuela"))
+                datos_venezuela.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "venezuela"),
+                })
                 
-                nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
                 
                 df_normalizado = procesar_venezuela_simple(df_raw)
                 df_convertido = convertir_venezuela_a_formato_mercantil(df_normalizado)
@@ -5085,21 +5145,28 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Venezuela")
             except Exception as e:
                 st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
+        if datos_venezuela:
+            saldo_ultimo_venezuela, resumen_venezuela = _fijar_saldo_ultimo_dia(datos_venezuela)
+            st.session_state.saldo_venezuela = saldo_ultimo_venezuela
+            _acumular_resumen_banco("Banco de Venezuela (BDV)", resumen_venezuela)
+            saldos_detalle_excel.append(("Banco de Venezuela (BDV)", saldo_ultimo_venezuela))
     else:
         saldos_detalle_excel.append(("Banco de Venezuela (BDV)", 0.0))
 
     # 5. Provincial
     if archivo_provincial:
         st.session_state.saldo_provincial = 0.0
+        datos_provincial = []
         for idx, arch in enumerate(archivo_provincial, 1):
             try:
                 df_raw = leer_excel_sin_encabezados(arch)
                 saldo_arch = obtener_saldo_banco(df_raw, "provincial")
-                st.session_state.saldo_provincial += saldo_arch
-                _acumular_resumen_banco("Provincial", extraer_resumen_banco(df_raw, "provincial"))
+                datos_provincial.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "provincial"),
+                })
             
-                nombre_banco = f"Provincial - Cuenta {idx}" if len(archivo_provincial) > 1 else "Provincial"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_provincial(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "provincial")
@@ -5110,12 +5177,18 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Provincial")
             except Exception as e:
                 st.error(f"❌ Error leyendo Provincial ({arch.name}): {e}")
+        if datos_provincial:
+            saldo_ultimo_provincial, resumen_provincial = _fijar_saldo_ultimo_dia(datos_provincial)
+            st.session_state.saldo_provincial = saldo_ultimo_provincial
+            _acumular_resumen_banco("Provincial", resumen_provincial)
+            saldos_detalle_excel.append(("Provincial", saldo_ultimo_provincial))
     else:
         saldos_detalle_excel.append(("Provincial", 0.0))
 
     # 6. Bancamiga
     if archivo_bancamiga:
         st.session_state.saldo_bancamiga = 0.0
+        datos_bancamiga = []
         for idx, arch in enumerate(archivo_bancamiga, 1):
             try:
                 nombre = arch.name.lower()
@@ -5136,11 +5209,12 @@ if st.session_state.seccion_activa == "consolidado":
                     df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
-                st.session_state.saldo_bancamiga += saldo_arch
-                _acumular_resumen_banco("Bancamiga", extraer_resumen_banco(df_raw, "bancamiga"))
+                datos_bancamiga.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "bancamiga"),
+                })
             
-                nombre_banco = f"Bancamiga - Cuenta {idx}" if len(archivo_bancamiga) > 1 else "Bancamiga"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_bancamiga(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
@@ -5151,12 +5225,18 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Bancamiga")
             except Exception as e:
                 st.error(f"❌ Error leyendo Bancamiga ({arch.name}): {e}")
+        if datos_bancamiga:
+            saldo_ultimo_bancamiga, resumen_bancamiga = _fijar_saldo_ultimo_dia(datos_bancamiga)
+            st.session_state.saldo_bancamiga = saldo_ultimo_bancamiga
+            _acumular_resumen_banco("Bancamiga", resumen_bancamiga)
+            saldos_detalle_excel.append(("Bancamiga", saldo_ultimo_bancamiga))
     else:
         saldos_detalle_excel.append(("Bancamiga", 0.0))
 
     # 6.5. BanPlus
     if archivo_banplus:
         st.session_state.saldo_banplus = 0.0
+        datos_banplus = []
         for idx, arch in enumerate(archivo_banplus, 1):
             try:
                 nombre = arch.name.lower()
@@ -5174,11 +5254,12 @@ if st.session_state.seccion_activa == "consolidado":
                             df_raw = leer_tabla_html(arch)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banplus")
-                st.session_state.saldo_banplus += saldo_arch
-                _acumular_resumen_banco("BanPlus", extraer_resumen_banco(df_raw, "banplus"))
+                datos_banplus.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "banplus"),
+                })
             
-                nombre_banco = f"BanPlus - Cuenta {idx}" if len(archivo_banplus) > 1 else "BanPlus"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_banplus(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "banplus")
@@ -5189,12 +5270,18 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("BanPlus")
             except Exception as e:
                 st.error(f"❌ Error leyendo BanPlus ({arch.name}): {e}")
+        if datos_banplus:
+            saldo_ultimo_banplus, resumen_banplus = _fijar_saldo_ultimo_dia(datos_banplus)
+            st.session_state.saldo_banplus = saldo_ultimo_banplus
+            _acumular_resumen_banco("BanPlus", resumen_banplus)
+            saldos_detalle_excel.append(("BanPlus", saldo_ultimo_banplus))
     else:
         saldos_detalle_excel.append(("BanPlus", 0.0))
 
     # 6.75. Banco Activo
     if archivo_activo:
         st.session_state.saldo_activo = 0.0
+        datos_activo = []
         for idx, arch in enumerate(archivo_activo, 1):
             try:
                 nombre = arch.name.lower()
@@ -5215,11 +5302,12 @@ if st.session_state.seccion_activa == "consolidado":
                     df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "activo")
-                st.session_state.saldo_activo += saldo_arch
-                _acumular_resumen_banco("Banco Activo", extraer_resumen_banco(df_raw, "activo"))
+                datos_activo.append({
+                    "fecha": _fecha_archivo(arch.name),
+                    "saldo": saldo_arch,
+                    "resumen": extraer_resumen_banco(df_raw, "activo"),
+                })
             
-                nombre_banco = f"Banco Activo - Cuenta {idx}" if len(archivo_activo) > 1 else "Banco Activo"
-                saldos_detalle_excel.append((nombre_banco, saldo_arch))
             
                 df_normalizado = procesar_banco_activo(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "activo")
@@ -5230,6 +5318,11 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Activo")
             except Exception as e:
                 st.error(f"❌ Error leyendo Banco Activo ({arch.name}): {e}")
+        if datos_activo:
+            saldo_ultimo_activo, resumen_activo = _fijar_saldo_ultimo_dia(datos_activo)
+            st.session_state.saldo_activo = saldo_ultimo_activo
+            _acumular_resumen_banco("Banco Activo", resumen_activo)
+            saldos_detalle_excel.append(("Banco Activo", saldo_ultimo_activo))
     else:
         saldos_detalle_excel.append(("Banco Activo", 0.0))
 
