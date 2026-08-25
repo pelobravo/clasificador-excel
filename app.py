@@ -45,6 +45,45 @@ if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egr
 if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
 if "total_creditos_venezuela" not in st.session_state: st.session_state.total_creditos_venezuela = 0.0
 if "creditos_por_banco" not in st.session_state: st.session_state.creditos_por_banco = {}
+if "resumen_bancos" not in st.session_state: st.session_state.resumen_bancos = {}
+
+_BANCOS_RESUMEN = ["Banesco", "BNC", "Mercantil", "Banco de Venezuela (BDV)", "Provincial", "Bancamiga", "BanPlus", "Banco Activo", "Banco del Tesoro"]
+
+def _nombre_banco_resumen(banco):
+    """Convierte la clave interna de banco (banesco, banplus, ...) al nombre mostrado en reportes"""
+    return {
+        "banesco": "Banesco", "bnc": "BNC", "mercantil": "Mercantil",
+        "venezuela": "Banco de Venezuela (BDV)", "provincial": "Provincial",
+        "bancamiga": "Bancamiga", "banplus": "BanPlus", "activo": "Banco Activo",
+        "tesoro": "Banco del Tesoro"
+    }.get(str(banco).lower(), str(banco).capitalize())
+
+def _acumular_resumen_banco(nombre, resumen):
+    """Acumula (por archivo/día) el resumen de saldos de un banco en session_state"""
+    if not isinstance(resumen, dict):
+        return
+    st.session_state.resumen_bancos.setdefault(nombre, {
+        "saldo_inicial": 0.0, "saldo_final": 0.0, "creditos_total": 0.0, "debitos_total": 0.0
+    })
+    for k in ["saldo_inicial", "saldo_final", "creditos_total", "debitos_total"]:
+        v = resumen.get(k)
+        if v:
+            st.session_state.resumen_bancos[nombre][k] += v
+
+def _acumular_info_fechas(nombre, fecha, registros, total_original, excluidos, detalle_fechas):
+    """Acumula la info de fechas de varios archivos (días) del mismo banco en session_state"""
+    info = st.session_state.info_fechas_por_banco.setdefault(nombre, {
+        "fechas": [], "registros": 0, "total_original": 0, "excluidos": 0, "detalle_fechas": {}
+    })
+    if fecha:
+        if fecha not in info["fechas"]:
+            info["fechas"].append(fecha)
+        info["fecha"] = fecha
+    info["registros"] += registros or 0
+    info["total_original"] += total_original or 0
+    info["excluidos"] += excluidos or 0
+    for f, c in (detalle_fechas or {}).items():
+        info["detalle_fechas"][f] = info["detalle_fechas"].get(f, 0) + (c or 0)
 
 def _sumar_creditos_convertidos(df_convertido):
     """Suma los ingresos (créditos) de un dataframe convertido al formato estándar.
@@ -236,8 +275,9 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
                 
                 # Intentar diferentes formatos
                 formatos = [
+                    "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
                     "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y",
-                    "%Y/%m/%d", "%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"
+                    "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y"
                 ]
                 
                 for fmt in formatos:
@@ -371,8 +411,12 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
                 })
                 continue
             
-            # Intentar convertir a fecha
-            fecha_dt = pd.to_datetime(fecha_str, dayfirst=True, errors='coerce')
+            # Intentar convertir a fecha (ISO explícito primero: pandas 3 intercambia mes/día con dayfirst en ISO)
+            m_iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fecha_str)
+            if m_iso:
+                fecha_dt = pd.to_datetime(f"{m_iso.group(1)}-{m_iso.group(2)}-{m_iso.group(3)}", errors="coerce")
+            else:
+                fecha_dt = pd.to_datetime(fecha_str, dayfirst=True, errors='coerce')
             if pd.isna(fecha_dt):
                 filas_excluidas.append({
                     'indice': idx,
@@ -515,7 +559,8 @@ def buscar_saldo_en_texto(df_raw):
     try:
         # 1. Búsqueda específica de términos de saldo final
         terminos_finales = ["saldo disponible", "saldo actual", "saldo final", "saldo de la cuenta", "monto disponible"]
-        for r_idx in range(df_raw.shape[0]):
+        # CORREGIDO: recorrido de abajo hacia arriba (última coincidencia = día más reciente)
+        for r_idx in range(df_raw.shape[0] - 1, -1, -1):
             for c_idx in range(df_raw.shape[1]):
                 val = str(df_raw.iloc[r_idx, c_idx]).lower()
                 if any(term in val for term in terminos_finales):
@@ -542,7 +587,7 @@ def buscar_saldo_en_texto(df_raw):
                             return num
 
         # 2. Búsqueda general si la específica falla (ignora inicial, anterior y promedio)
-        for r_idx in range(df_raw.shape[0]):
+        for r_idx in range(df_raw.shape[0] - 1, -1, -1):
             for c_idx in range(df_raw.shape[1]):
                 val = str(df_raw.iloc[r_idx, c_idx]).lower()
                 if ("saldo" in val or "disponible" in val) and "inicial" not in val and "anterior" not in val and "promedio" not in val:
@@ -703,8 +748,9 @@ def obtener_saldo_final_bancamiga(df_raw):
     return buscar_saldo_en_texto(df_raw)
 
 def extraer_resumen_bancamiga(df_raw):
-    """Extrae datos resumen de filas excluidas (Creditos Total, Debito Total, Saldo Final)"""
-    resumen = {"creditos_total": None, "debitos_total": None, "saldo_final": None}
+    """Extrae datos resumen de filas excluidas (Saldo Inicial, Creditos Total, Debito Total, Saldo Final).
+    CORREGIDO: soporta "Debito Total:" en singular (formato real del banco) y montos en celda siguiente."""
+    resumen = {"saldo_inicial": None, "creditos_total": None, "debitos_total": None, "saldo_final": None}
     try:
         for r_idx in range(df_raw.shape[0]):
             for c_idx in range(df_raw.shape[1]):
@@ -712,18 +758,35 @@ def extraer_resumen_bancamiga(df_raw):
                 val_lower = val_raw.lower()
                 if not val_lower or val_lower == "nan":
                     continue
+                etiqueta = val_lower
                 monto = None
                 if ":" in val_raw:
                     partes = val_raw.split(":")
+                    etiqueta = partes[0].lower()
                     monto = convertir_monto(partes[-1])
-                if "creditos total" in val_lower or "créditos total" in val_lower:
-                    if monto is not None:
+                es_inicial = "saldo inicial" in etiqueta
+                es_creditos = any(t in etiqueta for t in [
+                    "creditos total", "créditos total", "credito total", "crédito total"
+                ])
+                es_debitos = any(t in etiqueta for t in [
+                    "debitos total", "débitos total", "debito total", "débito total"
+                ])
+                es_saldo = "saldo final" in etiqueta
+                if not (es_inicial or es_creditos or es_debitos or es_saldo):
+                    continue
+                if monto is None:
+                    for rc in range(c_idx + 1, df_raw.shape[1]):
+                        monto = convertir_monto(df_raw.iloc[r_idx, rc])
+                        if monto is not None:
+                            break
+                if monto is not None:
+                    if es_inicial:
+                        resumen["saldo_inicial"] = monto
+                    elif es_creditos:
                         resumen["creditos_total"] = monto
-                elif "debitos total" in val_lower or "débitos total" in val_lower:
-                    if monto is not None:
+                    elif es_debitos:
                         resumen["debitos_total"] = monto
-                elif "saldo final" in val_lower:
-                    if monto is not None:
+                    else:
                         resumen["saldo_final"] = monto
     except:
         pass
@@ -750,10 +813,12 @@ def preparar_df_con_encabezado_dinamico(df_raw):
     return df_clean
 
 def obtener_saldo_final_banplus(df_raw):
-    """Extrae el saldo de Banplus buscando 'Saldo Total' al inicio del archivo"""
+    """Extrae el saldo de Banplus buscando 'Saldo Total' al inicio del archivo.
+    CORREGIDO: recorre de abajo hacia arriba para tomar el ÚLTIMO 'Saldo Total'
+    (con varios días el saldo final es el del día más reciente)."""
     try:
         df_temp = df_raw.copy()
-        for idx in range(min(15, len(df_temp))):
+        for idx in range(min(15, len(df_temp)) - 1, -1, -1):
             for col_idx in range(df_temp.shape[1]):
                 val_str = str(df_temp.iloc[idx, col_idx]).strip().lower()
                 if "saldo total" in val_str:
@@ -830,6 +895,81 @@ def extraer_resumen_banplus(df_raw):
     except:
         pass
     return resumen
+
+def extraer_resumen_provincial(df_raw):
+    """Extrae Saldo Inicial y Saldo Final por día del archivo de Provincial (texto TSV).
+    Filas tipo: ['', '', '', '', 'Saldo Inicial: 09-08-2026', '6.208,43', ''].
+    La fecha va dentro del texto de la etiqueta y el monto en la misma celda o la siguiente."""
+    resumen = {"saldo_inicial": None, "saldo_final": None, "fechas": []}
+    try:
+        for r_idx in range(df_raw.shape[0]):
+            for c_idx in range(df_raw.shape[1]):
+                val_raw = str(df_raw.iloc[r_idx, c_idx]).strip()
+                val_lower = val_raw.lower()
+                if not val_lower or val_lower == "nan":
+                    continue
+                es_inicial = "saldo inicial" in val_lower
+                es_final = "saldo final" in val_lower
+                if not (es_inicial or es_final):
+                    continue
+                fecha = None
+                m_fecha = re.search(r"\b(\d{2}[/\-]\d{2}[/\-]\d{4})\b", val_raw)
+                if m_fecha:
+                    fecha = m_fecha.group(1)
+                monto = None
+                if ":" in val_raw:
+                    partes = val_raw.split(":")
+                    monto = convertir_monto(partes[-1])
+                    if monto is None:
+                        texto_sin_fecha = re.sub(r"\b\d{2}[/\-]\d{2}[/\-]\d{4}\b", "", partes[-1])
+                        numeros = re.findall(r"[\d\.\,]+", texto_sin_fecha)
+                        if numeros:
+                            monto = convertir_monto(numeros[-1])
+                if monto is None:
+                    for rc in range(c_idx + 1, df_raw.shape[1]):
+                        monto = convertir_monto(df_raw.iloc[r_idx, rc])
+                        if monto is not None:
+                            break
+                if monto is None:
+                    continue
+                if es_inicial:
+                    resumen["saldo_inicial"] = monto
+                else:
+                    resumen["saldo_final"] = monto
+                if fecha:
+                    resumen["fechas"].append({
+                        "tipo": "Inicial" if es_inicial else "Final",
+                        "fecha": fecha,
+                        "monto": monto
+                    })
+    except:
+        pass
+    return resumen
+
+def extraer_resumen_banco(df_raw, banco):
+    """Despachador: extrae el resumen (saldo inicial/final, créditos/débitos total) de un archivo de banco.
+    Los bancos sin extractor específico usan los extractores genéricos existentes."""
+    try:
+        if banco == "bancamiga":
+            r = extraer_resumen_bancamiga(df_raw)
+            return {"saldo_inicial": r.get("saldo_inicial"), "saldo_final": r.get("saldo_final"),
+                    "creditos_total": r.get("creditos_total"), "debitos_total": r.get("debitos_total")}
+        if banco == "banplus":
+            r = extraer_resumen_banplus(df_raw)
+            return {"saldo_inicial": r.get("saldo_inicial"), "saldo_final": r.get("saldo_total"),
+                    "creditos_total": None, "debitos_total": None}
+        if banco == "provincial":
+            r = extraer_resumen_provincial(df_raw)
+            return {"saldo_inicial": r.get("saldo_inicial"), "saldo_final": r.get("saldo_final"),
+                    "creditos_total": None, "debitos_total": None}
+    except Exception:
+        pass
+    try:
+        return {"saldo_inicial": buscar_saldo_inicial(df_raw),
+                "saldo_final": obtener_saldo_banco(df_raw, banco),
+                "creditos_total": None, "debitos_total": None}
+    except Exception:
+        return {"saldo_inicial": None, "saldo_final": None, "creditos_total": None, "debitos_total": None}
 
 def obtener_saldo_final_banco_activo(df_raw):
     """
@@ -929,6 +1069,13 @@ def leer_excel_sin_encabezados(archivo):
                 except Exception:
                     pass
                 archivo.seek(0)
+                try:
+                    df_html = leer_tabla_html(archivo)
+                    if not df_html.empty:
+                        return df_html
+                except Exception:
+                    pass
+                archivo.seek(0)
                 contenido = archivo.read()
                 try:
                     contenido = contenido.decode("utf-8")
@@ -963,6 +1110,16 @@ def leer_excel_con_encabezados(archivo):
             except ImportError:
                 st.error("❌ Para archivos .xls es necesario instalar xlrd. Ejecuta: pip install xlrd")
                 st.stop()
+            except Exception:
+                archivo.seek(0)
+                try:
+                    df_html = leer_tabla_html(archivo)
+                    if not df_html.empty:
+                        return df_html
+                except Exception:
+                    pass
+                archivo.seek(0)
+                return pd.read_excel(archivo, sheet_name=0, header=0, engine='xlrd')
         else:
             return pd.read_excel(archivo, sheet_name=0, header=0, engine='openpyxl')
     except Exception as e:
@@ -971,6 +1128,38 @@ def leer_excel_con_encabezados(archivo):
         except:
             st.error(f"No se pudo leer el archivo. Error: {str(e)}")
             st.stop()
+
+def leer_tabla_html(archivo):
+    """Lee archivos que son tablas HTML (extensión .xls engañosa) usando SOLO librería estándar.
+    No depende de lxml/html5lib (que no están instalados en el entorno).
+    Devuelve un DataFrame con la fila de encabezados <th> como primera fila."""
+    import html as _html
+    archivo.seek(0)
+    contenido = archivo.read()
+    try:
+        contenido = contenido.decode("utf-8")
+    except UnicodeDecodeError:
+        archivo.seek(0)
+        contenido = archivo.read().decode("latin-1")
+    
+    filas = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", contenido, re.IGNORECASE | re.DOTALL):
+        celdas = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.IGNORECASE | re.DOTALL)
+        if not celdas:
+            continue
+        fila = []
+        for celda in celdas:
+            texto = _html.unescape(celda)
+            texto = re.sub(r"<[^>]+>", "", texto)
+            texto = texto.replace("\xa0", "").replace("\r", " ").replace("\n", " ").replace("\t", " ")
+            fila.append(texto.strip())
+        filas.append(fila)
+    
+    if not filas:
+        return pd.DataFrame()
+    max_cols = max(len(f) for f in filas)
+    filas_pad = [f + [""] * (max_cols - len(f)) for f in filas]
+    return pd.DataFrame(filas_pad)
 
 # =========================================================
 # 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
@@ -1354,14 +1543,7 @@ def procesar_banesco(df):
         
         # Guardar información de fechas en session_state
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Banesco"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Banesco", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         df_filtrado.columns = ["FECHA", "REFERENCIA", "DESCRIPCION", "MONTO_RAW", "BALANCE"]
         df_filtrado.columns = [str(c).strip().upper() for c in df_filtrado.columns]
         rename_map = {}
@@ -1455,14 +1637,7 @@ def procesar_provincial(df):
             st.warning("⚠️ Provincial: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Provincial"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Provincial", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
         df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
         encabezado_idx = 0
@@ -1541,14 +1716,7 @@ def procesar_bnc(df):
             st.warning("⚠️ BNC: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["BNC"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("BNC", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
         if encabezado is not None:
             df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
@@ -1582,7 +1750,7 @@ def procesar_bnc(df):
             elif "debito" in col_str or "debe" in col_str: rename_map[col] = "DEBITO"
         df_filtrado = df_filtrado.rename(columns=rename_map)
         if "FECHA" in df_filtrado.columns:
-            df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+            df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parsear_fecha_flexible)
             df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         df_filtrado["CREDITO"] = pd.to_numeric(df_filtrado.get("CREDITO", 0), errors="coerce").fillna(0) if "CREDITO" in df_filtrado.columns else 0
         df_filtrado["DEBITO"] = pd.to_numeric(df_filtrado.get("DEBITO", 0), errors="coerce").fillna(0) if "DEBITO" in df_filtrado.columns else 0
@@ -1622,14 +1790,7 @@ def procesar_tesoro(df):
             st.warning("⚠️ Tesoro: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Tesoro"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Tesoro", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
         df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
         encabezado = 0
@@ -1647,7 +1808,7 @@ def procesar_tesoro(df):
             elif "código" in c or "codigo" in c: rename_map[col] = "TIPO"
         df_filtrado = df_filtrado.rename(columns=rename_map)
         if "FECHA" not in df_filtrado.columns: return pd.DataFrame()
-        df_filtrado["FECHA"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
+        df_filtrado["FECHA"] = df_filtrado["FECHA"].apply(parsear_fecha_flexible)
         df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         def limpiar_numero(valor):
             valor = str(valor).replace(".", "").replace(",", ".")
@@ -1718,14 +1879,7 @@ def procesar_bancamiga(df):
             st.warning("⚠️ Bancamiga: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Bancamiga"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Bancamiga", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
         if not tiene_encabezados and encabezado_idx is not None:
             df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
@@ -1769,10 +1923,8 @@ def procesar_bancamiga(df):
         df_filtrado = df_filtrado[~fechas_str_col.str.contains("FECHA|SALDO|TOTAL|CRÉDITO|CREDITO|DÉBITO|DEBITO", case=False, na=False)]
         
         # Convertir fechas de manera robusta
-        df_filtrado["FECHA_DT"] = pd.to_datetime(df_filtrado["FECHA"], dayfirst=True, errors="coerce")
-        mask = df_filtrado["FECHA_DT"].isna()
-        if mask.any():
-            df_filtrado.loc[mask, "FECHA_DT"] = pd.to_datetime(df_filtrado.loc[mask, "FECHA"].astype(str).str.strip(), dayfirst=True, errors="coerce")
+        df_filtrado["FECHA_DT"] = df_filtrado["FECHA"].apply(parsear_fecha_flexible)
+        df_filtrado = df_filtrado[df_filtrado["FECHA_DT"].notna()]
         df_filtrado["FECHA"] = df_filtrado["FECHA_DT"]
         df_filtrado = df_filtrado[df_filtrado["FECHA"].notna()]
         
@@ -1850,14 +2002,7 @@ def procesar_banplus(df):
             st.warning("⚠️ BanPlus: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["BanPlus"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("BanPlus", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # 🔥 3. REENSAMBLAR: encabezado + datos filtrados
         if not tiene_encabezados and encabezado_idx is not None:
             df_filtrado = pd.concat([fila_encabezado, df_filtrado], ignore_index=True)
@@ -1970,14 +2115,7 @@ def procesar_venezuela_simple(df):
             st.warning("⚠️ Banco de Venezuela: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Banco de Venezuela"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Banco de Venezuela", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         col_fecha = 3
         col_ref = 1
         col_desc = 2
@@ -2077,14 +2215,7 @@ def procesar_banco_activo(df):
             st.warning("⚠️ Banco Activo: No se pudo filtrar por fecha predominante, se procesará todo el archivo.")
         
         if fecha_pred:
-            st.session_state.info_fechas_por_banco["Banco Activo"] = {
-                'fecha': fecha_pred.strftime('%d/%m/%Y'),
-                'registros': len(df_filtrado),
-                'total_original': total_filas,
-                'excluidos': registros_excluidos,
-                'detalle_fechas': dict_conteo
-            }
-        
+            _acumular_info_fechas("Banco Activo", fecha_pred.strftime('%d/%m/%Y'), len(df_filtrado), total_filas, registros_excluidos, dict_conteo)
         # Mostrar información del archivo
         st.write("📊 **Información del archivo:**")
         st.write(f"- Número de filas: {len(df_filtrado)}")
@@ -2352,8 +2483,7 @@ def obtener_tasa_bcv_fecha(fecha_obj):
         "10/08/2026": 757.5406, "11/08/2026": 761.2167, "12/08/2026": 764.3486,
         "13/08/2026": 766.8603, "14/08/2026": 771.0714, "15/08/2026": 772.5441,
         "16/08/2026": 772.5441, "17/08/2026": 772.5441, "18/08/2026": 773.3125,
-        "19/08/2026": 775.3356, "20/08/2026": 777.4161, "21/08/2026": 779.9522,
-        "22/08/2026": 779.9522, "23/08/2026": 779.9522, "24/08/2026": 784.6633,
+        "19/08/2026": 775.3356, "20/08/2026": 777.4161,
     }
     fecha_str = fecha_obj.strftime("%d/%m/%Y")
     return tasas_bcv_local.get(fecha_str, None)
@@ -4738,13 +4868,14 @@ if st.session_state.seccion_activa == "consolidado":
             data_fechas = []
             for banco, info in st.session_state.info_fechas_por_banco.items():
                 fechas_excluidas = []
+                fechas_procesadas = info.get('fechas') or ([info.get('fecha')] if info.get('fecha') else [])
                 for fecha, count in info.get('detalle_fechas', {}).items():
-                    if fecha != info.get('fecha', ''):
+                    if fecha not in fechas_procesadas:
                         fechas_excluidas.append(f"{fecha} ({count})")
                 
                 data_fechas.append({
                     "Banco": banco,
-                    "Fecha Procesada": info.get('fecha', 'No detectada'),
+                    "Fecha Procesada": ", ".join(fechas_procesadas) if fechas_procesadas else 'No detectada',
                     "Registros Procesados": info.get('registros', 0),
                     "Registros Excluidos": info.get('excluidos', 0),
                     "Total Original": info.get('total_original', 0),
@@ -4782,6 +4913,10 @@ if st.session_state.seccion_activa == "consolidado":
     # 🔧 CORRECCIÓN (2026-08-13): reiniciar acumulador de ingresos por banco en cada procesamiento
     st.session_state.creditos_por_banco = {}
 
+    # 🔥 REINICIAR acumuladores de resumen de saldos y fechas por banco (multibanco)
+    st.session_state.info_fechas_por_banco = {}
+    st.session_state.resumen_bancos = {b: {"saldo_inicial": 0.0, "saldo_final": 0.0, "creditos_total": 0.0, "debitos_total": 0.0} for b in _BANCOS_RESUMEN}
+
     # 1. Banesco
     if archivo_banesco:
         st.session_state.saldo_banesco = 0.0
@@ -4795,6 +4930,7 @@ if st.session_state.seccion_activa == "consolidado":
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banesco")
                 st.session_state.saldo_banesco += saldo_arch
+                _acumular_resumen_banco("Banesco", extraer_resumen_banco(df_raw, "banesco"))
             
                 nombre_banco = f"Banesco - Cuenta {idx}" if len(archivo_banesco) > 1 else "Banesco"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4827,6 +4963,7 @@ if st.session_state.seccion_activa == "consolidado":
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bnc", encabezado)
                 st.session_state.saldo_bnc += saldo_arch
+                _acumular_resumen_banco("BNC", extraer_resumen_banco(df_raw, "bnc"))
             
                 nombre_banco = f"BNC - Cuenta {idx}" if len(archivo_bnc) > 1 else "BNC"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4852,6 +4989,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_raw = preparar_df_con_encabezado_dinamico(df_raw)
                 saldo_arch = obtener_saldo_banco(df_raw, "mercantil")
                 st.session_state.saldo_mercantil += saldo_arch
+                _acumular_resumen_banco("Mercantil", extraer_resumen_banco(df_raw, "mercantil"))
             
                 nombre_banco = f"Mercantil - Cuenta {idx}" if len(archivo_mercantil) > 1 else "Mercantil"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4901,6 +5039,7 @@ if st.session_state.seccion_activa == "consolidado":
                 # Calcular saldo
                 saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
                 st.session_state.saldo_venezuela += saldo_arch
+                _acumular_resumen_banco("Banco de Venezuela (BDV)", extraer_resumen_banco(df_raw, "venezuela"))
                 
                 nombre_banco = f"Banco de Venezuela (BDV) - Cuenta {idx}" if len(archivo_venezuela) > 1 else "Banco de Venezuela (BDV)"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4925,6 +5064,7 @@ if st.session_state.seccion_activa == "consolidado":
                 df_raw = leer_excel_sin_encabezados(arch)
                 saldo_arch = obtener_saldo_banco(df_raw, "provincial")
                 st.session_state.saldo_provincial += saldo_arch
+                _acumular_resumen_banco("Provincial", extraer_resumen_banco(df_raw, "provincial"))
             
                 nombre_banco = f"Provincial - Cuenta {idx}" if len(archivo_provincial) > 1 else "Provincial"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4954,13 +5094,18 @@ if st.session_state.seccion_activa == "consolidado":
                         df_raw = pd.read_excel(arch, header=None)
                     except Exception:
                         arch.seek(0)
-                        df_raw = pd.read_html(arch, decimal=',', thousands='.')[0]
+                        try:
+                            df_raw = pd.read_html(arch, decimal=',', thousands='.')[0]
+                        except Exception:
+                            arch.seek(0)
+                            df_raw = leer_tabla_html(arch)
                 
                 if isinstance(df_raw.columns, pd.MultiIndex):
                     df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
                 st.session_state.saldo_bancamiga += saldo_arch
+                _acumular_resumen_banco("Bancamiga", extraer_resumen_banco(df_raw, "bancamiga"))
             
                 nombre_banco = f"Bancamiga - Cuenta {idx}" if len(archivo_bancamiga) > 1 else "Bancamiga"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -4990,10 +5135,15 @@ if st.session_state.seccion_activa == "consolidado":
                         df_raw = pd.read_excel(arch, header=None)
                     except Exception:
                         arch.seek(0)
-                        df_raw = pd.read_html(arch)[0]
+                        try:
+                            df_raw = pd.read_html(arch)[0]
+                        except Exception:
+                            arch.seek(0)
+                            df_raw = leer_tabla_html(arch)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banplus")
                 st.session_state.saldo_banplus += saldo_arch
+                _acumular_resumen_banco("BanPlus", extraer_resumen_banco(df_raw, "banplus"))
             
                 nombre_banco = f"BanPlus - Cuenta {idx}" if len(archivo_banplus) > 1 else "BanPlus"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -5023,13 +5173,18 @@ if st.session_state.seccion_activa == "consolidado":
                         df_raw = pd.read_excel(arch, header=None)
                     except Exception:
                         arch.seek(0)
-                        df_raw = pd.read_html(arch)[0]
+                        try:
+                            df_raw = pd.read_html(arch)[0]
+                        except Exception:
+                            arch.seek(0)
+                            df_raw = leer_tabla_html(arch)
                 
                 if isinstance(df_raw.columns, pd.MultiIndex):
                     df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "activo")
                 st.session_state.saldo_activo += saldo_arch
+                _acumular_resumen_banco("Banco Activo", extraer_resumen_banco(df_raw, "activo"))
             
                 nombre_banco = f"Banco Activo - Cuenta {idx}" if len(archivo_activo) > 1 else "Banco Activo"
                 saldos_detalle_excel.append((nombre_banco, saldo_arch))
@@ -5101,7 +5256,7 @@ if st.session_state.seccion_activa == "consolidado":
                 
                     # Parseo flexible general
                     parsed = False
-                    for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]:
+                    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"]:
                         dt = pd.to_datetime(val_str, format=fmt, errors="coerce")
                         if pd.notna(dt):
                             fechas.append(dt)
@@ -5451,7 +5606,8 @@ if st.session_state.seccion_activa == "consolidado":
                             
                             for banco, info in st.session_state.info_fechas_por_banco.items():
                                 hoja_resumen.cell(row=fila_r, column=2, value=banco).border = borde_fino
-                                hoja_resumen.cell(row=fila_r, column=3, value=info.get('fecha', 'No detectada')).border = borde_fino
+                                fechas_dias = info.get('fechas') or ([info.get('fecha')] if info.get('fecha') else [])
+                                hoja_resumen.cell(row=fila_r, column=3, value=", ".join(fechas_dias) if fechas_dias else 'No detectada').border = borde_fino
                                 hoja_resumen.cell(row=fila_r, column=4, value=info.get('registros', 0)).border = borde_fino
                                 hoja_resumen.cell(row=fila_r, column=5, value=info.get('excluidos', 0)).border = borde_fino
                                 hoja_resumen.cell(row=fila_r, column=6, value=info.get('total_original', 0)).border = borde_fino
@@ -5464,7 +5620,8 @@ if st.session_state.seccion_activa == "consolidado":
                                 # Mostrar detalle de fechas excluidas
                                 detalle_fechas = info.get('detalle_fechas', {})
                                 if detalle_fechas:
-                                    fechas_excluidas = [f"{fecha} ({count})" for fecha, count in detalle_fechas.items() if fecha != info.get('fecha', '')]
+                                    fechas_dias = info.get('fechas') or ([info.get('fecha')] if info.get('fecha') else [])
+                                    fechas_excluidas = [f"{fecha} ({count})" for fecha, count in detalle_fechas.items() if fecha not in fechas_dias]
                                     if fechas_excluidas:
                                         fila_r += 1
                                         for col in range(2, 7):
@@ -5474,6 +5631,75 @@ if st.session_state.seccion_activa == "consolidado":
                                         hoja_resumen.merge_cells(start_row=fila_r, start_column=3, end_row=fila_r, end_column=6)
                                 
                                 fila_r += 1
+
+                        # 🔥 SECCIÓN: SALDOS POR BANCO (ESTADO DE CUENTA)
+                        # Estos valores (Saldo Inicial/Final, Créditos/Débitos Total) los toma el sistema Validador.
+                        resumen_bancos = st.session_state.get("resumen_bancos", {})
+                        if resumen_bancos:
+                            fila_r += 2
+                            hoja_resumen.merge_cells(start_row=fila_r, start_column=2, end_row=fila_r, end_column=6)
+                            cell_saldos_titulo = hoja_resumen.cell(row=fila_r, column=2, value="SALDOS POR BANCO (ESTADO DE CUENTA)")
+                            cell_saldos_titulo.font = Font(bold=True, size=11, color="1E3A5F")
+                            cell_saldos_titulo.alignment = alineacion_centro
+                            fila_r += 1
+
+                            headers_saldos = ["BANCO", "SALDO INICIAL (VES)", "SALDO FINAL (VES)", "CRÉDITOS TOTAL (VES)", "DÉBITOS TOTAL (VES)"]
+                            for col_num, header in enumerate(headers_saldos, 2):
+                                cell = hoja_resumen.cell(row=fila_r, column=col_num)
+                                cell.value = header
+                                cell.fill = azul_oscuro
+                                cell.font = blanco_bold
+                                cell.alignment = alineacion_centro
+                                cell.border = borde_fino
+                            fila_r += 1
+
+                            tot_ini_s = tot_fin_s = tot_cred_s = tot_deb_s = 0.0
+                            for banco_n, info_s in resumen_bancos.items():
+                                ini_s = info_s.get("saldo_inicial", 0) or 0
+                                fin_s = info_s.get("saldo_final", 0) or 0
+                                cred_s = info_s.get("creditos_total", 0) or 0
+                                deb_s = info_s.get("debitos_total", 0) or 0
+                                tot_ini_s += ini_s
+                                tot_fin_s += fin_s
+                                tot_cred_s += cred_s
+                                tot_deb_s += deb_s
+                                hoja_resumen.cell(row=fila_r, column=2, value=banco_n).border = borde_fino
+                                for col_num, val_s in [(3, ini_s), (4, fin_s), (5, cred_s), (6, deb_s)]:
+                                    cell_s = hoja_resumen.cell(row=fila_r, column=col_num, value=val_s)
+                                    cell_s.border = borde_fino
+                                    cell_s.number_format = '#,##0.00'
+                                    cell_s.alignment = alineacion_derecha
+                                if fila_r % 2 == 0:
+                                    for col in range(2, 7):
+                                        hoja_resumen.cell(row=fila_r, column=col).fill = gris_claro
+                                fila_r += 1
+
+                            # Totales (etiqueta en col B, VES en C y USD en D: formato que lee el Validador)
+                            fila_r += 1
+                            hoja_resumen.cell(row=fila_r, column=2, value="TOTAL SALDO INICIAL BANCOS").font = negro_bold
+                            hoja_resumen.cell(row=fila_r, column=2).fill = amarillo
+                            hoja_resumen.cell(row=fila_r, column=2).border = borde_fino
+                            c_ini_ves = hoja_resumen.cell(row=fila_r, column=3, value=tot_ini_s)
+                            c_ini_ves.number_format = '#,##0.00'
+                            c_ini_ves.fill = amarillo
+                            c_ini_ves.border = borde_fino
+                            c_ini_usd = hoja_resumen.cell(row=fila_r, column=4, value=(tot_ini_s / tasa_dia if tasa_dia > 0 else 0.0))
+                            c_ini_usd.number_format = '$#,##0.00'
+                            c_ini_usd.fill = amarillo
+                            c_ini_usd.border = borde_fino
+
+                            fila_r += 1
+                            hoja_resumen.cell(row=fila_r, column=2, value="TOTAL SALDO FINAL ESTADO CUENTA").font = negro_bold
+                            hoja_resumen.cell(row=fila_r, column=2).fill = amarillo
+                            hoja_resumen.cell(row=fila_r, column=2).border = borde_fino
+                            c_fin_ves = hoja_resumen.cell(row=fila_r, column=3, value=tot_fin_s)
+                            c_fin_ves.number_format = '#,##0.00'
+                            c_fin_ves.fill = amarillo
+                            c_fin_ves.border = borde_fino
+                            c_fin_usd = hoja_resumen.cell(row=fila_r, column=4, value=(tot_fin_s / tasa_dia if tasa_dia > 0 else 0.0))
+                            c_fin_usd.number_format = '$#,##0.00'
+                            c_fin_usd.fill = amarillo
+                            c_fin_usd.border = borde_fino
 
                         for columna in hoja_resumen.columns:
                             max_length = 0
