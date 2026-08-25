@@ -328,6 +328,19 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
         st.warning(f"⚠️ Error al detectar fechas predominantes: {str(e)}")
         return None, {}, 0.0, 0
 
+def _es_fila_saldo(fila):
+    """Detecta filas de resumen del estado de cuenta (Saldo Inicial/Final, Créditos/Débitos Total).
+    Estas filas no son movimientos: se capturan para el resumen de saldos y el exportable."""
+    try:
+        fila_completa = " ".join([str(v) for v in fila]).upper()
+        return any(p in fila_completa for p in [
+            "SALDO INICIAL", "SALDO FINAL", "CREDITOS TOTAL", "CRÉDITOS TOTAL",
+            "CREDITO TOTAL", "CRÉDITO TOTAL", "DEBITOS TOTAL", "DÉBITOS TOTAL",
+            "DEBITO TOTAL", "DÉBITO TOTAL"
+        ])
+    except:
+        return False
+
 def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="banco"):
     """
     Filtra el DataFrame para conservar solo los registros de la fecha predominante.
@@ -368,18 +381,20 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
         try:
             valor = df_raw.iloc[idx, columna_fecha_idx]
             if pd.isna(valor):
+                es_fila_saldo = _es_fila_saldo(df_raw.iloc[idx].tolist())
                 filas_excluidas.append({
                     'indice': idx,
-                    'razon': 'Fecha vacía o NaN',
+                    'razon': 'Saldo del estado de cuenta (capturado)' if es_fila_saldo else 'Fecha vacía o NaN',
                     'fila': df_raw.iloc[idx].tolist()
                 })
                 continue
             
             fecha_str = str(valor).strip()
             if not fecha_str or fecha_str.lower() == 'nan':
+                es_fila_saldo = _es_fila_saldo(df_raw.iloc[idx].tolist())
                 filas_excluidas.append({
                     'indice': idx,
-                    'razon': 'Fecha vacía o NaN',
+                    'razon': 'Saldo del estado de cuenta (capturado)' if es_fila_saldo else 'Fecha vacía o NaN',
                     'fila': df_raw.iloc[idx].tolist()
                 })
                 continue
@@ -450,7 +465,10 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
             raz = str(item.get('razon', '?')).split(' (')[0]
             razones[raz] = razones.get(raz, 0) + 1
         detalle_razones = " · ".join([f"{k}: {v}" for k, v in sorted(razones.items())])
+        n_filas_saldo = sum(1 for item in filas_excluidas if "capturado" in str(item.get("razon", "")))
         st.warning(f"⚠️ **{nombre_banco}: Se encontraron {len(filas_excluidas)} filas que no son movimientos válidos** ({detalle_razones}). Estas filas son encabezados, totales o filas sin fecha del archivo — NO son ingresos perdidos.")
+        if n_filas_saldo > 0:
+            st.success(f"✅ {nombre_banco}: {n_filas_saldo} filas de SALDO del estado de cuenta (Saldo Inicial/Final, Créditos/Débitos Total) fueron CAPTURADAS automáticamente — se usan en el resumen de saldos y en el exportable. No son movimientos perdidos.")
         
         # Mostrar tabla de filas excluidas
         datos_excluidos = []
@@ -1612,6 +1630,18 @@ def procesar_banesco(df):
 def procesar_provincial(df):
     st.info("🔍 Procesando archivo de Provincial...")
     try:
+        # 🔥 EXTRAER RESUMEN DEL ARCHIVO (Saldo Inicial/Final por día) — se muestra y se usa en el exportable
+        resumen_archivo = extraer_resumen_provincial(df)
+        if resumen_archivo.get("fechas") or resumen_archivo.get("saldo_inicial") or resumen_archivo.get("saldo_final"):
+            detalle_resumen = " · ".join(
+                f"{det['tipo']} {det['fecha']}: {formato_venezolano(det['monto'])}"
+                for det in resumen_archivo.get("fechas", [])
+            )
+            if not detalle_resumen:
+                detalle_resumen = f"Saldo Inicial: {formato_venezolano(resumen_archivo.get('saldo_inicial'))}"
+                if resumen_archivo.get("saldo_final"):
+                    detalle_resumen += f" · Saldo Final: {formato_venezolano(resumen_archivo.get('saldo_final'))}"
+            st.info(f"📊 **Provincial - Resumen del archivo:** {detalle_resumen}")
         # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
         encabezado_idx = None
         for i in range(min(30, len(df))):
@@ -1836,9 +1866,9 @@ def procesar_bancamiga(df):
         # 🔥 EXTRAER RESUMEN DEL ARCHIVO (Créditos Total, Débitos Total, Saldo Final)
         resumen_archivo = extraer_resumen_bancamiga(df)
         if any(v is not None for v in resumen_archivo.values()):
-            creditos = formato_venezolano(resumen_archivo['creditos_total']) if resumen_archivo['creditos_total'] else "N/A"
-            debitos = formato_venezolano(resumen_archivo['debitos_total']) if resumen_archivo['debitos_total'] else "N/A"
-            saldo = formato_venezolano(resumen_archivo['saldo_final']) if resumen_archivo['saldo_final'] else "N/A"
+            creditos = formato_venezolano(resumen_archivo['creditos_total']) if resumen_archivo['creditos_total'] is not None else "N/A"
+            debitos = formato_venezolano(resumen_archivo['debitos_total']) if resumen_archivo['debitos_total'] is not None else "N/A"
+            saldo = formato_venezolano(resumen_archivo['saldo_final']) if resumen_archivo['saldo_final'] is not None else "N/A"
             st.info(f"""
             📊 **Bancamiga - Resumen del archivo:**
             - Créditos Total (Ingresos): {creditos} BS
@@ -1961,8 +1991,8 @@ def procesar_banplus(df):
         # 🔥 EXTRAER RESUMEN DEL ARCHIVO (Saldo Total, Saldo Inicial)
         resumen_archivo = extraer_resumen_banplus(df)
         if any(v is not None for v in resumen_archivo.values()):
-            saldo_total = formato_venezolano(resumen_archivo['saldo_total']) if resumen_archivo['saldo_total'] else "N/A"
-            saldo_inicial = formato_venezolano(resumen_archivo['saldo_inicial']) if resumen_archivo['saldo_inicial'] else "N/A"
+            saldo_total = formato_venezolano(resumen_archivo['saldo_total']) if resumen_archivo['saldo_total'] is not None else "N/A"
+            saldo_inicial = formato_venezolano(resumen_archivo['saldo_inicial']) if resumen_archivo['saldo_inicial'] is not None else "N/A"
             st.info(f"""
             📊 **BanPlus - Resumen del archivo:**
             - Saldo Total: {saldo_total} BS
@@ -5226,6 +5256,26 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_binance
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
+
+    # =========================================================
+    # SALDOS DEL ESTADO DE CUENTA POR BANCO (CAPTURADOS DEL ARCHIVO)
+    # =========================================================
+    if st.session_state.get("resumen_bancos"):
+        with st.expander("📊 Saldos del Estado de Cuenta por Banco", expanded=False):
+            data_saldos = []
+            for banco_s, info_s in st.session_state.resumen_bancos.items():
+                if not any(info_s.values()):
+                    continue
+                data_saldos.append({
+                    "Banco": banco_s,
+                    "Saldo Inicial (VES)": info_s.get("saldo_inicial", 0) or 0,
+                    "Saldo Final (VES)": info_s.get("saldo_final", 0) or 0,
+                    "Créditos Total (VES)": info_s.get("creditos_total", 0) or 0,
+                    "Débitos Total (VES)": info_s.get("debitos_total", 0) or 0,
+                })
+            if data_saldos:
+                st.dataframe(pd.DataFrame(data_saldos), use_container_width=True)
+                st.caption("Valores capturados de las filas de saldo de cada archivo (Saldo Inicial/Final, Créditos/Débitos Total). También se incluyen en el exportable Excel.")
 
     if list_df_convertidos:
         df_original = pd.concat(list_df_convertidos, ignore_index=True)
