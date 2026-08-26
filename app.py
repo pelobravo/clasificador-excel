@@ -4441,7 +4441,7 @@ def mono_procesar_banplus(df):
                 
         datos_normalizados = []
         for idx, fila in df_filtrado.iterrows():
-            fecha_str = fila["FECHA"].strftime("%d/%m/%Y")
+            fecha_str = str(fila["FECHA"])
             referencia = str(fila.get("REFERENCIA", "")).strip().replace("'", "")
             descripcion = str(fila.get("DESCRIPCION", "")).strip()
             
