@@ -252,6 +252,27 @@ h1, h2, h3, h4, h5, h6 {
 # 🔥 VALIDACIÓN DE FECHAS - DETECCIÓN DE FECHA PREDOMINANTE
 # =========================================================
 
+_PALABRAS_ENCABEZADO = [
+    "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO",
+    "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
+    "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
+    "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITOS:", "CREDITOS:",
+    "DÉBITOS:", "DEBITOS:", "TOTAL CREDITOS", "TOTAL DEBITOS",
+    "TOTAL CRÉDITOS", "TOTAL DÉBITOS"
+]
+
+def _es_fila_encabezado(fila_completa):
+    """Detecta filas de encabezado/totales comparando con LÍMITES DE PALABRA.
+
+    El chequeo anterior usaba subcadenas ('NRO' in fila), lo que descartaba
+    movimientos legítimos cuyo texto contenía esas letras dentro de una palabra
+    (p.ej. beneficiario 'JIANRONG WU' contiene 'NRO'). Con límites de palabra,
+    'NRO' solo coincide si aparece como término aislado del encabezado."""
+    for palabra in _PALABRAS_ENCABEZADO:
+        if re.search(r"(?<!\w)" + re.escape(palabra) + r"(?!\w)", fila_completa):
+            return True
+    return False
+
 def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
     """
     Detecta la fecha más frecuente en un archivo de estado de cuenta.
@@ -284,22 +305,12 @@ def detectar_fecha_predominante(df_raw, columna_fecha_idx=0):
                 
                 # 🔥 EXCLUIR FILAS QUE NO SON MOVIMIENTOS
                 # Verificar si la fila contiene palabras clave de encabezados/totales
+                # (búsqueda con límites de palabra: 'NRO' dentro de 'JIANRONG' NO es encabezado)
                 es_encabezado = False
                 try:
                     # Revisar toda la fila para detectar palabras de totales/encabezados
                     fila_completa = " ".join([str(v) for v in df_raw.iloc[idx].tolist()]).upper()
-                    palabras_excluir = [
-                        "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
-                        "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
-                        "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
-                        "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITOS:", "CREDITOS:",
-                        "DÉBITOS:", "DEBITOS:", "TOTAL CREDITOS", "TOTAL DEBITOS",
-                        "TOTAL CRÉDITOS", "TOTAL DÉBITOS"
-                    ]
-                    for palabra in palabras_excluir:
-                        if palabra in fila_completa:
-                            es_encabezado = True
-                            break
+                    es_encabezado = _es_fila_encabezado(fila_completa)
                 except:
                     pass
                 
@@ -437,21 +448,11 @@ def filtrar_por_fecha_predominante(df_raw, columna_fecha_idx=0, nombre_banco="ba
                 continue
             
             # Verificar si es encabezado
+            # (búsqueda con límites de palabra: 'NRO' dentro de 'JIANRONG' NO es encabezado)
             es_encabezado = False
             try:
                 fila_completa = " ".join([str(v) for v in df_raw.iloc[idx].tolist()]).upper()
-                palabras_excluir = [
-                    "SALDO INICIAL", "SALDO FINAL", "TOTAL CRÉDITO", "TOTAL DEBITO", 
-                    "TOTAL CREDITO", "TOTAL DÉBITO", "SALDO PROMEDIO", "PERÍODO", "PERIODO",
-                    "FECHA", "REFERENCIA", "DESCRIPCIÓN", "DESCRIPCION", "MOVIMIENTO",
-                    "NRO", "Nº", "TIPO DE MOVIMIENTO", "CRÉDITOS:", "CREDITOS:",
-                    "DÉBITOS:", "DEBITOS:", "TOTAL CREDITOS", "TOTAL DEBITOS",
-                    "TOTAL CRÉDITOS", "TOTAL DÉBITOS"
-                ]
-                for palabra in palabras_excluir:
-                    if palabra in fila_completa:
-                        es_encabezado = True
-                        break
+                es_encabezado = _es_fila_encabezado(fila_completa)
             except:
                 pass
             
