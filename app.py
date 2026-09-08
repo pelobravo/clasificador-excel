@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import unicodedata
 from collections import Counter
 
@@ -558,8 +558,8 @@ def obtener_tasa_bcv(fecha=None, usar_api=False):
         fecha = date.today()
     tasa = obtener_tasa_por_fecha(fecha, usar_api)
     if tasa is None:
-        # Intentar obtener la tasa más reciente disponible en nuestro diccionario local
-        tasa = 757.5406  # Fallback tasa del 10/08/2026 (la más reciente conocida)
+        # Intentar obtener la tasa más reciente disponible (API en vivo o diccionario local)
+        tasa = _tasa_bcv_reciente_respaldo()
     return tasa
 
 def obtener_saldo_final_banesco(df_raw):
@@ -2517,6 +2517,73 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
+# API TASA BCV AUTOMÁTICA (lab.geocenso.com)
+# =========================================================
+
+BCV_API_URL = "https://lab.geocenso.com/tasas/api_bcv.php"
+BCV_API_HEADERS = {"X-API-Key": "2a0ad52cc3e2c0632180e790f5b322cfe7a2281362776a0d"}
+
+def _bcv_api_consultar():
+    """Consulta la tasa vigente del BCV en la API remota. Devuelve dict con 'usd' y 'fecha', o None si falla."""
+    try:
+        resp = requests.get(BCV_API_URL, headers=BCV_API_HEADERS, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        usd = float(data.get("usd") or 0)
+        if usd <= 0:
+            return None
+        f_obj = pd.to_datetime(str(data.get("fecha", "")), errors="coerce")
+        if pd.isna(f_obj):
+            return None
+        return {"usd": usd, "fecha": f_obj.date()}
+    except Exception:
+        return None
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _bcv_api_tasa_cache():
+    """Tasa BCV vigente en caché corta (10 min) para no golpear la API en cada transacción."""
+    return _bcv_api_consultar()
+
+def _tasa_bcv_automatica_por_fecha(fecha_obj):
+    """Resuelve la tasa BCV de una fecha sin intervención manual:
+    1) diccionario local (histórico exacto) → 2) fin de semana usa la última conocida
+    → 3) días hábiles recientes sin registrar usa la tasa vigente de la API."""
+    tasa = obtener_tasa_bcv_fecha(fecha_obj)
+    if tasa is not None:
+        return tasa
+
+    hoy = date.today()
+    if fecha_obj > hoy:
+        return None
+
+    # Sábado/domingo: el BCV no publica y la tasa no cambia; tomar la última local conocida previa
+    if fecha_obj.weekday() >= 5:
+        for i in range(1, 4):
+            t_prev = obtener_tasa_bcv_fecha(fecha_obj - timedelta(days=i))
+            if t_prev is not None:
+                return t_prev
+
+    # Día hábil reciente sin tasa local (hasta 3 días de desfase): usar la tasa vigente de la API
+    api = _bcv_api_tasa_cache()
+    if api:
+        dias_desfase = (api["fecha"] - fecha_obj).days
+        if 0 <= dias_desfase <= 3:
+            return api["usd"]
+    return None
+
+def _tasa_bcv_reciente_respaldo():
+    """Última tasa conocida disponible: API en vivo → diccionario local reciente → valor fijo de seguridad."""
+    api = _bcv_api_tasa_cache()
+    if api:
+        return api["usd"]
+    hoy = date.today()
+    for i in range(0, 15):
+        t_prev = obtener_tasa_bcv_fecha(hoy - timedelta(days=i))
+        if t_prev is not None:
+            return t_prev
+    return 757.5406  # Fallback tasa del 10/08/2026 (último recurso histórico)
+
+# =========================================================
 # OBTENER TASA BCV HISTORICA LOCAL
 # =========================================================
 
@@ -2563,6 +2630,9 @@ def obtener_tasa_bcv_fecha(fecha_obj):
     return tasas_bcv_local.get(fecha_str, None)
 
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
+    if usar_api:
+        # Modo automático: diccionario local + tasa vigente de la API BCV
+        return _tasa_bcv_automatica_por_fecha(fecha_obj)
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
@@ -4066,8 +4136,10 @@ def mono_obtener_tasa_bcv_fecha(fecha_obj):
     return obtener_tasa_bcv_fecha(fecha_obj)
 
 def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
-    # ✅ MISMO SISTEMA QUE MULTIBANCO: devuelve None si la fecha no tiene tasa registrada
-    return mono_obtener_tasa_bcv_fecha(fecha_obj)
+    # ✅ MISMO SISTEMA QUE MULTIBANCO (diccionario local + API automática)
+    if usar_api:
+        return _tasa_bcv_automatica_por_fecha(fecha_obj)
+    return obtener_tasa_bcv_fecha(fecha_obj)
 
 # =========================================================
 # CONVERTIR A FORMATO MERCANTIL - INCLUYE FLAG DE COMISIONES
@@ -4780,8 +4852,11 @@ with st.sidebar:
     st.markdown("---")
 
     usar_api = st.checkbox(
-        "🌐 Usar API BCV automática (experimental)",
-        value=False
+        "🌐 Tasa BCV automática desde la API (recomendado)",
+        value=True,
+        help="Descarga automáticamente la tasa oficial del BCV (API lab.geocenso.com) para la fecha de hoy "
+             "y días recientes, sin necesidad de actualizarla manualmente. Si la API no responde, "
+             "se usa la tasa local más reciente."
     )
 
     st.markdown("---")
