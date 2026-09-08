@@ -1005,10 +1005,156 @@ def extraer_resumen_provincial(df_raw):
         pass
     return resumen
 
+def extraer_resumen_venezuela(df_raw):
+    """Extractor dedicado del Banco de Venezuela (BDV).
+
+    Devuelve {"saldo_inicial", "saldo_final", "creditos_total", "debitos_total"}.
+
+    Soporta dos formatos:
+    A) Formato actual del estado de cuenta BDV (exportado con encabezado:
+       Día|Referencia|Descripción|Fecha|Tipo de Movimiento|Crédito|Débito|Saldo|
+       Saldo Inicial|Saldo Final|Total Crédito|Todal Débito), donde las columnas
+       I..L repiten el resumen del período en cada fila de movimientos.
+    B) Formato clásico: filas de texto tipo "SALDO INICIAL", "SALDO FINAL",
+       "TOTAL CRÉDITO"/"TOTAL DÉBITO" con el monto en la celda de la derecha o abajo.
+    """
+    resumen = {"saldo_inicial": None, "saldo_final": None,
+               "creditos_total": None, "debitos_total": None}
+
+    # ---------- A) Formato con columnas de resumen por fila ----------
+    try:
+        enc = None
+        for r_idx in range(min(25, df_raw.shape[0])):
+            celdas = [str(v).upper().strip() for v in df_raw.iloc[r_idx].tolist() if pd.notna(v)]
+            txt = " | ".join(celdas)
+            if (re.search(r"(?<!\w)SALDO INICIAL(?!\w)", txt)
+                    and re.search(r"(?<!\w)SALDO FINAL(?!\w)", txt)
+                    and re.search(r"(?<!\w)(TODAL|TOTAL) (DÉBITO|DEBITO)(?!\w)", txt)):
+                enc = r_idx
+                break
+
+        if enc is not None:
+            h = df_raw.iloc[enc].tolist()
+
+            def col_con_(*nombres):
+                for i, c in enumerate(h):
+                    ct = str(c).upper().strip()
+                    for nb in nombres:
+                        if re.search(r"(?<!\w)" + re.escape(nb) + r"(?!\w)", ct):
+                            return i
+                return None
+
+            c_ini = col_con_("SALDO INICIAL")
+            c_fin = col_con_("SALDO FINAL")
+            c_cred = col_con_("TOTAL CRÉDITO", "TOTAL CREDITO", "CRÉDITO TOTAL", "CREDITO TOTAL")
+            c_deb = col_con_("TODAL DÉBITO", "TODAL DEBITO", "TOTAL DÉBITO", "TOTAL DEBITO",
+                             "DÉBITO TOTAL", "DEBITO TOTAL")
+
+            primera_ini = None
+            ultima = None
+            for r_idx in range(enc + 1, df_raw.shape[0]):
+                fila = df_raw.iloc[r_idx]
+
+                def num_celda(c):
+                    if c is None or c >= len(fila):
+                        return None
+                    return convertir_monto(fila[c])
+
+                vi, vf = num_celda(c_ini), num_celda(c_fin)
+                # En el formato BDV cada fila de movimiento repite el resumen del período
+                if vi is None and vf is None:
+                    continue
+                if primera_ini is None and vi is not None and abs(vi) > 0:
+                    primera_ini = vi
+                if vf is not None and abs(vf) > 0:
+                    ultima = (vi, vf,
+                              num_celda(c_cred), num_celda(c_deb))
+
+            if primera_ini is not None:
+                resumen["saldo_inicial"] = primera_ini
+            if ultima is not None:
+                _, vf, vk, vd = ultima
+                resumen["saldo_final"] = vf
+                if vk is not None:
+                    resumen["creditos_total"] = abs(vk)
+                if vd is not None:
+                    resumen["debitos_total"] = abs(vd)
+
+            # Confirmación cruzada: el Saldo Final también debe aparecer como el
+            # último saldo corrido (columna "Saldo") si esa columna existe.
+            if resumen["saldo_final"] is None:
+                saldos_corridos = []
+                for r_idx in range(enc + 1, df_raw.shape[0]):
+                    v = convertir_monto(df_raw.iloc[r_idx, 7]) if df_raw.shape[1] > 7 else None
+                    if v is not None and abs(v) > 0:
+                        saldos_corridos.append(v)
+                if saldos_corridos:
+                    resumen["saldo_final"] = saldos_corridos[-1]
+    except Exception:
+        pass
+
+    # ---------- B) Formato clásico: filas de texto ----------
+    if (resumen["saldo_inicial"] is None or resumen["saldo_final"] is None
+            or resumen["creditos_total"] is None or resumen["debitos_total"] is None):
+        try:
+            def escanear_texto(terminos, permitir_saldo=False):
+                for r_idx in range(df_raw.shape[0]):
+                    for c_idx in range(df_raw.shape[1]):
+                        val = str(df_raw.iloc[r_idx, c_idx]).upper()
+                        if not any(t in val for t in terminos):
+                            continue
+                        # a) Número embebido en la misma celda ("SALDO FINAL Bs 1.234,56")
+                        texto_sin_fechas = re.sub(r"\b\d{2}[/\-]\d{2}[/\-]\d{4}\b", "", val)
+                        partes = re.findall(r"-?[\d\.\,]+", texto_sin_fechas)
+                        for p in reversed(partes):
+                            n = convertir_monto(p)
+                            if n is not None and (permitir_saldo or abs(n) > 0):
+                                return n
+                        # b) Cualquier número en la MISMA FILA hacia la derecha del texto
+                        # (el formato BDV suele poner el monto varias celdas más a la derecha)
+                        for j_idx in range(c_idx + 1, df_raw.shape[1]):
+                            n = convertir_monto(df_raw.iloc[r_idx, j_idx])
+                            if n is not None and (permitir_saldo or abs(n) > 0):
+                                return n
+                        # c) Celda de abajo (misma columna)
+                        if r_idx + 1 < df_raw.shape[0]:
+                            n = convertir_monto(df_raw.iloc[r_idx + 1, c_idx])
+                            if n is not None and (permitir_saldo or abs(n) > 0):
+                                return n
+                return None
+
+            if resumen["saldo_inicial"] is None:
+                resumen["saldo_inicial"] = escanear_texto(
+                    ["SALDO INICIAL", "SALDO ANTERIOR"], True)
+            if resumen["saldo_final"] is None:
+                resumen["saldo_final"] = escanear_texto(
+                    ["SALDO FINAL", "SALDO DISPONIBLE", "SALDO ACTUAL", "SALDO A LA FECHA"], True)
+            if resumen["creditos_total"] is None:
+                resumen["creditos_total"] = escanear_texto(
+                    ["TOTAL CREDITO", "TOTAL CRÉDITO", "CREDITO TOTAL", "CRÉDITO TOTAL",
+                     "CREDITOS:", "CRÉDITOS:", "TOTAL DE CREDITOS", "TOTAL DE CRÉDITOS"])
+            if resumen["debitos_total"] is None:
+                resumen["debitos_total"] = escanear_texto(
+                    ["TODAL DEBITO", "TODAL DÉBITO", "TOTAL DEBITO", "TOTAL DÉBITO",
+                     "DEBITO TOTAL", "DÉBITO TOTAL", "DEBITOS:", "DÉBITOS:",
+                     "TOTAL DE DEBITOS", "TOTAL DE DÉBITOS"])
+        except Exception:
+            pass
+
+    # Normalizar: el débito se expresa positivo y None se deja como 0.0 para la UI
+    if resumen["creditos_total"] is not None:
+        resumen["creditos_total"] = abs(float(resumen["creditos_total"]))
+    if resumen["debitos_total"] is not None:
+        resumen["debitos_total"] = abs(float(resumen["debitos_total"]))
+    return resumen
+
+
 def extraer_resumen_banco(df_raw, banco):
     """Despachador: extrae el resumen (saldo inicial/final, créditos/débitos total) de un archivo de banco.
     Los bancos sin extractor específico usan los extractores genéricos existentes."""
     try:
+        if banco == "venezuela":
+            return extraer_resumen_venezuela(df_raw)
         if banco == "bancamiga":
             r = extraer_resumen_bancamiga(df_raw)
             return {"saldo_inicial": r.get("saldo_inicial"), "saldo_final": r.get("saldo_final"),
@@ -1075,6 +1221,13 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
         return obtener_saldo_final_banplus(df_raw) or buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     elif banco == "activo":
         return obtener_saldo_final_banco_activo(df_raw) or buscar_saldo_en_texto(df_raw)
+    elif banco == "venezuela":
+        # Extractor dedicado BDV (lee el Saldo Final de la columna del reporte o la
+        # última fila de saldo corrido); respaldo: escáner genérico de texto
+        r_vz = extraer_resumen_venezuela(df_raw)
+        if r_vz.get("saldo_final"):
+            return r_vz["saldo_final"]
+        return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     else:
         return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
 
@@ -5235,34 +5388,42 @@ if st.session_state.seccion_activa == "consolidado":
             try:
                 df_raw = leer_excel_sin_encabezados(arch)
                 
-                # 🔥 CALCULAR AUTOMÁTICAMENTE los créditos del archivo original
-                total_creditos_raw = 0.0
-                col_credito = 5  # Columna de créditos en BDV
+                # 🔥 RESUMEN DEL ESTADO DE CUENTA BDV (extractor dedicado):
+                # lee Saldo Inicial/Final y Créditos/Débitos Total directamente del reporte
+                # (columnas "Saldo Inicial", "Saldo Final", "Total Crédito", "Todal Débito"),
+                # en vez de adivinar con escáneres de texto (que devolvían montos errados
+                # o 0 en Créditos/Débitos para el Banco de Venezuela).
+                resumen_raw = extraer_resumen_banco(df_raw, "venezuela")
                 
-                # Recorrer todas las filas del archivo original
-                for i in range(1, len(df_raw)):
-                    try:
-                        fila = df_raw.iloc[i]
-                        if pd.notna(fila[col_credito]):
-                            valor_str = str(fila[col_credito]).strip()
-                            # Limpiar formato
-                            valor_str = valor_str.replace(".", "").replace(",", ".")
-                            if valor_str and valor_str != "0" and valor_str != "0.0":
-                                valor = float(valor_str)
-                                if valor > 0:
-                                    total_creditos_raw += valor
-                    except:
-                        continue
+                # Créditos del archivo original: prioridad al Total Crédito reportado (col K);
+                # respaldo: suma de la columna de créditos (col 5)
+                total_creditos_raw = float(resumen_raw.get("creditos_total") or 0.0)
+                if total_creditos_raw <= 0.001:
+                    col_credito = 5  # Columna de créditos en BDV
+                    for i in range(1, len(df_raw)):
+                        try:
+                            fila = df_raw.iloc[i]
+                            if pd.notna(fila[col_credito]):
+                                valor_str = str(fila[col_credito]).strip()
+                                valor_str = valor_str.replace(".", "").replace(",", ".")
+                                if valor_str and valor_str != "0" and valor_str != "0.0":
+                                    valor = float(valor_str)
+                                    if valor > 0:
+                                        total_creditos_raw += valor
+                        except:
+                            continue
                 
                 # Acumular en session_state
                 st.session_state.total_creditos_venezuela += total_creditos_raw
                 
-                # Calcular saldo
-                saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
+                # Saldo final: prioridad al extractor BDV; respaldo: escáner genérico
+                saldo_arch = float(resumen_raw.get("saldo_final") or 0.0)
+                if saldo_arch <= 0.001:
+                    saldo_arch = obtener_saldo_banco(df_raw, "venezuela")
                 datos_venezuela.append({
                     "fecha": _fecha_archivo(arch.name),
                     "saldo": saldo_arch,
-                    "resumen": extraer_resumen_banco(df_raw, "venezuela"),
+                    "resumen": resumen_raw,
                 })
                 
                 
@@ -5275,6 +5436,10 @@ if st.session_state.seccion_activa == "consolidado":
                         bancos_procesados.append("Venezuela")
             except Exception as e:
                 st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
+                # No dejar el banco en silencio: se limpian los acumuladores para que el
+                # error sea visible (el saldo NO debe quedar con el valor de otro día)
+                st.session_state.saldo_venezuela = 0.0
+                st.session_state.total_creditos_venezuela = 0.0
         if datos_venezuela:
             saldo_ultimo_venezuela, resumen_venezuela = _fijar_saldo_ultimo_dia(datos_venezuela)
             st.session_state.saldo_venezuela = saldo_ultimo_venezuela
@@ -5466,6 +5631,22 @@ if st.session_state.seccion_activa == "consolidado":
     saldos_detalle_excel.append(("Banco Binance", st.session_state.saldo_binance))
 
     st.session_state.saldos_detalle_excel = saldos_detalle_excel
+
+    # 🔥 RE-RENDER ÚNICO TRAS LEER ARCHIVOS: los KPIs superiores (Total Saldos Bancos,
+    # Ingresos, etc.) se dibujan ANTES de este bloque de lectura, por lo que en la
+    # primera interacción mostrarían valores del run anterior (0 o de otro día). Un rerun
+    # inmediato (solo cuando se cargaron archivos y NO se pulsó "Procesar") refresca las
+    # tarjetas con los saldos recién leídos. El flag evita bucles de rerun.
+    hay_archivos_bancos = bool(
+        archivo_banesco or archivo_bnc or archivo_mercantil
+        or archivo_venezuela or archivo_provincial
+        or archivo_bancamiga or archivo_banplus or archivo_activo
+    )
+    if not procesar and hay_archivos_bancos and not st.session_state.get("_rerun_saldos"):
+        st.session_state._rerun_saldos = True
+        st.rerun()
+    elif st.session_state.get("_rerun_saldos"):
+        st.session_state._rerun_saldos = False
 
     # Recalcular el total consolidado con los datos extraídos
     st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0) * tasa_dia
