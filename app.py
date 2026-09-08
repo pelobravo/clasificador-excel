@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import re
+import os
 from datetime import datetime, timedelta
 import unicodedata
 from collections import Counter
@@ -552,14 +553,16 @@ def formato_venezolano(valor):
     except:
         return "0,00"
 
+def obtener_tasa_bcv_con_origen(fecha=None, usar_api=False):
+    """Obtiene la tasa de la fecha seleccionada + una descripción del origen de dónde salió.
+    Con usar_api=True consulta la API BCV automáticamente según la fecha."""
+    return _tasa_con_origen(fecha, usar_api)
+
 def obtener_tasa_bcv(fecha=None, usar_api=False):
-    """Obtiene la tasa de la fecha especificada de forma segura"""
+    """Obtiene la tasa de la fecha especificada de forma segura (automática vía API si usar_api=True)."""
     if fecha is None:
         fecha = date.today()
-    tasa = obtener_tasa_por_fecha(fecha, usar_api)
-    if tasa is None:
-        # Intentar obtener la tasa más reciente disponible (API en vivo o diccionario local)
-        tasa = _tasa_bcv_reciente_respaldo()
+    tasa, _ = _tasa_con_origen(fecha, usar_api)
     return tasa
 
 def obtener_saldo_final_banesco(df_raw):
@@ -2517,11 +2520,41 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# API TASA BCV AUTOMÁTICA (lab.geocenso.com)
+# API TASA BCV AUTOMÁTICA (lab.geocenso.com) + HISTÓRICO PERSISTENTE
 # =========================================================
 
 BCV_API_URL = "https://lab.geocenso.com/tasas/api_bcv.php"
 BCV_API_HEADERS = {"X-API-Key": "2a0ad52cc3e2c0632180e790f5b322cfe7a2281362776a0d"}
+BCV_TASAS_AUTO_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasas_bcv_auto.json")
+_tasas_auto = None
+
+def _tasas_auto_data():
+    """Registro automático persistente de tasas obtenidas de la API (sobrevive reinicios)."""
+    global _tasas_auto
+    if _tasas_auto is None:
+        _tasas_auto = {}
+        try:
+            if os.path.exists(BCV_TASAS_AUTO_JSON):
+                with open(BCV_TASAS_AUTO_JSON, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+                if isinstance(datos, dict):
+                    _tasas_auto = {k: float(v) for k, v in datos.items() if k and v}
+        except Exception:
+            _tasas_auto = {}
+    return _tasas_auto
+
+def _tasa_recordar(fecha_str, tasa):
+    """Guarda la tasa resuelta por la API para esa fecha en el registro automático."""
+    if not fecha_str or not tasa:
+        return
+    auto = _tasas_auto_data()
+    if auto.get(fecha_str) != tasa:
+        auto[fecha_str] = tasa
+        try:
+            with open(BCV_TASAS_AUTO_JSON, "w", encoding="utf-8") as f:
+                json.dump(auto, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
 
 def _bcv_api_consultar():
     """Consulta la tasa vigente del BCV en la API remota. Devuelve dict con 'usd' y 'fecha', o None si falla."""
@@ -2544,52 +2577,76 @@ def _bcv_api_tasa_cache():
     """Tasa BCV vigente en caché corta (10 min) para no golpear la API en cada transacción."""
     return _bcv_api_consultar()
 
-def _tasa_bcv_automatica_por_fecha(fecha_obj):
-    """Resuelve la tasa BCV de una fecha sin intervención manual:
-    1) diccionario local (histórico exacto) → 2) fin de semana usa la última conocida
-    → 3) días hábiles recientes sin registrar usa la tasa vigente de la API."""
+def _tasa_con_origen_por_fecha(fecha_obj, usar_api=False):
+    """Resuelve la tasa BCV para la fecha SELECCIONADA consultando en este orden:
+    1) histórico local canónico (código) → 2) registro automático persistente de la API
+    3) fin de semana: última tasa publicada antes → 4) API en vivo para el día/desfase reciente.
+    Devuelve (tasa, origen) o (None, "")."""
+    if fecha_obj is None:
+        fecha_obj = date.today()
+    fecha_str = fecha_obj.strftime("%d/%m/%Y")
+
+    # 1) Histórico canónico del código (fechas ya registradas)
     tasa = obtener_tasa_bcv_fecha(fecha_obj)
     if tasa is not None:
-        return tasa
+        return tasa, "Histórico local"
+
+    # 2) Registro automático persistente (tasas que la API devolvió antes para esa fecha)
+    auto = _tasas_auto_data().get(fecha_str)
+    if auto is not None:
+        return auto, "API registrada automáticamente"
+
+    if not usar_api:
+        return None, ""
 
     hoy = date.today()
     if fecha_obj > hoy:
-        return None
+        return None, ""
 
-    # Sábado/domingo: el BCV no publica y la tasa no cambia; tomar la última local conocida previa
+    # 3) Sábado/domingo: el BCV no publica, la tasa no cambia el fin de semana
     if fecha_obj.weekday() >= 5:
         for i in range(1, 4):
-            t_prev = obtener_tasa_bcv_fecha(fecha_obj - timedelta(days=i))
+            prev = fecha_obj - timedelta(days=i)
+            t_prev, _ = _tasa_con_origen_por_fecha(prev, True)
             if t_prev is not None:
-                return t_prev
+                _tasa_recordar(fecha_str, t_prev)
+                return t_prev, f"Fin de semana (última publicada {prev.strftime('%d/%m/%Y')})"
+        # si no hay conocida previa, cae al bloque siguiente (API vigente reciente)
 
-    # Día hábil reciente sin tasa local (hasta 3 días de desfase): usar la tasa vigente de la API
+    # 4) API en vivo: tasa vigente del BCV (el día publicado y desfases recientes de hasta 3 días)
     api = _bcv_api_tasa_cache()
     if api:
         dias_desfase = (api["fecha"] - fecha_obj).days
         if 0 <= dias_desfase <= 3:
-            return api["usd"]
-    return None
+            _tasa_recordar(fecha_str, api["usd"])
+            if dias_desfase == 0:
+                return api["usd"], f"API BCV en vivo ({api['fecha'].strftime('%d/%m/%Y')})"
+            return api["usd"], f"Tasa vigente BCV del {api['fecha'].strftime('%d/%m/%Y')} (día sin publicar)"
+    return None, ""
 
-def _tasa_bcv_reciente_respaldo():
-    """Última tasa conocida disponible: API en vivo → diccionario local reciente → valor fijo de seguridad."""
+def _tasa_con_origen(fecha=None, usar_api=False):
+    """Igual que _tasa_con_origen_por_fecha pero con respaldo final a la última tasa conocida."""
+    if fecha is None:
+        fecha = date.today()
+    tasa, origen = _tasa_con_origen_por_fecha(fecha, usar_api)
+    if tasa is not None:
+        return tasa, origen
     api = _bcv_api_tasa_cache()
     if api:
-        return api["usd"]
+        return api["usd"], f"Última conocida (API {api['fecha'].strftime('%d/%m/%Y')})"
     hoy = date.today()
     for i in range(0, 15):
         t_prev = obtener_tasa_bcv_fecha(hoy - timedelta(days=i))
         if t_prev is not None:
-            return t_prev
-    return 757.5406  # Fallback tasa del 10/08/2026 (último recurso histórico)
+            return t_prev, "Última conocida (histórico)"
+    return 757.5406, "Última conocida (valor fijo)"
 
 # =========================================================
 # OBTENER TASA BCV HISTORICA LOCAL
 # =========================================================
 
-@st.cache_data(ttl=3600)
 def obtener_tasa_bcv_fecha(fecha_obj):
-    # Tasas oficiales BCV: junio (normal) + julio + agosto (mono) unificadas
+    """Histórico local canónico: devuelve la tasa oficial ya registrada en el código para esa fecha exacta."""
     tasas_bcv_local = {
         "01/06/2026": 554.4258, "02/06/2026": 557.9741, "03/06/2026": 558.6436,
         "04/06/2026": 560.3753, "05/06/2026": 563.2892, "06/06/2026": 567.6828,
@@ -2630,10 +2687,9 @@ def obtener_tasa_bcv_fecha(fecha_obj):
     return tasas_bcv_local.get(fecha_str, None)
 
 def obtener_tasa_por_fecha(fecha_obj, usar_api=False):
-    if usar_api:
-        # Modo automático: diccionario local + tasa vigente de la API BCV
-        return _tasa_bcv_automatica_por_fecha(fecha_obj)
-    return obtener_tasa_bcv_fecha(fecha_obj)
+    """Tasa BCV de una fecha (resolución automática por fecha seleccionada)."""
+    tasa, _ = _tasa_con_origen_por_fecha(fecha_obj, usar_api)
+    return tasa
 
 # =========================================================
 # 🔥 DETECCIÓN DE COMISIONES POR BANCO (FUNCIÓN ÚNICA)
@@ -4130,16 +4186,10 @@ def mono_procesar_bancamiga(df):
 # OBTENER TASA BCV
 # =========================================================
 
-@st.cache_data(ttl=3600)
-def mono_obtener_tasa_bcv_fecha(fecha_obj):
-    # ✅ USA EL MISMO DICCIONARIO QUE EL MODO CONSOLIDADO
-    return obtener_tasa_bcv_fecha(fecha_obj)
-
 def mono_obtener_tasa_por_fecha(fecha_obj, usar_api=False):
-    # ✅ MISMO SISTEMA QUE MULTIBANCO (diccionario local + API automática)
-    if usar_api:
-        return _tasa_bcv_automatica_por_fecha(fecha_obj)
-    return obtener_tasa_bcv_fecha(fecha_obj)
+    # ✅ MISMO SISTEMA QUE MULTIBANCO: histórico local + registro automático + API BCV según la fecha
+    tasa, _ = _tasa_con_origen_por_fecha(fecha_obj, usar_api)
+    return tasa
 
 # =========================================================
 # CONVERTIR A FORMATO MERCANTIL - INCLUYE FLAG DE COMISIONES
@@ -4901,7 +4951,7 @@ if st.session_state.seccion_activa == "consolidado":
     moneda_kpi = "USD" if st.session_state.get("selector_moneda_kpis", "Dólares ($)") == "Dólares ($)" else "VES"
 
     # Renderizado de KPIs
-    tasa_dia = obtener_tasa_bcv(fecha_fin, usar_api)
+    tasa_dia, origen_tasa_dia = obtener_tasa_bcv_con_origen(fecha_fin, usar_api)
     
     # Efectivo y Binance se ingresan en USD, los convertimos a VES usando la tasa del día
     st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0) * tasa_dia
@@ -4997,9 +5047,9 @@ if st.session_state.seccion_activa == "consolidado":
             <div class="kpi-subtitle">{sub_egresos}</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Tasa Oficial BCV del Día</div>
+            <div class="kpi-title">Tasa BCV ({fecha_fin.strftime('%d/%m/%Y')})</div>
             <div class="kpi-value">{tasa_dia:.4f} VES/USD</div>
-            <div class="kpi-subtitle">Tasa del Banco Central de Venezuela</div>
+            <div class="kpi-subtitle">{origen_tasa_dia}</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-title">{title_extra}</div>
