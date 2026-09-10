@@ -2673,11 +2673,11 @@ def convertir_a_formato_mercantil(df, banco):
     return df_convertido if len(df_convertido) > 0 else pd.DataFrame()
 
 # =========================================================
-# API TASA BCV AUTOMÁTICA (lab.geocenso.com) + HISTÓRICO PERSISTENTE
+# API TASA BCV AUTOMÁTICA (co.geocenso.com) + HISTÓRICO PERSISTENTE
 # =========================================================
 
-BCV_API_URL = "https://lab.geocenso.com/tasas/api_bcv.php"
-BCV_API_HEADERS = {"X-API-Key": "2a0ad52cc3e2c0632180e790f5b322cfe7a2281362776a0d"}
+BCV_API_URL = "https://co.geocenso.com/api/tasadia"
+BCV_API_HEADERS = {"X-API-Key": "1bd239cb39d0ad01d0bf369eaebcf5c975d91bf7409ca277bf3a483f5307f061"}
 BCV_TASAS_AUTO_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasas_bcv_auto.json")
 _tasas_auto = None
 
@@ -2709,13 +2709,26 @@ def _tasa_recordar(fecha_str, tasa):
         except Exception:
             pass
 
-def _bcv_api_consultar():
-    """Consulta la tasa vigente del BCV en la API remota. Devuelve dict con 'usd' y 'fecha', o None si falla."""
+def _bcv_api_consultar(fecha_obj=None):
+    """Consulta la tasa del BCV para una fecha en la API remota (co.geocenso.com).
+
+    La API exige el parámetro 'fecha' (YYYY-MM-DD) y responde:
+    {"error": false, "fecha": "YYYY-MM-DD", "tasas": {"USD": 813.7361, ...}}.
+    Devuelve dict con 'usd' y 'fecha' (date), o None si falla o no hay tasa."""
+    if fecha_obj is None:
+        fecha_obj = date.today()
     try:
-        resp = requests.get(BCV_API_URL, headers=BCV_API_HEADERS, timeout=10)
+        resp = requests.get(
+            BCV_API_URL,
+            headers=BCV_API_HEADERS,
+            params={"fecha": fecha_obj.strftime("%Y-%m-%d")},
+            timeout=10
+        )
         resp.raise_for_status()
         data = resp.json()
-        usd = float(data.get("usd") or 0)
+        if data.get("error"):
+            return None
+        usd = float((data.get("tasas") or {}).get("USD") or 0)
         if usd <= 0:
             return None
         f_obj = pd.to_datetime(str(data.get("fecha", "")), errors="coerce")
@@ -2726,9 +2739,13 @@ def _bcv_api_consultar():
         return None
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _bcv_api_tasa_cache():
-    """Tasa BCV vigente en caché corta (10 min) para no golpear la API en cada transacción."""
-    return _bcv_api_consultar()
+def _bcv_api_tasa_cache(fecha_iso):
+    """Tasa BCV de una fecha (YYYY-MM-DD) en caché corta (10 min) para no golpear la API en cada transacción."""
+    try:
+        f_obj = datetime.strptime(str(fecha_iso), "%Y-%m-%d").date()
+    except Exception:
+        f_obj = date.today()
+    return _bcv_api_consultar(f_obj)
 
 def _tasa_con_origen_por_fecha(fecha_obj, usar_api=False):
     """Resuelve la tasa BCV para la fecha SELECCIONADA consultando en este orden:
@@ -2756,7 +2773,13 @@ def _tasa_con_origen_por_fecha(fecha_obj, usar_api=False):
     if fecha_obj > hoy:
         return None, ""
 
-    # 3) Sábado/domingo: el BCV no publica, la tasa no cambia el fin de semana
+    # 3) API en vivo: tasa EXACTA de la fecha seleccionada
+    api_fecha = _bcv_api_tasa_cache(fecha_obj.strftime("%Y-%m-%d"))
+    if api_fecha and api_fecha["fecha"] == fecha_obj:
+        _tasa_recordar(fecha_str, api_fecha["usd"])
+        return api_fecha["usd"], f"API BCV ({api_fecha['fecha'].strftime('%d/%m/%Y')})"
+
+    # 4) Sábado/domingo sin registro en la API: el BCV no publica, se usa la última publicada antes
     if fecha_obj.weekday() >= 5:
         for i in range(1, 4):
             prev = fecha_obj - timedelta(days=i)
@@ -2766,8 +2789,8 @@ def _tasa_con_origen_por_fecha(fecha_obj, usar_api=False):
                 return t_prev, f"Fin de semana (última publicada {prev.strftime('%d/%m/%Y')})"
         # si no hay conocida previa, cae al bloque siguiente (API vigente reciente)
 
-    # 4) API en vivo: tasa vigente del BCV (el día publicado y desfases recientes de hasta 3 días)
-    api = _bcv_api_tasa_cache()
+    # 5) API en vivo: tasa vigente del BCV (el día publicado y desfases recientes de hasta 3 días)
+    api = _bcv_api_tasa_cache(date.today().strftime("%Y-%m-%d"))
     if api:
         dias_desfase = (api["fecha"] - fecha_obj).days
         if 0 <= dias_desfase <= 3:
@@ -2784,7 +2807,7 @@ def _tasa_con_origen(fecha=None, usar_api=False):
     tasa, origen = _tasa_con_origen_por_fecha(fecha, usar_api)
     if tasa is not None:
         return tasa, origen
-    api = _bcv_api_tasa_cache()
+    api = _bcv_api_tasa_cache(date.today().strftime("%Y-%m-%d"))
     if api:
         return api["usd"], f"Última conocida (API {api['fecha'].strftime('%d/%m/%Y')})"
     hoy = date.today()
@@ -5057,7 +5080,7 @@ with st.sidebar:
     usar_api = st.checkbox(
         "🌐 Tasa BCV automática desde la API (recomendado)",
         value=True,
-        help="Descarga automáticamente la tasa oficial del BCV (API lab.geocenso.com) para la fecha de hoy "
+        help="Descarga automáticamente la tasa oficial del BCV (API co.geocenso.com) para la fecha seleccionada "
              "y días recientes, sin necesidad de actualizarla manualmente. Si la API no responde, "
              "se usa la tasa local más reciente."
     )
