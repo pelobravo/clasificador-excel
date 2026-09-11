@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import json
 import re
 import os
+import sys
 from datetime import datetime, timedelta
 import unicodedata
 from collections import Counter
@@ -1438,15 +1439,33 @@ def leer_tabla_bancaria(archivo):
         return leer_tabla_html(archivo), True
 
 
-DIAG_LOG = "/home/cmarcano/clasificador_diag.log"
+DIAG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clasificador.log")
+DIAG_LOG_MAX_BYTES = 2 * 1024 * 1024
 
 def diag_log(*partes):
-    """Log temporal de diagnóstico del Clasificador (se puede borrar cuando ya no haga falta)."""
+    """Registro permanente del Clasificador: lecturas de bancos, errores y exportaciones.
+    Rota a clasificador.log.1 cuando supera 2 MB."""
     try:
+        try:
+            if os.path.exists(DIAG_LOG) and os.path.getsize(DIAG_LOG) > DIAG_LOG_MAX_BYTES:
+                if os.path.exists(DIAG_LOG + ".1"):
+                    os.remove(DIAG_LOG + ".1")
+                os.replace(DIAG_LOG, DIAG_LOG + ".1")
+        except Exception:
+            pass
         with open(DIAG_LOG, "a", encoding="utf-8") as _f:
             _f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | " + " | ".join(str(p) for p in partes) + "\n")
     except Exception:
         pass
+
+# Log de arranque: versiones con las que corre la app (una vez por sesión)
+try:
+    if not st.session_state.get("_diag_iniciado"):
+        st.session_state["_diag_iniciado"] = True
+        diag_log("STARTUP", "python=" + sys.version.split()[0], "pandas=" + pd.__version__,
+                 "streamlit=" + st.__version__, "cwd=" + os.getcwd())
+except Exception:
+    pass
 
 # =========================================================
 # 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
@@ -3281,6 +3300,9 @@ def mono_leer_excel_con_encabezados(archivo):
     
     try:
         if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            # 🔥 FIX (2026-09-11): HTML disfrazado de .xls -> parser de librería estándar
+            if archivo_es_html(archivo):
+                return leer_tabla_html(archivo)
             try:
                 import xlrd
                 return pd.read_excel(archivo, sheet_name=0, header=0, engine='xlrd')
@@ -5418,11 +5440,7 @@ if st.session_state.seccion_activa == "consolidado":
         datos_banesco = []
         for idx, arch in enumerate(archivo_banesco, 1):
             try:
-                nombre = arch.name.lower()
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
-                else:
-                    df_raw = pd.read_html(arch)[0]
+                df_raw, _fue_html = leer_tabla_bancaria(arch)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banesco")
                 datos_banesco.append({
@@ -5440,6 +5458,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "Banesco" not in bancos_procesados:
                         bancos_procesados.append("Banesco")
             except Exception as e:
+                diag_log("ERROR LECTURA Banesco", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo Banesco ({arch.name}): {e}")
         if datos_banesco:
             saldo_ultimo_banesco, resumen_banesco = _sumar_saldos_archivos(datos_banesco)
@@ -5480,6 +5499,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "BNC" not in bancos_procesados:
                         bancos_procesados.append("BNC")
             except Exception as e:
+                diag_log("ERROR LECTURA BNC", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo BNC ({arch.name}): {e}")
         if datos_bnc:
             saldo_ultimo_bnc, resumen_bnc = _sumar_saldos_archivos(datos_bnc)
@@ -5512,6 +5532,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "Mercantil" not in bancos_procesados:
                         bancos_procesados.append("Mercantil")
             except Exception as e:
+                diag_log("ERROR LECTURA Mercantil", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo Mercantil ({arch.name}): {e}")
         if datos_mercantil:
             saldo_ultimo_mercantil, resumen_mercantil = _sumar_saldos_archivos(datos_mercantil)
@@ -5578,6 +5599,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "Venezuela" not in bancos_procesados:
                         bancos_procesados.append("Venezuela")
             except Exception as e:
+                diag_log("ERROR LECTURA BDV", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo BDV ({arch.name}): {e}")
                 # No dejar el banco en silencio: se limpian los acumuladores para que el
                 # error sea visible (el saldo NO debe quedar con el valor de otro día)
@@ -5614,6 +5636,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "Provincial" not in bancos_procesados:
                         bancos_procesados.append("Provincial")
             except Exception as e:
+                diag_log("ERROR LECTURA Provincial", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo Provincial ({arch.name}): {e}")
         if datos_provincial:
             saldo_ultimo_provincial, resumen_provincial = _sumar_saldos_archivos(datos_provincial)
@@ -5689,6 +5712,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "BanPlus" not in bancos_procesados:
                         bancos_procesados.append("BanPlus")
             except Exception as e:
+                diag_log("ERROR LECTURA BanPlus", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo BanPlus ({arch.name}): {e}")
         if datos_banplus:
             saldo_ultimo_banplus, resumen_banplus = _sumar_saldos_archivos(datos_banplus)
@@ -5725,6 +5749,7 @@ if st.session_state.seccion_activa == "consolidado":
                     if "Activo" not in bancos_procesados:
                         bancos_procesados.append("Activo")
             except Exception as e:
+                diag_log("ERROR LECTURA Banco Activo", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo Banco Activo ({arch.name}): {e}")
         if datos_activo:
             saldo_ultimo_activo, resumen_activo = _sumar_saldos_archivos(datos_activo)
@@ -5747,6 +5772,45 @@ if st.session_state.seccion_activa == "consolidado":
     saldos_detalle_excel.append(("Banco Bolívares", st.session_state.saldo_bolivares))
 
     st.session_state.saldos_detalle_excel = saldos_detalle_excel
+
+    # =========================================================
+    # 🔎 VALIDACIÓN DE LECTURA POR BANCO ("fallar ruidosamente")
+    # Si un banco tiene archivo cargado pero quedó en 0 saldo y 0 movimientos,
+    # se avisa con claridad en pantalla y se registra en clasificador.log.
+    # =========================================================
+    _estado_bancos = [
+        ("Banesco", archivo_banesco, st.session_state.saldo_banesco, "Banesco" in bancos_procesados),
+        ("BNC", archivo_bnc, st.session_state.saldo_bnc, "BNC" in bancos_procesados),
+        ("Mercantil", archivo_mercantil, st.session_state.saldo_mercantil, "Mercantil" in bancos_procesados),
+        ("Banco de Venezuela (BDV)", archivo_venezuela, st.session_state.saldo_venezuela, "Venezuela" in bancos_procesados),
+        ("Provincial", archivo_provincial, st.session_state.saldo_provincial, "Provincial" in bancos_procesados),
+        ("Bancamiga", archivo_bancamiga, st.session_state.saldo_bancamiga, "Bancamiga" in bancos_procesados),
+        ("BanPlus", archivo_banplus, st.session_state.saldo_banplus, "BanPlus" in bancos_procesados),
+        ("Banco Activo", archivo_activo, st.session_state.saldo_activo, "Activo" in bancos_procesados),
+    ]
+    _bancos_con_archivo = [(n, archs, saldo, mov) for (n, archs, saldo, mov) in _estado_bancos if archs]
+    _bancos_fallidos = [n for (n, _a, saldo, mov) in _bancos_con_archivo if (not saldo) and (not mov)]
+    if _bancos_fallidos:
+        st.error(
+            "❌ **No se pudo leer información de estos bancos** (archivo cargado, pero saldo y "
+            "movimientos quedaron en 0): **" + ", ".join(_bancos_fallidos) + "**. "
+            "Revisa el formato del archivo o vuelve a descargarlo del banco. "
+            "El detalle quedó registrado en `clasificador.log`."
+        )
+        diag_log("ALERTA LECTURA", "bancos_fallidos=" + ",".join(_bancos_fallidos),
+                 "archivos=" + str({n: [str(a.name) for a in archs] for n, archs, _s, _m in _bancos_con_archivo}))
+    if _bancos_con_archivo:
+        with st.expander("🔎 Diagnóstico de lectura por banco", expanded=bool(_bancos_fallidos)):
+            _filas_diag = []
+            for (n, archs, saldo, mov) in _bancos_con_archivo:
+                _filas_diag.append({
+                    "Banco": n,
+                    "Archivo(s)": ", ".join(str(a.name) for a in archs),
+                    "Saldo leído": saldo or 0,
+                    "Movimientos": "Sí" if mov else "No",
+                    "Estado": "✅ OK" if (saldo or mov) else "❌ Sin datos",
+                })
+            st.dataframe(pd.DataFrame(_filas_diag), use_container_width=True, hide_index=True)
 
     # 🔥 RE-RENDER ÚNICO TRAS LEER ARCHIVOS: los KPIs superiores (Total Saldos Bancos,
     # Ingresos, etc.) se dibujan ANTES de este bloque de lectura, por lo que en la
@@ -6405,18 +6469,35 @@ if st.session_state.seccion_activa == "consolidado":
 
                     output.seek(0)
 
+                    _hay_movimientos = not (df_ingresos.empty and df_egresos.empty and df_comisiones.empty)
+                    _hay_saldos = any((st.session_state.get(f"saldo_{_b}", 0) or 0) for _b in [
+                        "banesco", "bnc", "mercantil", "venezuela", "provincial",
+                        "bancamiga", "banplus", "activo", "tesoro", "efectivo", "binance", "bolivares"
+                    ])
                     diag_log("EXPORT CONSOLIDADO", "ingresos=" + str(len(df_ingresos)),
                              "egresos=" + str(len(df_egresos)), "comisiones=" + str(len(df_comisiones)),
                              "bytes=" + str(len(output.getvalue())),
-                             "bancos=" + str(bancos_procesados))
+                             "bancos=" + str(bancos_procesados),
+                             "saldos=" + str(_hay_saldos))
 
-                    st.download_button(
-                        label="📥 Descargar Excel Clasificado Consolidado (BCV + iPago)",
-                        data=output.getvalue(),
-                        file_name=f"cierre_consolidado_{fecha_inicio}_{fecha_fin}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    if not _hay_movimientos and not _hay_saldos:
+                        st.error(
+                            "❌ **El export quedó vacío**: no se detectaron movimientos ni saldos. "
+                            "Revisa las alertas de lectura de arriba y el archivo `clasificador.log`."
+                        )
+                    else:
+                        if not _hay_movimientos:
+                            st.warning(
+                                "⚠️ **El export no tiene movimientos** (solo resumen de saldos). "
+                                "Revisa las alertas de lectura de arriba."
+                            )
+                        st.download_button(
+                            label="📥 Descargar Excel Clasificado Consolidado (BCV + iPago)",
+                            data=output.getvalue(),
+                            file_name=f"cierre_consolidado_{fecha_inicio}_{fecha_fin}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
                 
                     with st.expander("📊 Tasas BCV utilizadas en el proceso"):
                         todas_tasas = {}
@@ -6478,14 +6559,11 @@ else:
             
             elif banco == "banesco":
                 try:
-                    nombre = archivo.name.lower()
-                    if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                        df_raw = pd.read_excel(archivo, engine="openpyxl", header=None)
-                    else:
-                        df_raw = pd.read_html(archivo)[0]
+                    df_raw, _fue_html = leer_tabla_bancaria(archivo)
                     df_normalizado = mono_procesar_banesco(df_raw)
                     df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
                 except Exception as e:
+                    diag_log("MONO ERROR Banesco", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Banesco: {str(e)}")
                     st.stop()
             
@@ -6495,24 +6573,14 @@ else:
                     df_normalizado = mono_procesar_tesoro(df_raw)
                     df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
                 except Exception as e:
+                    diag_log("MONO ERROR Tesoro", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Tesoro: {str(e)}")
                     st.stop()
             
             elif banco == "bancamiga":
                 try:
                     # 🔥 CARGA DE BANCAMIGA
-                    nombre = archivo.name.lower()
-                
-                    if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                        df_raw = pd.read_excel(archivo, engine="openpyxl", header=None)
-                    else:
-                        try:
-                            # Intentar leer como Excel .xls real
-                            df_raw = pd.read_excel(archivo, header=None)
-                        except Exception:
-                            # Si realmente es HTML disfrazado de .xls
-                            archivo.seek(0)
-                            df_raw = pd.read_html(archivo, decimal=',', thousands='.')[0]
+                    df_raw, _fue_html = leer_tabla_bancaria(archivo)
                     
                     if isinstance(df_raw.columns, pd.MultiIndex):
                         df_raw.columns = df_raw.columns.get_level_values(-1)
@@ -6523,6 +6591,7 @@ else:
                         st.stop()
                     df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
                 except Exception as e:
+                    diag_log("MONO ERROR Bancamiga", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Bancamiga: {str(e)}")
                     st.stop()
             
@@ -6535,6 +6604,7 @@ else:
                         st.stop()
                     df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
                 except Exception as e:
+                    diag_log("MONO ERROR Provincial", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Provincial: {str(e)}")
                     st.stop()
             
@@ -6564,6 +6634,7 @@ else:
                         st.stop()
                     df_original = mono_convertir_a_formato_mercantil(df_normalizado, banco)
                 except Exception as e:
+                    diag_log("MONO ERROR BanPlus", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Banplus: {str(e)}")
                     st.stop()
             
@@ -6583,6 +6654,7 @@ else:
                     # Guardar el saldo si es necesario
                     st.session_state.saldo_activo = obtener_saldo_final_banco_activo(df_raw)
                 except Exception as e:
+                    diag_log("MONO ERROR Banco Activo", archivo.name, type(e).__name__, str(e))
                     st.error(f"Error leyendo Banco Activo: {str(e)}")
                     st.stop()
             
@@ -6792,6 +6864,18 @@ else:
                 total_egresos = df_egresos["MONTO USD"].sum() if not df_egresos.empty else 0
                 total_comisiones = df_comisiones["MONTO USD"].sum() if not df_comisiones.empty else 0
 
+                # 🔎 Validación Monobanco ("fallar ruidosamente"): si el archivo trajo filas
+                # pero no se clasificó ningún movimiento, se avisa con claridad.
+                _mono_sin_datos = df_ingresos.empty and df_egresos.empty and df_comisiones.empty
+                if _mono_sin_datos:
+                    st.error(
+                        f"❌ **No se generaron movimientos** para el archivo `{archivo.name}` "
+                        f"({banco.upper()}). El archivo se leyó pero no se pudo clasificar ningún "
+                        "movimiento. Revisa el formato del archivo o vuelve a descargarlo del banco. "
+                        "El detalle quedó registrado en `clasificador.log`."
+                    )
+                    diag_log("MONO ALERTA", banco, str(archivo.name), "filas=" + str(len(df_original)))
+
                 col1, col2, col3 = st.columns(3)
 
                 with col1:
@@ -6941,13 +7025,20 @@ else:
 
                 output.seek(0)
 
-                st.download_button(
-                    label="📥 Descargar Excel Clasificado (con Tasas BCV e iPago)",
-                    data=output.getvalue(),
-                    file_name=f"balance_{banco}_{fecha_inicio}_{fecha_fin}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+                diag_log("EXPORT MONO", banco, str(archivo.name),
+                         "ingresos=" + str(len(df_ingresos)), "egresos=" + str(len(df_egresos)),
+                         "comisiones=" + str(len(df_comisiones)), "bytes=" + str(len(output.getvalue())))
+
+                if _mono_sin_datos:
+                    st.warning("⚠️ No se generó Excel porque no hay movimientos clasificados.")
+                else:
+                    st.download_button(
+                        label="📥 Descargar Excel Clasificado (con Tasas BCV e iPago)",
+                        data=output.getvalue(),
+                        file_name=f"balance_{banco}_{fecha_inicio}_{fecha_fin}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
             
                 with st.expander("📊 Tasas BCV utilizadas"):
                     todas_tasas = {}
