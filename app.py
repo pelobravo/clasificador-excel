@@ -41,6 +41,7 @@ if "saldo_banplus" not in st.session_state: st.session_state.saldo_banplus = 0.0
 if "saldo_activo" not in st.session_state: st.session_state.saldo_activo = 0.0
 if "saldo_efectivo" not in st.session_state: st.session_state.saldo_efectivo = 0.0
 if "saldo_binance" not in st.session_state: st.session_state.saldo_binance = 0.0
+if "saldo_bolivares" not in st.session_state: st.session_state.saldo_bolivares = 0.0
 if "total_ingresos_consolidado" not in st.session_state: st.session_state.total_ingresos_consolidado = 0.0
 if "total_egresos_ipago_ves" not in st.session_state: st.session_state.total_egresos_ipago_ves = 0.0
 if "info_fechas_por_banco" not in st.session_state: st.session_state.info_fechas_por_banco = {}
@@ -98,26 +99,17 @@ def _fecha_archivo(nombre_archivo):
     except Exception:
         return None
 
-def _fijar_saldo_ultimo_dia(datos):
-    """Regla 'saldo final = último día': para un banco con N archivos (días),
-    el saldo final es el del archivo de fecha MÁS RECIENTE (si 2 archivos comparten
-    la fecha máxima se suman). El saldo inicial del resumen es el del archivo más
-    antiguo y los créditos/débitos totales se suman del período completo."""
+def _sumar_saldos_archivos(datos):
+    """Suma los montos de TODOS los archivos subidos por banco (varias cuentas/días):
+    el saldo del banco es la suma de los saldos de cada archivo y el resumen
+    (saldo inicial/final, créditos/débitos total) también se acumula archivo a archivo."""
     if not datos:
         return 0.0, {"saldo_inicial": None, "saldo_final": None, "creditos_total": None, "debitos_total": None}
-    fecha_base = datetime(1900, 1, 1).date()
-    fechas = [(d.get("fecha") or fecha_base) for d in datos]
-    max_fecha = max(fechas)
-    min_fecha = min(fechas)
-    saldo_final = sum(d["saldo"] for d, f in zip(datos, fechas) if f == max_fecha)
+    saldo_final = sum((d.get("saldo") or 0.0) for d in datos)
     resumen = {"saldo_inicial": None, "saldo_final": None, "creditos_total": None, "debitos_total": None}
-    for d, f in zip(datos, fechas):
+    for d in datos:
         r = d.get("resumen") or {}
-        if f == min_fecha and r.get("saldo_inicial"):
-            resumen["saldo_inicial"] = (resumen["saldo_inicial"] or 0) + r["saldo_inicial"]
-        if f == max_fecha and r.get("saldo_final"):
-            resumen["saldo_final"] = (resumen["saldo_final"] or 0) + r["saldo_final"]
-        for k in ("creditos_total", "debitos_total"):
+        for k in ("saldo_inicial", "saldo_final", "creditos_total", "debitos_total"):
             if r.get(k):
                 resumen[k] = (resumen[k] or 0) + r[k]
     return saldo_final, resumen
@@ -849,6 +841,23 @@ def extraer_resumen_bancamiga(df_raw):
                         resumen["saldo_final"] = monto
     except:
         pass
+
+    # 🔥 FIX (2026-09-11): el "Saldo Inicial: 1083396" viene sin separadores y
+    # convertir_monto() le aplica la heurística de centavos (÷100), dejándolo 100
+    # veces más chico. Se valida contra la ecuación del estado de cuenta
+    # (Inicial = Final − Créditos + Débitos) y se corrige la escala.
+    try:
+        si, ct, dt, sf = (resumen["saldo_inicial"], resumen["creditos_total"],
+                          resumen["debitos_total"], resumen["saldo_final"])
+        if si is not None and ct is not None and dt is not None and sf is not None:
+            esperado = sf - ct + dt
+            tolerancia = max(1.0, abs(esperado) * 0.001)
+            for factor in (100, 1):
+                if abs(si * factor - esperado) <= tolerancia:
+                    resumen["saldo_inicial"] = si * factor
+                    break
+    except Exception:
+        pass
     return resumen
 
 def encontrar_fila_encabezado(df_raw):
@@ -1228,6 +1237,13 @@ def obtener_saldo_banco(df_raw, banco, encabezado_idx=None):
         if r_vz.get("saldo_final"):
             return r_vz["saldo_final"]
         return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
+    elif banco == "provincial":
+        # Extractor dedicado: usa las etiquetas "Saldo Final: ..." del TSV de Provincial;
+        # respaldo: el escáner genérico de texto / columna derecha.
+        r_prov = extraer_resumen_provincial(df_raw)
+        if r_prov.get("saldo_final"):
+            return r_prov["saldo_final"]
+        return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
     else:
         return buscar_saldo_en_texto(df_raw) or obtener_saldo_final_columna_derecha(df_raw)
 
@@ -1268,6 +1284,9 @@ def leer_excel_sin_encabezados(archivo):
     
     try:
         if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            # 🔥 FIX (2026-09-11): HTML disfrazado de .xls -> parser de librería estándar
+            if archivo_es_html(archivo):
+                return leer_tabla_html(archivo)
             try:
                 import xlrd
                 return pd.read_excel(archivo, sheet_name=0, header=None, engine='xlrd')
@@ -1316,6 +1335,9 @@ def leer_excel_con_encabezados(archivo):
     
     try:
         if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            # 🔥 FIX (2026-09-11): HTML disfrazado de .xls -> parser de librería estándar
+            if archivo_es_html(archivo):
+                return leer_tabla_html(archivo)
             try:
                 import xlrd
                 return pd.read_excel(archivo, sheet_name=0, header=0, engine='xlrd')
@@ -1372,6 +1394,59 @@ def leer_tabla_html(archivo):
     max_cols = max(len(f) for f in filas)
     filas_pad = [f + [""] * (max_cols - len(f)) for f in filas]
     return pd.DataFrame(filas_pad)
+
+
+def archivo_es_html(archivo):
+    """Detecta si el archivo subido es en realidad una tabla HTML (los bancos exportan
+    'Excel' con extensión .xls que por dentro es HTML). Lee solo los primeros bytes y
+    deja SIEMPRE el puntero al inicio para no romper la lectura posterior."""
+    try:
+        archivo.seek(0)
+        cabecera = archivo.read(4096)
+    except Exception:
+        return False
+    finally:
+        try:
+            archivo.seek(0)
+        except Exception:
+            pass
+    if isinstance(cabecera, str):
+        cabecera = cabecera.encode("utf-8", "ignore")
+    cabecera = (cabecera or b"").lstrip()
+    if not cabecera:
+        return False
+    if cabecera[:1] == b"<":
+        return True
+    inicio = cabecera[:2048].lower()
+    return b"<table" in inicio or b"<html" in inicio or b"<tr" in inicio
+
+
+def leer_tabla_bancaria(archivo):
+    """Lee un archivo de banco que puede ser Excel real o HTML con extensión .xls.
+    Para HTML usa el parser de la librería estándar (leer_tabla_html), que conserva los
+    montos tal como vienen en el archivo y no depende de lxml/html5lib/pandas.read_html.
+    Devuelve (df, fue_html)."""
+    if archivo_es_html(archivo):
+        return leer_tabla_html(archivo), True
+    nombre = str(getattr(archivo, "name", "")).lower()
+    if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
+        return pd.read_excel(archivo, engine="openpyxl", header=None), False
+    try:
+        return pd.read_excel(archivo, header=None), False
+    except Exception:
+        archivo.seek(0)
+        return leer_tabla_html(archivo), True
+
+
+DIAG_LOG = "/home/cmarcano/clasificador_diag.log"
+
+def diag_log(*partes):
+    """Log temporal de diagnóstico del Clasificador (se puede borrar cuando ya no haga falta)."""
+    try:
+        with open(DIAG_LOG, "a", encoding="utf-8") as _f:
+            _f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | " + " | ".join(str(p) for p in partes) + "\n")
+    except Exception:
+        pass
 
 # =========================================================
 # 🔥 DETECCIÓN DE BANCO POR CONTENIDO DEL ARCHIVO
@@ -1837,16 +1912,28 @@ def procesar_provincial(df):
                     detalle_resumen += f" · Saldo Final: {formato_venezolano(resumen_archivo.get('saldo_final'))}"
             st.info(f"📊 **Provincial - Resumen del archivo:** {detalle_resumen}")
         # 🔥 1. BUSCAR EL ENCABEZADO EN EL DF ORIGINAL (antes de filtrar por fecha)
+        # Se aceptan variantes de encabezado de otros exportables de Provincial
+        # (CONCEPTO/DESCRIPCION/DETALLE + IMPORTE/MONTO/DEBITO/CREDITO).
+        _kw_desc = ("CONCEPTO", "DESCRIPCION", "DESCRIPCIÓN", "DETALLE", "CONCEPT")
+        _kw_monto = ("IMPORTE", "MONTO", "DEBITO", "DÉBITO", "CREDITO", "CRÉDITO")
         encabezado_idx = None
-        for i in range(min(30, len(df))):
+        for i in range(min(50, len(df))):
             fila = df.iloc[i]
             fila_str = [str(val) for val in fila.tolist()]
             texto_fila = " ".join(fila_str).upper()
-            if "CONCEPTO" in texto_fila and "IMPORTE" in texto_fila:
+            if any(k in texto_fila for k in _kw_desc) and any(k in texto_fila for k in _kw_monto):
                 encabezado_idx = i
                 break
+        # Segundo intento: encabezado con SALDO como columna de monto
         if encabezado_idx is None:
-            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial.")
+            for i in range(min(50, len(df))):
+                texto_fila = " ".join(str(v) for v in df.iloc[i].tolist()).upper()
+                if any(k in texto_fila for k in _kw_desc) and "SALDO" in texto_fila:
+                    encabezado_idx = i
+                    break
+        if encabezado_idx is None:
+            st.error("❌ No se encontró la fila de encabezados en el archivo Provincial. "
+                     "Se esperaba una fila con CONCEPTO/DESCRIPCION y IMPORTE/MONTO.")
             return pd.DataFrame()
         fila_encabezado = df.iloc[[encabezado_idx]].copy()
         df_datos = df.iloc[encabezado_idx + 1:].copy()
@@ -1873,11 +1960,13 @@ def procesar_provincial(df):
             elif "F. VALOR" in col_clean: rename_map[col] = "FECHA_VALOR"
             elif "CÓDIGO" in col_clean or "CODIGO" in col_clean: rename_map[col] = "CODIGO"
             elif "Nº. DOC" in col_clean or "NRO DOC" in col_clean or "DOC" in col_clean: rename_map[col] = "REFERENCIA"
-            elif "CONCEPTO" in col_clean: rename_map[col] = "DESCRIPCION"
-            elif "IMPORTE" in col_clean: rename_map[col] = "MONTO"
+            elif any(k in col_clean for k in ("CONCEPTO", "DESCRIPCION", "DESCRIPCIÓN", "DETALLE")): rename_map[col] = "DESCRIPCION"
+            elif any(k in col_clean for k in ("IMPORTE", "MONTO", "DEBITO", "DÉBITO", "CREDITO", "CRÉDITO")): rename_map[col] = "MONTO"
         df_filtrado.columns = headers
         df_filtrado = df_filtrado.iloc[encabezado_idx + 1:].reset_index(drop=True)
         df_filtrado = df_filtrado.rename(columns=rename_map)
+        # Evitar columnas duplicadas tras el rename (dos encabezados que apunten al mismo destino)
+        df_filtrado = df_filtrado.loc[:, ~df_filtrado.columns.duplicated()]
         if "FECHA" in df_filtrado.columns:
             df_filtrado["FECHA"] = df_filtrado["FECHA"].astype(str).str.strip()
             df_filtrado = df_filtrado[~df_filtrado["FECHA"].str.contains("FECHA|SALDO|Período", case=False, na=False)]
@@ -1891,6 +1980,20 @@ def procesar_provincial(df):
             df_filtrado = df_filtrado.drop(columns=["FECHA_DT"])
         else:
             return pd.DataFrame()
+        # Monto: si no hay columna única MONTO/IMPORTE, se reconstruye con DEBITO/CREDITO
+        if "MONTO" not in df_filtrado.columns:
+            _col_deb = next((c for c in df_filtrado.columns if "DEBITO" in str(c).upper() or "DÉBITO" in str(c).upper()), None)
+            _col_cre = next((c for c in df_filtrado.columns if "CREDITO" in str(c).upper() or "CRÉDITO" in str(c).upper()), None)
+            if _col_deb is not None or _col_cre is not None:
+                def _a_num(v):
+                    s = str(v).strip().replace(" ", "").replace(".", "").replace(",", ".").replace("'", "")
+                    try:
+                        return float(s)
+                    except Exception:
+                        return 0.0
+                _deb = df_filtrado[_col_deb].apply(_a_num) if _col_deb is not None else 0.0
+                _cre = df_filtrado[_col_cre].apply(_a_num) if _col_cre is not None else 0.0
+                df_filtrado["MONTO"] = _cre - _deb
         if "MONTO" in df_filtrado.columns:
             df_filtrado["MONTO"] = df_filtrado["MONTO"].astype(str).str.replace(" ", "", regex=False).str.replace(".", "", regex=False).str.replace(",", ".", regex=False).str.replace("'", "", regex=False)
             df_filtrado["MONTO"] = pd.to_numeric(df_filtrado["MONTO"], errors="coerce")
@@ -3114,6 +3217,11 @@ def mono_leer_excel_sin_encabezados(archivo):
     
     try:
         if nombre.endswith('.xls') and not nombre.endswith('.xlsx'):
+            # 🔥 FIX (2026-09-11): los bancos exportan "Excel" .xls que por dentro son HTML.
+            # Se detecta por contenido y se usa el parser de la librería estándar, que
+            # conserva los montos tal cual ("1.234,56" no se convierte en 123456).
+            if archivo_es_html(archivo):
+                return leer_tabla_html(archivo)
             try:
                 import xlrd
                 # Intentar leer con xlrd
@@ -5048,6 +5156,15 @@ with st.sidebar:
                 step=100.0,
                 key="saldo_manual_binance"
             )
+
+        with st.expander("🇻🇪 Banco Bolívares (Manual)", expanded=False):
+            saldo_manual_bolivares = st.number_input(
+                "Saldo manual Banco Bolívares (VES)",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                key="saldo_manual_bolivares"
+            )
     else:
         st.markdown("### 📂 Cargar Archivo Único (Monobanco)")
 
@@ -5112,6 +5229,7 @@ if st.session_state.seccion_activa == "consolidado":
     st.session_state.saldo_tesoro = st.session_state.get("saldo_manual_tesoro", 0.0)
     st.session_state.saldo_efectivo = st.session_state.get("saldo_manual_efectivo", 0.0)
     st.session_state.saldo_binance = st.session_state.get("saldo_manual_binance", 0.0)
+    st.session_state.saldo_bolivares = st.session_state.get("saldo_manual_bolivares", 0.0)
 
     # Selector de Moneda para los KPIs
     col_mon1, col_mon2 = st.columns([1.5, 3.5])
@@ -5140,7 +5258,8 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banplus + st.session_state.saldo_activo +
         st.session_state.saldo_tesoro +
         st.session_state.saldo_efectivo +
-        st.session_state.saldo_binance
+        st.session_state.saldo_binance +
+        st.session_state.saldo_bolivares
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
     
@@ -5167,6 +5286,7 @@ if st.session_state.seccion_activa == "consolidado":
     if st.session_state.saldo_efectivo > 0: bancos_con_saldo.append(f"Efectivo: Bs. {formato_venezolano(st.session_state.saldo_efectivo)} (${saldo_ef_usd:,.2f})")
     saldo_bin_usd = st.session_state.get("saldo_manual_binance", 0.0)
     if st.session_state.saldo_binance > 0: bancos_con_saldo.append(f"Binance: Bs. {formato_venezolano(st.session_state.saldo_binance)} (${saldo_bin_usd:,.2f})")
+    if st.session_state.saldo_bolivares > 0: bancos_con_saldo.append(f"Bolívares: Bs. {formato_venezolano(st.session_state.saldo_bolivares)}")
 
     kpi_subtitle_text = " | ".join(bancos_con_saldo) if bancos_con_saldo else "Sin saldos cargados"
 
@@ -5322,7 +5442,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo Banesco ({arch.name}): {e}")
         if datos_banesco:
-            saldo_ultimo_banesco, resumen_banesco = _fijar_saldo_ultimo_dia(datos_banesco)
+            saldo_ultimo_banesco, resumen_banesco = _sumar_saldos_archivos(datos_banesco)
             st.session_state.saldo_banesco = saldo_ultimo_banesco
             _acumular_resumen_banco("Banesco", resumen_banesco)
             saldos_detalle_excel.append(("Banesco", saldo_ultimo_banesco))
@@ -5362,7 +5482,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo BNC ({arch.name}): {e}")
         if datos_bnc:
-            saldo_ultimo_bnc, resumen_bnc = _fijar_saldo_ultimo_dia(datos_bnc)
+            saldo_ultimo_bnc, resumen_bnc = _sumar_saldos_archivos(datos_bnc)
             st.session_state.saldo_bnc = saldo_ultimo_bnc
             _acumular_resumen_banco("BNC", resumen_bnc)
             saldos_detalle_excel.append(("BNC", saldo_ultimo_bnc))
@@ -5394,7 +5514,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo Mercantil ({arch.name}): {e}")
         if datos_mercantil:
-            saldo_ultimo_mercantil, resumen_mercantil = _fijar_saldo_ultimo_dia(datos_mercantil)
+            saldo_ultimo_mercantil, resumen_mercantil = _sumar_saldos_archivos(datos_mercantil)
             st.session_state.saldo_mercantil = saldo_ultimo_mercantil
             _acumular_resumen_banco("Mercantil", resumen_mercantil)
             saldos_detalle_excel.append(("Mercantil", saldo_ultimo_mercantil))
@@ -5464,7 +5584,7 @@ if st.session_state.seccion_activa == "consolidado":
                 st.session_state.saldo_venezuela = 0.0
                 st.session_state.total_creditos_venezuela = 0.0
         if datos_venezuela:
-            saldo_ultimo_venezuela, resumen_venezuela = _fijar_saldo_ultimo_dia(datos_venezuela)
+            saldo_ultimo_venezuela, resumen_venezuela = _sumar_saldos_archivos(datos_venezuela)
             st.session_state.saldo_venezuela = saldo_ultimo_venezuela
             _acumular_resumen_banco("Banco de Venezuela (BDV)", resumen_venezuela)
             saldos_detalle_excel.append(("Banco de Venezuela (BDV)", saldo_ultimo_venezuela))
@@ -5496,7 +5616,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo Provincial ({arch.name}): {e}")
         if datos_provincial:
-            saldo_ultimo_provincial, resumen_provincial = _fijar_saldo_ultimo_dia(datos_provincial)
+            saldo_ultimo_provincial, resumen_provincial = _sumar_saldos_archivos(datos_provincial)
             st.session_state.saldo_provincial = saldo_ultimo_provincial
             _acumular_resumen_banco("Provincial", resumen_provincial)
             saldos_detalle_excel.append(("Provincial", saldo_ultimo_provincial))
@@ -5509,42 +5629,36 @@ if st.session_state.seccion_activa == "consolidado":
         datos_bancamiga = []
         for idx, arch in enumerate(archivo_bancamiga, 1):
             try:
-                nombre = arch.name.lower()
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
-                else:
-                    try:
-                        df_raw = pd.read_excel(arch, header=None)
-                    except Exception:
-                        arch.seek(0)
-                        try:
-                            df_raw = pd.read_html(arch, decimal=',', thousands='.')[0]
-                        except Exception:
-                            arch.seek(0)
-                            df_raw = leer_tabla_html(arch)
+                df_raw, _fue_html = leer_tabla_bancaria(arch)
                 
                 if isinstance(df_raw.columns, pd.MultiIndex):
                     df_raw.columns = df_raw.columns.get_level_values(-1)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "bancamiga")
+                _resumen_diag = extraer_resumen_banco(df_raw, "bancamiga")
+                diag_log("BANCAMIGA", arch.name, "html=" + str(_fue_html), "df_raw=" + str(df_raw.shape),
+                         "saldo=" + str(saldo_arch), "resumen=" + str(_resumen_diag))
                 datos_bancamiga.append({
                     "fecha": _fecha_archivo(arch.name),
                     "saldo": saldo_arch,
-                    "resumen": extraer_resumen_banco(df_raw, "bancamiga"),
+                    "resumen": _resumen_diag,
                 })
             
             
                 df_normalizado = procesar_bancamiga(df_raw)
                 df_convertido = convertir_a_formato_mercantil(df_normalizado, "bancamiga")
+                diag_log("BANCAMIGA", arch.name, "normalizado=" + str(df_normalizado.shape),
+                         "convertido=" + str(df_convertido.shape))
                 if not df_convertido.empty:
                     list_df_convertidos.append(df_convertido)
                     st.session_state.creditos_por_banco["bancamiga"] = st.session_state.creditos_por_banco.get("bancamiga", 0.0) + _sumar_creditos_convertidos(df_convertido)
                     if "Bancamiga" not in bancos_procesados:
                         bancos_procesados.append("Bancamiga")
             except Exception as e:
+                diag_log("BANCAMIGA ERROR", arch.name, type(e).__name__, str(e))
                 st.error(f"❌ Error leyendo Bancamiga ({arch.name}): {e}")
         if datos_bancamiga:
-            saldo_ultimo_bancamiga, resumen_bancamiga = _fijar_saldo_ultimo_dia(datos_bancamiga)
+            saldo_ultimo_bancamiga, resumen_bancamiga = _sumar_saldos_archivos(datos_bancamiga)
             st.session_state.saldo_bancamiga = saldo_ultimo_bancamiga
             _acumular_resumen_banco("Bancamiga", resumen_bancamiga)
             saldos_detalle_excel.append(("Bancamiga", saldo_ultimo_bancamiga))
@@ -5557,19 +5671,7 @@ if st.session_state.seccion_activa == "consolidado":
         datos_banplus = []
         for idx, arch in enumerate(archivo_banplus, 1):
             try:
-                nombre = arch.name.lower()
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
-                else:
-                    try:
-                        df_raw = pd.read_excel(arch, header=None)
-                    except Exception:
-                        arch.seek(0)
-                        try:
-                            df_raw = pd.read_html(arch)[0]
-                        except Exception:
-                            arch.seek(0)
-                            df_raw = leer_tabla_html(arch)
+                df_raw, _fue_html = leer_tabla_bancaria(arch)
             
                 saldo_arch = obtener_saldo_banco(df_raw, "banplus")
                 datos_banplus.append({
@@ -5589,7 +5691,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo BanPlus ({arch.name}): {e}")
         if datos_banplus:
-            saldo_ultimo_banplus, resumen_banplus = _fijar_saldo_ultimo_dia(datos_banplus)
+            saldo_ultimo_banplus, resumen_banplus = _sumar_saldos_archivos(datos_banplus)
             st.session_state.saldo_banplus = saldo_ultimo_banplus
             _acumular_resumen_banco("BanPlus", resumen_banplus)
             saldos_detalle_excel.append(("BanPlus", saldo_ultimo_banplus))
@@ -5602,19 +5704,7 @@ if st.session_state.seccion_activa == "consolidado":
         datos_activo = []
         for idx, arch in enumerate(archivo_activo, 1):
             try:
-                nombre = arch.name.lower()
-                if nombre.endswith(".xlsx") or nombre.endswith(".xlsm"):
-                    df_raw = pd.read_excel(arch, engine="openpyxl", header=None)
-                else:
-                    try:
-                        df_raw = pd.read_excel(arch, header=None)
-                    except Exception:
-                        arch.seek(0)
-                        try:
-                            df_raw = pd.read_html(arch)[0]
-                        except Exception:
-                            arch.seek(0)
-                            df_raw = leer_tabla_html(arch)
+                df_raw, _fue_html = leer_tabla_bancaria(arch)
                 
                 if isinstance(df_raw.columns, pd.MultiIndex):
                     df_raw.columns = df_raw.columns.get_level_values(-1)
@@ -5637,7 +5727,7 @@ if st.session_state.seccion_activa == "consolidado":
             except Exception as e:
                 st.error(f"❌ Error leyendo Banco Activo ({arch.name}): {e}")
         if datos_activo:
-            saldo_ultimo_activo, resumen_activo = _fijar_saldo_ultimo_dia(datos_activo)
+            saldo_ultimo_activo, resumen_activo = _sumar_saldos_archivos(datos_activo)
             st.session_state.saldo_activo = saldo_ultimo_activo
             _acumular_resumen_banco("Banco Activo", resumen_activo)
             saldos_detalle_excel.append(("Banco Activo", saldo_ultimo_activo))
@@ -5652,6 +5742,9 @@ if st.session_state.seccion_activa == "consolidado":
 
     # 7.6. Binance (Manual)
     saldos_detalle_excel.append(("Banco Binance", st.session_state.saldo_binance))
+
+    # 7.7. Bolívares (Manual, VES)
+    saldos_detalle_excel.append(("Banco Bolívares", st.session_state.saldo_bolivares))
 
     st.session_state.saldos_detalle_excel = saldos_detalle_excel
 
@@ -5682,7 +5775,8 @@ if st.session_state.seccion_activa == "consolidado":
         st.session_state.saldo_banplus + st.session_state.saldo_activo +
         st.session_state.saldo_tesoro +
         st.session_state.saldo_efectivo +
-        st.session_state.saldo_binance
+        st.session_state.saldo_binance +
+        st.session_state.saldo_bolivares
     )
     total_usd = total_ves / tasa_dia if tasa_dia > 0 else 0.0
 
@@ -5939,8 +6033,11 @@ if st.session_state.seccion_activa == "consolidado":
                             cell.alignment = alineacion_centro
                             cell.border = borde_fino
 
-                        # Datos
-                        bancos_data = st.session_state.get("saldos_detalle_excel", [
+                        # Datos: se parte de la lista completa de bancos y se sobreescriben los
+                        # valores con lo que quedó en la sesión. Así NINGÚN banco configurado
+                        # (p.ej. Provincial) puede quedar fuera del export si la lista de sesión
+                        # viniera incompleta o de un run anterior.
+                        _bancos_base = [
                             ("Banesco", st.session_state.saldo_banesco),
                             ("BNC", st.session_state.saldo_bnc),
                             ("Mercantil", st.session_state.saldo_mercantil),
@@ -5951,8 +6048,14 @@ if st.session_state.seccion_activa == "consolidado":
                             ("Banco Activo", st.session_state.saldo_activo),
                             ("Banco del Tesoro", st.session_state.saldo_tesoro),
                             ("Banco Efectivo", st.session_state.saldo_efectivo),
-                            ("Banco Binance", st.session_state.saldo_binance)
-                        ])
+                            ("Banco Binance", st.session_state.saldo_binance),
+                            ("Banco Bolívares", st.session_state.saldo_bolivares),
+                        ]
+                        _bancos_sesion = st.session_state.get("saldos_detalle_excel") or []
+                        _mapa_saldos = {str(n): v for n, v in _bancos_base}
+                        for _n, _v in _bancos_sesion:
+                            _mapa_saldos[str(_n)] = _v
+                        bancos_data = [(n, _mapa_saldos[n]) for n, _ in _bancos_base]
 
                         fila_r = 9
                         mapeo_ingresos_banco = {
@@ -5960,6 +6063,7 @@ if st.session_state.seccion_activa == "consolidado":
                             "Banco de Venezuela (BDV)": "venezuela", "Provincial": "provincial",
                             "Bancamiga": "bancamiga", "BanPlus": "banplus", "Banco Activo": "activo",
                             "Banco del Tesoro": "tesoro", "Banco Efectivo": "efectivo", "Banco Binance": "binance",
+                            "Banco Bolívares": "bolivares",
                         }
                         for banco_n, saldo_v in bancos_data:
                             cell_b = hoja_resumen.cell(row=fila_r, column=2, value=banco_n)
@@ -6300,6 +6404,11 @@ if st.session_state.seccion_activa == "consolidado":
                             hoja.column_dimensions[columna_letra].width = adjusted_width
 
                     output.seek(0)
+
+                    diag_log("EXPORT CONSOLIDADO", "ingresos=" + str(len(df_ingresos)),
+                             "egresos=" + str(len(df_egresos)), "comisiones=" + str(len(df_comisiones)),
+                             "bytes=" + str(len(output.getvalue())),
+                             "bancos=" + str(bancos_procesados))
 
                     st.download_button(
                         label="📥 Descargar Excel Clasificado Consolidado (BCV + iPago)",
